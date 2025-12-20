@@ -22,6 +22,7 @@ import {
 } from "@nestjs/swagger";
 import { ChangePasswordDTO } from "./dto/password.dto";
 import { JwtPayload } from "./dto/jwt-payload.dto";
+import { LockLoginGuard } from "@src/guards/lock-login.guard";
 
 @Controller("auth")
 @ApiTags("Auth")
@@ -37,11 +38,12 @@ export class AuthController {
   }
 
   @Post("login")
+  @UseGuards(LockLoginGuard)
   @ApiOperation({ summary: "Đăng nhập bằng email và mật khẩu" })
   @ApiResponse({ status: 200, description: "Đăng nhập thành công" })
   @ApiResponse({ status: 401, description: "Thông tin đăng nhập không hợp lệ" })
-  login(@Body() loginDto: LoginDTO) {
-    return this.authService.login(loginDto);
+  login(@Body() loginDto: LoginDTO,@Request() req) {
+    return this.authService.login(loginDto,req.ip);
   }
   @Get("google")
   @UseGuards(AuthGuard("google"))

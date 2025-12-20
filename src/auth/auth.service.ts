@@ -18,13 +18,15 @@ import { v4 as uuidv4 } from "uuid";
 import { RefreshTokenDTO } from "./dto/refreshToken.dto";
 import { ChangePasswordDTO } from "./dto/password.dto";
 import { FRONTEND_URL } from "app-config/config.json";
+import { LockLoginService } from "@src/lock-login/lock-login.service";
 @Injectable()
 export class AuthService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(RefreshToken.name)
     private readonly refreshTokenModel: Model<RefreshToken>,
-    private jwtService: JwtService
+    private jwtService: JwtService,
+    private loginAttemptService: LockLoginService,
   ) {}
 
   async register(data: RegisterDTO): Promise<User> {
@@ -46,18 +48,28 @@ export class AuthService {
     return user;
   }
 
-  async login(data: LoginDTO) {
-    const { email, password } = data;
-    const user = await this.userModel.findOne({ email });
-    if (!user) {
-      throw new UnauthorizedException("Invalid credentials");
-    }
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      throw new UnauthorizedException("Invalid credentials");
-    }
-    return this.generateUserTokens(user._id);
+  async login(data: LoginDTO, ip: string) {
+  const { email, password } = data;
+  const user = await this.userModel.findOne({ email });
+
+  if (!user) {
+    await this.loginAttemptService.recordFailedAttempt(email, ip);
+    throw new UnauthorizedException('Invalid credentials');
   }
+
+  const isMatch = await user.comparePassword(password);
+
+  if (!isMatch) {
+    await this.loginAttemptService.recordFailedAttempt(email, ip);
+    throw new UnauthorizedException('Invalid credentials');
+  }
+
+  // Login đúng → reset count
+  await this.loginAttemptService.resetLocked(email, ip);
+  // Tạo token
+  return this.generateUserTokens(user._id);
+}
+
 
   async loginWithGoogle(profile: any) {
     const { email, name, picture } = profile;
@@ -80,9 +92,9 @@ export class AuthService {
   }
 
   async handleGoogleLoginCallback(profile: any, res: any) {
-    console.log("Google callback received:", profile); // Log để debug
+    // console.log("Google callback received:", profile);
     const jwt = await this.loginWithGoogle(profile);
-    console.log("Generated JWT:", jwt);
+    // console.log("Generated JWT:", jwt);
 
     // Set token vào HttpOnly cookies và điều hướng về FE
     res.cookie("accessToken", jwt.accessToken, {

@@ -19,8 +19,20 @@ export class Zone extends Document {
   @Prop({ type: Number, default: 0, min: 0 })
   soldCount: number;
 
+  @Prop({ default: 0 })
+  confirmedSoldCount: number;
+
   @Prop({ default: false })
   isDeleted: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  hasSeating: boolean; // Zone có ghế ngồi hay không
+
+  @Prop({ type: Date })
+  saleStartDate?: Date; 
+
+  @Prop({ type: Date })
+  saleEndDate?: Date; 
 }
 
 export const ZoneSchema = SchemaFactory.createForClass(Zone);

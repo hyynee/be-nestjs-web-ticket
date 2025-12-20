@@ -15,7 +15,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
       callbackURL: GOOGLE_CALLBACK_URL,
       scope: ["email", "profile"],
     });
-    console.log("clientID:", GOOGLE_CLIENT_ID);
+    // console.log("clientID:", GOOGLE_CLIENT_ID);
   }
 
   async validate(
@@ -30,7 +30,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
       name: name ? `${name.givenName} ${name.familyName}` : undefined,
       picture: photos && photos.length > 0 ? photos[0].value : undefined,
     };
-    console.log("Google profile:", profile);
+    // console.log("Google profile:", profile);
     done(null, user);
   }
 }

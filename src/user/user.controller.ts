@@ -24,6 +24,10 @@ export class UserController {
     return this.userService.getAllUser();
   }
 
+  @UseGuards(new RolesGuard(["admin"]))
+  @UseGuards(AuthGuard("jwt"))
+  @HttpCode(201)
+  @ApiBearerAuth()
   @Get("/:id")
   async getUserById(@Param("id") id: string) {
     return this.userService.getUserById(id);

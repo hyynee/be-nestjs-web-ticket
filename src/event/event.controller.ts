@@ -26,29 +26,23 @@ export class EventController {
     return this.eventService.getAllActiveEvents();
   }
 
-  @Get("/:id")
-  async getEventById(@Param("id") id: string) {
-    return this.eventService.getActiveEventById(id);
-  }
-
-  // Admin endpoints - tất cả events
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Get("/admin/all")
+  @Get("admin/all")
   async getAllEventsForAdmin() {
     return this.eventService.getAllEvents();
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Get("/admin/deleted")
+  @Get("admin/deleted")
   async getDeletedEvents() {
     return this.eventService.getDeletedEvents();
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Post("/create")
+  @Post("create")
   async createEvent(
     @CurrentUser() currentUser: JwtPayload,
     @Body() CreateEventDTO: CreateEventDTO
@@ -58,7 +52,7 @@ export class EventController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Put("/update/:id")
+  @Put("update/:id")
   async updateEvent(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
@@ -69,15 +63,20 @@ export class EventController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Put("/delete/:id")
+  @Put("delete/:id")
   async deleteEvent(@Param("id") id: string) {
     return this.eventService.deleteEvent(id);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Put("/restore/:id")
+  @Put("restore/:id")
   async restoreEvent(@Param("id") id: string) {
     return this.eventService.restoreEvent(id);
+  }
+
+  @Get(":id")
+  async getEventById(@Param("id") id: string) {
+    return this.eventService.getActiveEventById(id);
   }
 }

@@ -15,6 +15,15 @@ export class Area extends Document {
 
   @Prop({ default: false })
   isDeleted: boolean;
+
+  @Prop({ type: String })
+rowLabel?: string; 
+
+@Prop({ type: Number })
+seatCount?: number; 
+
+@Prop([String])
+seats?: string[];
 }
 
 export const AreaSchema = SchemaFactory.createForClass(Area);

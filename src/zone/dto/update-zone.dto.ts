@@ -1,9 +1,7 @@
 // update-zone.dto.ts
-import { PartialType } from "@nestjs/mapped-types";
-import { CreateZoneDto } from "./create-zone.dto";
 import { IsBoolean, IsOptional } from "class-validator";
 
-export class UpdateZoneDto extends PartialType(CreateZoneDto) {
+export class UpdateZoneDto {
   @IsBoolean()
   @IsOptional()
   isDeleted?: boolean;
