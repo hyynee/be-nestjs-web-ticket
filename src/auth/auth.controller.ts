@@ -83,7 +83,7 @@ export class AuthController {
     return this.authService.refreshToken(token);
   }
 
-  @Get("/currentUser")
+  @Get("me")
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"))
   @ApiOperation({ summary: "Lấy thông tin người dùng hiện tại" })

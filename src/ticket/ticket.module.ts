@@ -5,6 +5,7 @@ import { Ticket, TicketSchema } from '@src/schemas/ticket.schema';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Booking, BookingSchema } from '@src/schemas/booking.schema';
 import { Event, EventSchema } from '@src/schemas/event.schema';
+import { TicketGateway } from './ticket.gateway';
 
 @Module({
   imports: [
@@ -14,8 +15,8 @@ import { Event, EventSchema } from '@src/schemas/event.schema';
       {name: Event.name, schema: EventSchema}
     ]),
   ],
+  providers: [TicketService, TicketGateway],
   controllers: [TicketController],
-  providers: [TicketService],
   exports: [TicketService],
 })
 export class TicketModule { }

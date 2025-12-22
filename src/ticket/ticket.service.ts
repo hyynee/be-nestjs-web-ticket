@@ -7,6 +7,7 @@ import { Event } from '@src/schemas/event.schema';
 import * as crypto from 'crypto';
 import * as QRCode from 'qrcode';
 import { BadRequestException } from '@nestjs/common';
+import { TicketGateway } from './ticket.gateway';
 
 @Injectable()
 export class TicketService {
@@ -14,6 +15,7 @@ export class TicketService {
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectModel(Event.name) private eventModel: Model<Event>,
+    private ticketGateway: TicketGateway
   ) { }
 
   // tạo ticket code unique
@@ -104,6 +106,17 @@ export class TicketService {
         return ticket.save();
       })
     );
+    this.ticketGateway.emitTicketCreated({
+      bookingCode: booking.bookingCode,
+      tickets: createdTickets.map(ticket => ({
+        ticketCode: ticket.ticketCode,
+        eventId: ticket.eventId.toString(),
+        zoneId: ticket.zoneId.toString(),
+        seatNumber: ticket.seatNumber || null,
+        price: ticket.price,
+        status: ticket.status,
+      })),
+    });
     return createdTickets;
   };
 
@@ -200,6 +213,14 @@ export class TicketService {
         'Ticket không hợp lệ hoặc đã được check-in'
       );
     }
+
+    this.ticketGateway.emitTicketCheckedIn({
+      ticketCode: ticket.ticketCode,
+      eventId: ticket.eventId.toString(),
+      zoneId: ticket.zoneId.toString(),
+      seatNumber: ticket.seatNumber || null,
+      checkedInAt: ticket.checkedInAt as Date,
+    });
 
     return {
       success: true,

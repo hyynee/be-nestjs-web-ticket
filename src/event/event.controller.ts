@@ -5,6 +5,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { EventService } from "./event.service";
@@ -15,22 +16,41 @@ import { CreateEventDTO } from "./dto/create-event.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
+import { QueryEventDTO } from "./dto/query-event.dto";
+import { OptionalJwtAuthGuard } from "@src/guards/optional.guard";
 
 @ApiTags("Event")
 @Controller("event")
 export class EventController {
-  constructor(private readonly eventService: EventService) {}
+  constructor(private readonly eventService: EventService) { }
 
+  // @Get()
+  // async getAllEvents() {
+  //   return this.eventService.getAllActiveEvents();
+  // }
+
+  // @ApiBearerAuth()
+  // @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  // @Get("admin/all")
+  // async getAllEventsForAdmin(
+  //   @Query() query: QueryEventDTO
+  // ) {
+  //   return this.eventService.getAllEvents(query);
+  // }
+ 
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get()
-  async getAllEvents() {
-    return this.eventService.getAllActiveEvents();
+  getEvents(
+    @Query() query: QueryEventDTO,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.eventService.getEvents(query, user);
   }
 
-  @ApiBearerAuth()
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @Get("admin/all")
-  async getAllEventsForAdmin() {
-    return this.eventService.getAllEvents();
+     @Get(":id")
+  async getEventById(@Param("id") id: string) {
+    return this.eventService.getActiveEventById(id);
   }
 
   @ApiBearerAuth()
@@ -75,8 +95,5 @@ export class EventController {
     return this.eventService.restoreEvent(id);
   }
 
-  @Get(":id")
-  async getEventById(@Param("id") id: string) {
-    return this.eventService.getActiveEventById(id);
-  }
+
 }

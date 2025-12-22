@@ -47,11 +47,11 @@ export class AreaService {
         const [data, total] = await Promise.all([
             this.areaModel
                 .find(filter)
-                .select('-__v')  // Bỏ field không cần
-                .sort({ createdAt: -1 })  // Mới nhất trước
+                .select('-__v')
+                .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(limit)
-                .lean()  //Quan trọng: tăng tốc 5-10x
+                .lean()  //tăng tốc 5-10x
                 .exec(),
             this.areaModel.countDocuments(filter).exec()
         ]);

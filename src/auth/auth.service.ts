@@ -30,7 +30,7 @@ export class AuthService {
   ) {}
 
   async register(data: RegisterDTO): Promise<User> {
-    const { email, password, confirmPassword, fullname, role = "user" } = data;
+    const { email, password, confirmPassword, fullName, role = "user" } = data;
     const existingUser = await this.userModel.findOne({ email });
     if (existingUser) {
       throw new ConflictException("Email already exists");
@@ -41,7 +41,7 @@ export class AuthService {
     const user = new this.userModel({
       email,
       password,
-      name: fullname,
+      fullName,
       role: role || "user",
     });
     await user.save();
@@ -95,23 +95,13 @@ export class AuthService {
     // console.log("Google callback received:", profile);
     const jwt = await this.loginWithGoogle(profile);
     // console.log("Generated JWT:", jwt);
-
-    // Set token vào HttpOnly cookies và điều hướng về FE
-    res.cookie("accessToken", jwt.accessToken, {
-      httpOnly: true,
-      domain: "localhost",
-      secure: false, // set true khi dùng HTTPS
-      sameSite: "lax",
-      maxAge: 60 * 60 * 1000, // 1h
-    });
-    res.cookie("refreshToken", jwt.refreshToken, {
-      httpOnly: true,
-      domain: "localhost",
-      secure: false,
-      sameSite: "lax",
-      maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
-    });
-    res.redirect(`${FRONTEND_URL}?login=success`);
+    // Redirect về trang login với tokens trong query params
+    // Frontend sẽ check query params và lấy tokens để lưu vào localStorage
+    const tokens = encodeURIComponent(JSON.stringify({
+      accessToken: jwt.accessToken,
+      refreshToken: jwt.refreshToken
+    }));
+    res.redirect(`${FRONTEND_URL}/login?google=true&tokens=${tokens}`);
   }
 
   async status() {

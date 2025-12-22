@@ -8,7 +8,7 @@ import { IsOptional } from "class-validator";
 export class RegisterDTO {
   @ApiProperty()
   @IsString()
-  fullname: string;
+  fullName: string;
 
   @ApiProperty()
   @IsEmail()
