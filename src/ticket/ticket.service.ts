@@ -40,10 +40,11 @@ export class TicketService {
       throw new BadRequestException("Failed to generate QR code");
     }
   }
-  async createTicketsFromBooking(bookingCode: string) {
+  async createTicketsFromBooking(bookingCode: string, session?: any) {
     const booking = await this.bookingModel
       .findOne({ bookingCode })
       .populate('zoneId', 'hasSeating')
+      .session(session || null)
       .exec();
 
     if (!booking) {
@@ -52,21 +53,19 @@ export class TicketService {
     if (booking.status !== 'confirmed') {
       throw new BadRequestException('Booking is not confirmed');
     }
-    // check tạo ticket ch
     const existed = await this.ticketModel.exists({
       bookingId: booking._id,
       isDeleted: false,
-    });
+    }).session(session || null);
 
     if (existed) {
       return this.ticketModel.find({
         bookingId: booking._id,
         isDeleted: false,
-      });
+      }).session(session || null).exec();
     }
     const ticketsData: any[] = [];
     const zone = booking.zoneId as any;
-    // check seats
     if (zone.hasSeating && booking.seats?.length) {
       for (const seat of booking.seats) {
         const ticketCode = await this.generateTicketCode();
@@ -97,13 +96,14 @@ export class TicketService {
         });
       }
     }
-    // lưu vé vào db
-    const createdTickets = await this.ticketModel.insertMany(ticketsData);
-    // sinh qr code
+    const createdTickets = await this.ticketModel.insertMany(
+      ticketsData,
+      { session: session || undefined }
+    );
     await Promise.all(
       createdTickets.map(async (ticket) => {
         ticket.qrCode = await this.generateQRCode(ticket.ticketCode);
-        return ticket.save();
+        return ticket.save({ session: session || undefined });
       })
     );
     this.ticketGateway.emitTicketCreated({

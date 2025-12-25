@@ -18,6 +18,7 @@ import { PaymentModule } from './payment/payment.module';
 import { UploadController } from "./upload/uploadImage";
 import { LockLoginModule } from './lock-login/lock-login.module';
 import { TicketModule } from './ticket/ticket.module';
+import { ChatModule } from "./chatbot/chat.module";
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { TicketModule } from './ticket/ticket.module';
     }),
     LockLoginModule,
     TicketModule,
+    ChatModule,
   ],
   controllers: [AppController, UploadController],
   providers: [AppService, JwtStrategy, GoogleStrategy],

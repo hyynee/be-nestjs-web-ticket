@@ -13,12 +13,12 @@ import { MailModule } from '@src/services/mail.module';
     MongooseModule.forFeature([
       {name : Payment.name, schema: PaymentSchema},
       { name: Booking.name, schema: BookingSchema },
-      { name: Zone.name, schema: BookingSchema }
+      { name: Zone.name, schema: ZoneSchema }
     ]),
     BookingModule,
     TicketModule,
-    MailModule
-  ],
+    MailModule,
+ ],
   controllers: [PaymentController],
   providers: [PaymentService],
 })

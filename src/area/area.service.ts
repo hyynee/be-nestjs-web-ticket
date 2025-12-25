@@ -51,7 +51,6 @@ export class AreaService {
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(limit)
-                .lean()  //tăng tốc 5-10x
                 .exec(),
             this.areaModel.countDocuments(filter).exec()
         ]);

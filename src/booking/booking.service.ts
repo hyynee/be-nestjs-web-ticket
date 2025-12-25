@@ -6,7 +6,6 @@ import { Zone } from '@src/schemas/zone.schema';
 import { Area } from '@src/schemas/area.schema';
 import { Model } from 'mongoose';
 import { CreateBookingDto } from './dto/create-booking.dto';
-import { UpdateBookingDto } from './dto/update-booking.dto';
 
 @Injectable()
 export class BookingService {

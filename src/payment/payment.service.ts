@@ -5,7 +5,6 @@ import { ConfigService } from '@nestjs/config';
 import { Booking } from '@src/schemas/booking.schema';
 import { Model, Types } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
-import { BookingService } from '@src/booking/booking.service';
 import { Payment } from '@src/schemas/payment.schema';
 import { Zone } from '@src/schemas/zone.schema';
 import { TicketService } from '@src/ticket/ticket.service';
@@ -234,13 +233,11 @@ export class PaymentService {
                 },
                 { upsert: true, new: true }
             );
-            // Tạo Tickets với QR Code
             const tickets = await this.ticketService.createTicketsFromBooking(bookingCode);
-            // map data ticket
             const ticketMailData = tickets.map(ticket => ({
                 ticketCode: ticket.ticketCode,
-                seatNumber: ticket.seatNumber || null,
-                qrCode: ticket.qrCode || null,
+                seatNumber: ticket.seatNumber ,
+                qrCode: ticket.qrCode || '',
             }));
             // mail xác nhận đặt vé
             await this.mailService.sendBookingConfirmation({

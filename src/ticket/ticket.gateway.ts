@@ -18,8 +18,6 @@ interface TicketCreatedPayload {
     }>;
 }
 
-
-
 interface TicketCheckinPayload {
     ticketCode: string;
     eventId: string;
@@ -27,8 +25,6 @@ interface TicketCheckinPayload {
     seatNumber: string | null;
     checkedInAt: Date;
 };
-
-
 
 @WebSocketGateway({
     cors: { origin: '*' },
