@@ -5,7 +5,7 @@ import config from "./config";
 @Module({
   imports: [
     MongooseModule.forRoot(
-      config.MONGODB_URI || "mongodb://localhost:27017/ticket"
+      config.MONGODB_URI || "mongodb://localhost:27017/ticket-be"
     ),
   ],
   exports: [MongooseModule],

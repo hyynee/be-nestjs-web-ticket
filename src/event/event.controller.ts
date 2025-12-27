@@ -18,26 +18,14 @@ import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
 import { QueryEventDTO } from "./dto/query-event.dto";
 import { OptionalJwtAuthGuard } from "@src/guards/optional.guard";
+import { Throttle } from "@nestjs/throttler";
 
 @ApiTags("Event")
 @Controller("event")
 export class EventController {
   constructor(private readonly eventService: EventService) { }
 
-  // @Get()
-  // async getAllEvents() {
-  //   return this.eventService.getAllActiveEvents();
-  // }
-
-  // @ApiBearerAuth()
-  // @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  // @Get("admin/all")
-  // async getAllEventsForAdmin(
-  //   @Query() query: QueryEventDTO
-  // ) {
-  //   return this.eventService.getAllEvents(query);
-  // }
- 
+  @Throttle({default: { limit: 20, ttl: 60000 } })
   @ApiBearerAuth()
   @UseGuards(OptionalJwtAuthGuard)
   @Get()

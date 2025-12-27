@@ -11,12 +11,15 @@ import { PassportModule } from "@nestjs/passport";
 import { JwtStrategy } from "@src/strategy/jwt.strategy";
 import { GoogleStrategy } from "@src/strategy/google.strategy";
 import { LockLoginModule } from "@src/lock-login/lock-login.module";
+import { MailModule } from "@src/services/mail.module";
+import { ResetTokenSchema } from "@src/schemas/reset-token.schema";
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema },
       { name: "RefreshToken", schema: RefreshTokenSchema },
+      { name: "ResetToken", schema: ResetTokenSchema },
     ]),
     LockLoginModule,
     JwtModule.register({
@@ -25,6 +28,7 @@ import { LockLoginModule } from "@src/lock-login/lock-login.module";
     }),
     PassportModule,
     ResponseModule,
+    MailModule
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, GoogleStrategy],

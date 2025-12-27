@@ -11,12 +11,10 @@ export class UserService {
   ) {}
   async getAllUser(query: QueryUserDTO) {
     const { search, page = 1, limit = 10 } = query;
-    console.log("Query User:", query);
     const skip = (page - 1) * limit;
-    const filter: any = { isDeleted: false };
+    const filter: any = {};
     if (search) {
       filter.$or = [
-        { username: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
       ];
     }
@@ -36,7 +34,6 @@ export class UserService {
         .exec(),
       this.userModel.countDocuments(filter).exec(),
     ]);
-    console.log("Found users:", users);
 
     return {
       data: users,

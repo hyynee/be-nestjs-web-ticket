@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth } from '@nestjs/swagger';
 import config from '@src/config/config';
 import { RolesGuard } from '@src/guards/role.guard';
 import { v2 as cloudinary } from 'cloudinary';
@@ -27,7 +28,7 @@ export class UploadController {
       api_secret: config.CLOUDINARY_API_SECRET,
     });
   }
-
+  @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), new RolesGuard(['admin'])) 
   @Post('private')
   @UseInterceptors(FileInterceptor('image', { storage }))

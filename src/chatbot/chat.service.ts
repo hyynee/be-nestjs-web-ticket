@@ -175,7 +175,7 @@ export class ChatService {
     const events = await this.getEventsByIntent(userQuery, intent);
     
     const eventData: EventData[] = events.map(event => ({
-      id: event._id,
+      id: event._id as Types.ObjectId,
       title: event.title,
       description: event.description || undefined,
       startDate: event.startDate,
@@ -246,9 +246,8 @@ Kết thúc bằng: "Bạn cần hỗ trợ gì thêm không?"`;
         _id: { $in: validIds },
         isDeleted: false
       }).exec();
-      
       return events.map(event => ({
-        id: event._id,
+        id: event._id as Types.ObjectId,
         title: event.title,
         description: event.description || undefined,
         startDate: event.startDate,

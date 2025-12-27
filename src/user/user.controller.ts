@@ -17,10 +17,9 @@ import { QueryUserDTO } from "./dto/query-user.dto";
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @UseGuards(new RolesGuard(["admin"]))
-  @UseGuards(AuthGuard("jwt"))
-  @HttpCode(201)
   @ApiBearerAuth()
+  @UseGuards(AuthGuard("jwt"),new RolesGuard(["admin"]))
+  @HttpCode(200)
   @Get("/getAllUser")
   async getAllUser(
     @Query() query: QueryUserDTO,
@@ -28,9 +27,8 @@ export class UserController {
     return this.userService.getAllUser(query);
   }
 
-  @UseGuards(new RolesGuard(["admin"]))
-  @UseGuards(AuthGuard("jwt"))
-  @HttpCode(201)
+  @UseGuards(AuthGuard("jwt"),new RolesGuard(["admin"]))
+  @HttpCode(200)
   @ApiBearerAuth()
   @Get("/:id")
   async getUserById(@Param("id") id: string) {

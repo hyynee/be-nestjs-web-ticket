@@ -15,19 +15,25 @@ import { JwtService } from "@nestjs/jwt";
 import { jwtConstants } from "./constants";
 import { RefreshToken } from "@src/schemas/refresh-token.schema";
 import { v4 as uuidv4 } from "uuid";
+import * as bcrypt from "bcrypt";
 import { RefreshTokenDTO } from "./dto/refreshToken.dto";
 import { ChangePasswordDTO } from "./dto/password.dto";
 import { FRONTEND_URL } from "app-config/config.json";
 import { LockLoginService } from "@src/lock-login/lock-login.service";
+import { MailService } from "@src/services/mail.service";
+import { ResetPasswordDto } from "./dto/reset-password.dto";
+import { ResetToken } from "@src/schemas/reset-token.schema";
 @Injectable()
 export class AuthService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(RefreshToken.name)
-    private readonly refreshTokenModel: Model<RefreshToken>,
+    @InjectModel(RefreshToken.name) private readonly refreshTokenModel: Model<RefreshToken>,
+    @InjectModel(ResetToken.name) private readonly resetTokenModel: Model<ResetToken>,
+
     private jwtService: JwtService,
     private loginAttemptService: LockLoginService,
-  ) {}
+    private mailService: MailService,
+  ) { }
 
   async register(data: RegisterDTO): Promise<User> {
     const { email, password, confirmPassword, fullName, role = "user" } = data;
@@ -49,26 +55,26 @@ export class AuthService {
   }
 
   async login(data: LoginDTO, ip: string) {
-  const { email, password } = data;
-  const user = await this.userModel.findOne({ email });
+    const { email, password } = data;
+    const user = await this.userModel.findOne({ email });
 
-  if (!user) {
-    await this.loginAttemptService.recordFailedAttempt(email, ip);
-    throw new UnauthorizedException('Invalid credentials');
+    if (!user) {
+      await this.loginAttemptService.recordFailedAttempt(email, ip);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const isMatch = await user.comparePassword(password);
+
+    if (!isMatch) {
+      await this.loginAttemptService.recordFailedAttempt(email, ip);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Login đúng → reset count
+    await this.loginAttemptService.resetLocked(email, ip);
+    // Tạo token
+    return this.generateUserTokens(user._id);
   }
-
-  const isMatch = await user.comparePassword(password);
-
-  if (!isMatch) {
-    await this.loginAttemptService.recordFailedAttempt(email, ip);
-    throw new UnauthorizedException('Invalid credentials');
-  }
-
-  // Login đúng → reset count
-  await this.loginAttemptService.resetLocked(email, ip);
-  // Tạo token
-  return this.generateUserTokens(user._id);
-}
 
 
   async loginWithGoogle(profile: any) {
@@ -92,9 +98,7 @@ export class AuthService {
   }
 
   async handleGoogleLoginCallback(profile: any, res: any) {
-    // console.log("Google callback received:", profile);
     const jwt = await this.loginWithGoogle(profile);
-    // console.log("Generated JWT:", jwt);
     // Redirect về trang login với tokens trong query params
     // Frontend sẽ check query params và lấy tokens để lưu vào localStorage
     const tokens = encodeURIComponent(JSON.stringify({
@@ -180,5 +184,59 @@ export class AuthService {
     user.password = newPassword;
     await user.save();
     return { message: "Password changed successfully" };
+  }
+
+  // forgotPassword
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    const user = await this.userModel.findOne({ email });
+    if (!user) {
+      return {
+        message: "If that email address is in our system, we have sent a password reset link to it."
+      };
+    }
+    await this.resetTokenModel.deleteMany({  // xoá các token cũ
+      userId: user._id,
+      isUsed: false
+    });
+    const resetToken = uuidv4();
+    const expiresAt = new Date(Date.now() + 3600000);
+    await this.resetTokenModel.create({
+      userId: user._id,
+      token: resetToken,
+      expiresAt,
+      isUsed: false,
+    });
+    const resetLink = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
+    await this.mailService.sendPasswordResetEmail(user.email, resetLink);
+    return {
+      message: "Password reset link has been sent to your email."
+    };
+  }
+
+  async resetPassword(data: ResetPasswordDto) {
+    const { resetToken, newPassword } = data;
+    const token = await this.resetTokenModel.findOne({
+      token: resetToken,
+      isUsed: false
+    });
+    if (!token) {
+      throw new BadRequestException("Invalid or expired reset token");
+    }
+    if (token.expiresAt < new Date()) {
+      await this.resetTokenModel.deleteOne({ token: resetToken });
+      throw new BadRequestException("Reset token has expired");
+    }
+    const user = await this.userModel.findById(token.userId);
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+    user.password = newPassword;
+    await user.save();
+    await this.resetTokenModel.updateOne(
+      { token: resetToken },
+      { isUsed: true }
+    );
+    await this.refreshTokenModel.deleteMany({ userId: user._id });
+    return { message: "Password has been reset successfully. Please login again." };
   }
 }

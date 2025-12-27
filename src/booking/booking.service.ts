@@ -168,7 +168,6 @@ export class BookingService {
             bookingCode,
             isDeleted: false
         };
-        console.log("query ", query);
         if (userId) {
             query.userId = userId;
         }

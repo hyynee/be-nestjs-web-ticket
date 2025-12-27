@@ -8,7 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Payment } from '@src/schemas/payment.schema';
 import { Zone } from '@src/schemas/zone.schema';
 import { TicketService } from '@src/ticket/ticket.service';
-import { MailService } from '@src/services/mail.services';
+import { MailService } from '@src/services/mail.service';
 
 @Injectable()
 export class PaymentService {

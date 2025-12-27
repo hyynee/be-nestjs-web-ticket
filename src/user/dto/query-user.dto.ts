@@ -1,6 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsEnum, IsOptional, IsString, IsInt, Min, IsBoolean } from "class-validator";
-import { Transform, Type } from "class-transformer";
+import { IsString, IsOptional, IsInt, Min, IsEnum, IsBoolean } from "class-validator";
+import { Transform } from "class-transformer";
 export class QueryUserDTO {
     @ApiProperty({ description: "Tìm kiếm theo tiêu đề", required: false })
     @IsString()
@@ -14,6 +14,7 @@ export class QueryUserDTO {
         if (value === 'false') return false;
         return value;
     })
+    @IsOptional()
     isActive?: boolean;
 
     @ApiProperty({
@@ -28,7 +29,7 @@ export class QueryUserDTO {
     @ApiProperty({ description: "Số trang", required: false, default: 1 })
     @IsInt()
     @Min(1)
-    @Type(() => Number)
+    @Transform(({ value }) => parseInt(value, 10))
     @IsOptional()
     page?: number = 1;
 
@@ -39,7 +40,7 @@ export class QueryUserDTO {
     })
     @IsInt()
     @Min(1)
-    @Type(() => Number)
+    @Transform(({ value }) => parseInt(value, 10))
     @IsOptional()
     limit?: number = 10;
 }

@@ -51,7 +51,7 @@ export class PaymentController {
         await this.paymentService.handleCheckoutSessionCompleted(session);
         break;
       default:
-        console.log(`Unhandled event type ${event.type}`);
+        console.error(`Unhandled event type ${event.type}`);
     }
   }
 
