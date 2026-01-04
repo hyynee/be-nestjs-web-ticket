@@ -9,10 +9,12 @@ import { Payment } from '@src/schemas/payment.schema';
 import { Zone } from '@src/schemas/zone.schema';
 import { TicketService } from '@src/ticket/ticket.service';
 import { MailService } from '@src/services/mail.service';
+import * as paypal from '@paypal/checkout-server-sdk';
 
 @Injectable()
 export class PaymentService {
     private stripe: Stripe;
+    private paypal: any;
 
     constructor(
         @InjectModel(Payment.name) private paymentModel: Model<any>,
@@ -22,6 +24,11 @@ export class PaymentService {
         private mailService: MailService
     ) {
         this.stripe = new Stripe(`${config.STRIPE_SECRET_KEY}`)
+        const env_paypal = new paypal.core.SandboxEnvironment(
+            config.PAYPAL_CLIENT_ID,
+            config.PAYPAL_CLIENT_SECRET
+        );
+        this.paypal = new paypal.core.PayPalHttpClient(env_paypal);
     }
 
     async createCheckoutSession(userId: string, bookingCode: string) {
@@ -150,6 +157,96 @@ export class PaymentService {
             checkoutUrl: session.url,
         }
     }
+
+    async createPaypalTransaction(userId: string, bookingCode: string) {
+        const booking = await this.bookingModel
+            .findOne({
+                bookingCode: bookingCode,
+                userId: userId,
+                isDeleted: false
+            })
+            .populate('eventId', 'title thumbnail location startDate endDate')
+            .populate('zoneId', 'name price')
+            .populate('areaId', 'name');
+
+        if (!booking) {
+            throw new BadRequestException('Booking not found or unauthorized');
+        }
+        if (booking.status !== "pending") {
+            throw new BadRequestException("Booking is completed or cancelled");
+        }
+        if (booking.paymentStatus === "paid") {
+            throw new BadRequestException("Booking already paid");
+        }
+        if (new Date() > booking.expiresAt) {
+            booking.status = "expired";
+            await booking.save();
+            throw new BadRequestException("Booking has expired");
+        }
+
+        const request = new paypal.orders.OrdersCreateRequest();
+        request.prefer("return=representation");
+
+        const amountUSD = (booking.totalPrice / 23000).toFixed(2);
+
+        request.requestBody({
+            intent: 'CAPTURE',
+            purchase_units: [{
+                reference_id: booking.bookingCode,
+                description: `Ticket for ${(booking.eventId as any).title}`,
+                amount: {
+                    currency_code: 'USD',
+                    value: amountUSD
+                }
+            }],
+            application_context: {
+                return_url: `${config.FRONTEND_URL}/payment/paypal-success?bookingCode=${booking.bookingCode}`,
+                cancel_url: `${config.FRONTEND_URL}/payment/paypal-cancel?bookingCode=${booking.bookingCode}`,
+            }
+        });
+
+        try {
+            const response = await this.paypal.execute(request);
+            const order = response.result;
+
+            await this.paymentModel.create({
+                userId: userId,
+                bookingId: booking._id,
+                amount: booking.totalPrice,
+                currency: 'VND',
+                status: 'pending',
+                paymentMethod: 'paypal',
+                paypalOrderId: order.id,
+                metadata: {
+                    bookingCode: bookingCode,
+                    eventTitle: (booking.eventId as any).title,
+                    amountUSD: amountUSD
+                }
+            });
+            // Trả về order ID cho frontend
+            const approveLink = order.links.find(link => link.rel === 'approve');
+            return {
+                status: 200,
+                message: "PayPal order created successfully",
+                paypalOrderId: order.id,
+                approvalUrl: approveLink?.href,
+                amountUSD: amountUSD,
+                bookingDetails: {
+                    bookingCode: booking.bookingCode,
+                    amount: booking.totalPrice,
+                    amountUSD: amountUSD,
+                    currency: 'VND',
+                    customerEmail: booking.customerEmail,
+                    customerName: booking.customerName,
+                    customerPhone: booking.customerPhone,
+                }
+            }
+        } catch (error) {
+            console.error('PayPal error:', error);
+            throw new BadRequestException('Failed to create PayPal order');
+        }
+    }
+
     verifyWebhook(rawBody: Buffer, signature: string): Stripe.Event {
         const endpointSecret = config.STRIPE_WEBHOOK_SECRET;
         try {
@@ -167,7 +264,6 @@ export class PaymentService {
     async handlePaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent) {
         console.log('paymentIntent', paymentIntent);
     }
-
 
     async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
         try {
@@ -236,7 +332,7 @@ export class PaymentService {
             const tickets = await this.ticketService.createTicketsFromBooking(bookingCode);
             const ticketMailData = tickets.map(ticket => ({
                 ticketCode: ticket.ticketCode,
-                seatNumber: ticket.seatNumber ,
+                seatNumber: ticket.seatNumber,
                 qrCode: ticket.qrCode || '',
             }));
             // mail xác nhận đặt vé
@@ -260,6 +356,155 @@ export class PaymentService {
             throw error;
         }
     }
+
+    async payCheckout(id: string) {
+        let booking;
+        if (Types.ObjectId.isValid(id)) {
+            booking = await this.bookingModel.findById(id);
+        } else if (id.startsWith('BK')) {
+            booking = await this.bookingModel.findOne({ bookingCode: id });
+        } else {
+            const payment = await this.paymentModel.findOne({
+                $or: [
+                    { paypalOrderId: id },
+                    { stripePaymentIntentId: id }
+                ]
+            }).populate('bookingId');
+            if (payment?.bookingId) {
+                booking = payment.bookingId as any;
+            }
+        }
+        if (!booking) {
+            throw new BadRequestException('Booking not found');
+        }
+        if (booking.paymentStatus === "paid") {
+            throw new BadRequestException("Booking already paid");
+        }
+        booking.paymentStatus = "paid";
+        booking.status = "confirmed";
+        booking.paidAt = new Date();
+        await booking.save();
+        return {
+            status: 200,
+            message: "Booking paid successfully",
+        };
+    }
+
+    async finalizePaypalTransaction(orderId: string) {
+        const payment = await this.paymentModel.findOne({ paypalOrderId: orderId });
+        if (!payment) {
+            throw new BadRequestException('Payment record not found');
+        }
+        if (payment.status === 'succeeded') {
+            return { status: 200, message: 'Payment already finalized' };
+        }
+        try {
+            const captureRequest = new paypal.orders.OrdersCaptureRequest(orderId);
+            captureRequest.requestBody({});
+
+            const response = await this.paypal.execute(captureRequest);
+            const capture = response.result;
+
+            if (capture.status === 'COMPLETED') {
+                const captureDetail = capture.purchase_units[0].payments.captures[0];
+                await this.processPaypalPayment(payment, capture, captureDetail);
+                return {
+                    status: 200,
+                    message: 'PayPal payment completed',
+                    captureId: captureDetail.id,
+                };
+            } else {
+                throw new BadRequestException(`Capture failed with status: ${capture.status}`);
+            }
+
+        } catch (error) {
+            console.error('PayPal capture error:', error);
+            throw new BadRequestException(
+                `Failed to capture payment: ${error.message || 'Unknown error'}`
+            );
+        }
+    }
+
+    private async processPaypalPayment(
+        payment: any,
+        order: any,
+        captureOrAuth: any
+    ) {
+        const booking = await this.bookingModel
+            .findById(payment.bookingId)
+            .populate('eventId', 'title location startDate endDate')
+            .populate('zoneId', 'name')
+            .populate('areaId', 'name');
+
+        if (!booking) {
+            throw new BadRequestException('Associated booking not found');
+        }
+
+        if (booking.paymentStatus === 'paid') {
+            console.log(`Booking ${booking.bookingCode} already paid, skipping...`);
+            return;
+        }
+
+        booking.paymentStatus = 'paid';
+        booking.status = 'confirmed';
+        booking.paidAt = new Date();
+
+        if (booking.quantity > 0) {
+            await this.zoneModel.findByIdAndUpdate(
+                booking.zoneId,
+                { $inc: { soldCount: booking.quantity } }
+            );
+        }
+
+        await booking.save();
+
+        await this.paymentModel.findByIdAndUpdate(payment._id, {
+            status: 'succeeded',
+            paidAt: new Date(),
+            metadata: {
+                ...payment.metadata,
+                orderId: order.id,
+                orderStatus: order.status,
+                authorizationId: captureOrAuth.id,
+                captureStatus: captureOrAuth.status,
+                capturedAt: new Date().toISOString()
+            }
+        });
+
+        const tickets = await this.ticketService.createTicketsFromBooking(
+            booking.bookingCode
+        );
+
+        const ticketMailData = tickets.map(ticket => ({
+            ticketCode: ticket.ticketCode,
+            seatNumber: ticket.seatNumber,
+            qrCode: ticket.qrCode || '',
+        }));
+
+        try {
+            await this.mailService.sendBookingConfirmation({
+                email: booking.customerEmail,
+                customerName: booking.customerName || 'Khách hàng',
+                bookingCode: booking.bookingCode,
+                eventTitle: (booking.eventId as any).title,
+                eventLocation: (booking.eventId as any).location,
+                eventDate: (booking.eventId as any).startDate,
+                zoneName: (booking.zoneId as any).name,
+                seats: booking.seats || [],
+                quantity: booking.quantity,
+                totalPrice: booking.totalPrice,
+                currency: payment.currency,
+                tickets: ticketMailData,
+            });
+
+            console.log('Confirmation email sent successfully');
+        } catch (emailError) {
+            console.error('Failed to send confirmation email:', emailError);
+        }
+
+        console.log('PayPal payment processed successfully');
+    }
+
     async getPaymentHistory(userId: string) {
         const payments = await this.paymentModel
             .find({ userId, isDeleted: false })

@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, Req, Res, Get } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, Req, Res, Get, Param, Put } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { AuthGuard } from '@nestjs/passport';
 import { UseGuards, Post } from '@nestjs/common';
@@ -55,7 +55,36 @@ export class PaymentController {
     }
   }
 
+  // check out paypal
   @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(200)
+  @Post('create-paypal-transaction')
+  async createPaypalTransaction(
+    @CurrentUser() user: JwtPayload,
+    @Body() createPayment: CreateCheckoutSessionDto,
+  ) {
+    const userId = user.userId;
+    return this.paymentService.createPaypalTransaction(userId, createPayment.bookingCode);
+  }
+
+
+  @Put('/:id/pay')
+  payCheckout(@Param('id') id: string) {
+    return this.paymentService.payCheckout(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(200)
+  @Post('/:id/finalize')
+  async finalizePaypalTransaction(
+    @Param('id') id: string,
+  ) {
+    return this.paymentService.finalizePaypalTransaction(id);
+  }
+
+   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(200)
   @Get('history')

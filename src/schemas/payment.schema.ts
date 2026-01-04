@@ -9,8 +9,14 @@ export class Payment extends Document {
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
   userId: Types.ObjectId;
 
-  @Prop({ required: true })
-  stripePaymentIntentId: string;
+  @Prop({ type: String })
+  stripePaymentIntentId?: string; 
+  
+  @Prop({ type: String })
+  paypalOrderId?: string;
+  
+  @Prop({ type: String })
+  paypalCaptureId?: string;
 
   @Prop({ type: Number, required: true, min: 0 })
   amount: number;
@@ -20,7 +26,7 @@ export class Payment extends Document {
 
   @Prop({
     type: String,
-    enum: ["card", "bank_transfer", "e_wallet"],
+    enum: ["card", "bank_transfer", "e_wallet", "paypal"], 
     default: "card",
   })
   paymentMethod: string;
@@ -57,7 +63,6 @@ export class Payment extends Document {
   @Prop({ type: Number })
   refundAmount?: number;
 
-  // Soft delete
   @Prop({ default: false })
   isDeleted: boolean;
 }
@@ -68,5 +73,6 @@ export const PaymentSchema = SchemaFactory.createForClass(Payment);
 PaymentSchema.index({ bookingId: 1 });
 PaymentSchema.index({ userId: 1 });
 PaymentSchema.index({ stripePaymentIntentId: 1 });
+PaymentSchema.index({ paypalOrderId: 1 }); 
 PaymentSchema.index({ status: 1 });
 PaymentSchema.index({ isDeleted: 1 });
