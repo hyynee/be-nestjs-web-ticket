@@ -211,13 +211,11 @@ export class BookingService {
         const availableTickets = zone.capacity - zone.soldCount;
 
         if (zone.hasSeating) {
-            // Lấy danh sách areas
             areas = await this.areaModel.find({
                 zoneId: zoneId,
                 isDeleted: false,
             }).select('name description rowLabel seatCount');
 
-            // Lấy danh sách seats đã đặt
             const bookings = await this.bookingModel.find({
                 eventId,
                 zoneId,
@@ -264,17 +262,17 @@ export class BookingService {
             status: { $in: ['pending', 'confirmed'] },
             isDeleted: false,
         });
-
         if (!booking) {
             throw new NotFoundException('Booking không tồn tại hoặc không thể hủy');
         }
+        const wasPaid = booking.paymentStatus === 'paid';
         // Kiểm tra thời gian hủy
         const now = new Date();
         const event = await this.eventModel.findById(booking.eventId);
         if (event && event.startDate && now > event.startDate) {
             throw new BadRequestException('Không thể hủy vé sau khi sự kiện đã bắt đầu');
         }
-        // Cập nhật booking
+
         booking.status = 'cancelled';
         booking.cancelledAt = new Date();
         booking.cancellationReason = reason;
@@ -283,9 +281,14 @@ export class BookingService {
         await booking.save();
 
         // Hoàn lại số lượng vé
-        await this.zoneModel.findByIdAndUpdate(booking.zoneId, {
+        const updateQuery: any = {
             $inc: { soldCount: -booking.quantity }
-        });
+        };
+        if (wasPaid) {
+            updateQuery.$inc.confirmedSoldCount = -booking.quantity;
+        }
+
+        await this.zoneModel.findByIdAndUpdate(booking.zoneId, updateQuery);
 
         return {
             success: true,
@@ -327,7 +330,7 @@ export class BookingService {
             },
         };
     }
-    
+
     async expirePendingBookings() {
         const expiredBookings = await this.bookingModel.find({
             status: 'pending',

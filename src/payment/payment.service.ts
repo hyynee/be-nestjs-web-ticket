@@ -305,7 +305,7 @@ export class PaymentService {
             if (updatedBooking.quantity > 0) {
                 await this.zoneModel.findByIdAndUpdate(
                     updatedBooking.zoneId,
-                    { $inc: { soldCount: updatedBooking.quantity } }
+                    { $inc: { confirmedSoldCount: updatedBooking.quantity } }
                 );
             }
 
@@ -383,6 +383,12 @@ export class PaymentService {
         booking.paymentStatus = "paid";
         booking.status = "confirmed";
         booking.paidAt = new Date();
+        if (booking.quantity > 0) {
+            await this.zoneModel.findByIdAndUpdate(
+                booking.zoneId,
+                { $inc: { confirmedSoldCount: booking.quantity } }
+            );
+        }
         await booking.save();
         return {
             status: 200,
@@ -452,7 +458,7 @@ export class PaymentService {
         if (booking.quantity > 0) {
             await this.zoneModel.findByIdAndUpdate(
                 booking.zoneId,
-                { $inc: { soldCount: booking.quantity } }
+                { $inc: { confirmedSoldCount: booking.quantity } }
             );
         }
 
@@ -501,8 +507,6 @@ export class PaymentService {
         } catch (emailError) {
             console.error('Failed to send confirmation email:', emailError);
         }
-
-        console.log('PayPal payment processed successfully');
     }
 
     async getPaymentHistory(userId: string) {
