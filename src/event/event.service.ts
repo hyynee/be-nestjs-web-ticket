@@ -73,7 +73,7 @@ export class EventService {
     eventData: CreateEventDTO
   ): Promise<Event> {
     const newEvent = new this.eventModel({
-      createdBy: currentUser,
+      createdBy: currentUser.userId,
       ...eventData,
     });
     return newEvent.save();
