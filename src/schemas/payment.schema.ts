@@ -9,12 +9,15 @@ export class Payment extends Document {
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
   userId: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: "Event" })
+  eventId?: Types.ObjectId;
+
   @Prop({ type: String })
-  stripePaymentIntentId?: string; 
-  
+  stripePaymentIntentId?: string;
+
   @Prop({ type: String })
   paypalOrderId?: string;
-  
+
   @Prop({ type: String })
   paypalCaptureId?: string;
 
@@ -26,7 +29,7 @@ export class Payment extends Document {
 
   @Prop({
     type: String,
-    enum: ["card", "bank_transfer", "e_wallet", "paypal"], 
+    enum: ["card", "bank_transfer", "e_wallet", "paypal"],
     default: "card",
   })
   paymentMethod: string;
@@ -73,6 +76,6 @@ export const PaymentSchema = SchemaFactory.createForClass(Payment);
 PaymentSchema.index({ bookingId: 1 });
 PaymentSchema.index({ userId: 1 });
 PaymentSchema.index({ stripePaymentIntentId: 1 });
-PaymentSchema.index({ paypalOrderId: 1 }); 
+PaymentSchema.index({ paypalOrderId: 1 });
 PaymentSchema.index({ status: 1 });
 PaymentSchema.index({ isDeleted: 1 });

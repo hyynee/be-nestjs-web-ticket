@@ -22,6 +22,7 @@ import { ChatModule } from "./chatbot/chat.module";
 import { APP_GUARD } from "@nestjs/core";
 import { APP_PIPE } from '@nestjs/core';
 import { CustomThrottlerGuard } from "./helper/throtler.helper";
+import { StatisticalModule } from './statistical/statistical.module';
 @Module({
   imports: [
     DatabaseModule,
@@ -60,6 +61,7 @@ import { CustomThrottlerGuard } from "./helper/throtler.helper";
     LockLoginModule,
     TicketModule,
     ChatModule,
+    StatisticalModule,
   ],
   controllers: [AppController, UploadController],
   providers: [

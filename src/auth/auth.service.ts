@@ -116,7 +116,7 @@ export class AuthService {
     return req.currentUser;
   }
   async getUserById(id: string) {
-    const user = await this.userModel.findById(id);
+    const user = await this.userModel.findById(id).select("-password");
     return user;
   }
 

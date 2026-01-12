@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 export class CreatePaymentRecordDto {
     bookingId: Types.ObjectId;
     userId: Types.ObjectId;
+    eventId?: Types.ObjectId;
     stripePaymentIntentId: string;
     amount: number;
     currency?: string;

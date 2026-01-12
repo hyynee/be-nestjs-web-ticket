@@ -91,7 +91,6 @@ export class PaymentService {
             payment_method_types: ["card"],
             mode: "payment",
             customer_email: booking.customerEmail,
-
             shipping_address_collection: {
                 allowed_countries: ['US', 'CA', 'KE', 'VN'],
             },
@@ -212,6 +211,7 @@ export class PaymentService {
             await this.paymentModel.create({
                 userId: userId,
                 bookingId: booking._id,
+                eventId: booking.eventId,
                 amount: booking.totalPrice,
                 currency: 'VND',
                 status: 'pending',
@@ -314,6 +314,7 @@ export class PaymentService {
                 {
                     userId: userId,
                     bookingId: bookingId,
+                    eventId: updatedBooking.eventId,
                     amount: session.amount_total,
                     currency: session.currency || 'vnd',
                     status: 'succeeded',
