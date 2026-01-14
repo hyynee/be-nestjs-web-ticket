@@ -43,6 +43,7 @@ export class BookingService {
             eventId: data.eventId,
             isDeleted: false,
         });
+
         if (!zone) {
             throw new NotFoundException('Khu vực không tồn tại hoặc không thuộc sự kiện này');
         }

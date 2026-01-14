@@ -23,6 +23,7 @@ import { APP_GUARD } from "@nestjs/core";
 import { APP_PIPE } from '@nestjs/core';
 import { CustomThrottlerGuard } from "./helper/throtler.helper";
 import { StatisticalModule } from './statistical/statistical.module';
+import { LoggerModule } from "./logger/logger.module";
 @Module({
   imports: [
     DatabaseModule,
@@ -62,6 +63,7 @@ import { StatisticalModule } from './statistical/statistical.module';
     TicketModule,
     ChatModule,
     StatisticalModule,
+    LoggerModule
   ],
   controllers: [AppController, UploadController],
   providers: [

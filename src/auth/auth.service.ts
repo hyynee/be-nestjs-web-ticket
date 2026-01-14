@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Request,
   NotFoundException,
+  Inject,
 } from "@nestjs/common";
 import { LoginDTO } from "./dto/login.dto";
 import { InjectModel } from "@nestjs/mongoose";
@@ -23,12 +24,15 @@ import { LockLoginService } from "@src/lock-login/lock-login.service";
 import { MailService } from "@src/services/mail.service";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ResetToken } from "@src/schemas/reset-token.schema";
+import { WINSTON_MODULE_PROVIDER } from "nest-winston";
+import { Logger } from "winston";
 @Injectable()
 export class AuthService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(RefreshToken.name) private readonly refreshTokenModel: Model<RefreshToken>,
     @InjectModel(ResetToken.name) private readonly resetTokenModel: Model<ResetToken>,
+    @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
 
     private jwtService: JwtService,
     private loginAttemptService: LockLoginService,

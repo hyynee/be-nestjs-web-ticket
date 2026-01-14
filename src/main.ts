@@ -6,6 +6,7 @@ import * as express from "express";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
 import helmet from 'helmet';
+import { WINSTON_MODULE_NEST_PROVIDER } from "nest-winston";
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.set('trust proxy', ['loopback', '10.0.0.0/8', '192.168.0.0/16']);
@@ -20,6 +21,7 @@ async function bootstrap() {
   app.use(cookieParser());
   // Middleware để xử lý raw body cho Stripe Webhook
   app.use("/payment/webhook", bodyParser.raw({ type: "application/json" }));
+  app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
   const config = new DocumentBuilder()
     .setTitle("Ticket_System")
     .setVersion("1.1.3")
