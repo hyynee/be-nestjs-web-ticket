@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nestjs-ticket-be
+    ports:
+      - "9000:9000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/ticket-be
+    volumes:
+      - ./app-config:/app/app-config
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    networks:
+      - ticket-network
+
+  mongo:
+    image: mongo:7
+    container_name: nestjs-ticket-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+    networks:
+      - ticket-network
+
+volumes:
+  mongo-data:
+
+networks:
+  ticket-network:
+    driver: bridge

@@ -72,5 +72,4 @@ export class BookingController {
   getAllBookings(@Query() query: QueryBookingDto) {
     return this.bookingService.getAllBookings(query);
   }
-
 }

@@ -7,6 +7,10 @@ export class QueryBookingDto {
 
   @IsOptional()
   @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
   status?: "pending" | "confirmed" | "cancelled" | "expired";
 
   @IsOptional()
@@ -22,4 +26,12 @@ export class QueryBookingDto {
   @IsNumber()
   @Type(() => Number)
   limit?: number = 10;
+
+    @IsOptional()
+    @IsString()
+    sortBy?: string = 'createdAt'; 
+  
+    @IsOptional()
+    @IsString()
+    sortOrder?: 'asc' | 'desc' = 'desc';
 }

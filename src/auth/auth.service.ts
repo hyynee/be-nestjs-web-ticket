@@ -26,6 +26,8 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ResetToken } from "@src/schemas/reset-token.schema";
 import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { Logger } from "winston";
+import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
+import { UserEventsService } from "@src/events/user-event.services";
 @Injectable()
 export class AuthService {
   constructor(
@@ -33,11 +35,20 @@ export class AuthService {
     @InjectModel(RefreshToken.name) private readonly refreshTokenModel: Model<RefreshToken>,
     @InjectModel(ResetToken.name) private readonly resetTokenModel: Model<ResetToken>,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
 
     private jwtService: JwtService,
     private loginAttemptService: LockLoginService,
+    private readonly userEventsService: UserEventsService,
     private mailService: MailService,
   ) { }
+  private generateCacheKeyForUser(userId: string): string {
+    return `user:details:${userId}`;
+  };
+  private async invalidateUserCache(userId: string): Promise<void> {
+    const cacheKey = this.generateCacheKeyForUser(userId);
+    await this.cacheManager.del(cacheKey);
+  };
 
   async register(data: RegisterDTO): Promise<User> {
     const { email, password, confirmPassword, fullName, role = "user" } = data;
@@ -54,7 +65,9 @@ export class AuthService {
       fullName,
       role: role || "user",
     });
+    // emit event user registered
     await user.save();
+    this.userEventsService.emitUserRegistered(user);
     return user;
   }
 
@@ -119,8 +132,15 @@ export class AuthService {
   async getCurrentUser(@Request() req) {
     return req.currentUser;
   }
+
   async getUserById(id: string) {
+    const cacheKey = this.generateCacheKeyForUser(id);
+    const cachedUser = await this.cacheManager.get<User>(cacheKey);
+    if (cachedUser) {
+      return cachedUser;
+    }
     const user = await this.userModel.findById(id).select("-password");
+    await this.cacheManager.set(cacheKey, user, 30000);
     return user;
   }
 
@@ -142,6 +162,7 @@ export class AuthService {
 
   async logout(userId: string, accessToken: string) {
     await this.refreshTokenModel.deleteMany({ userId });
+    await this.invalidateUserCache(userId);
     return { message: "Logged out successfully" };
   }
 
@@ -187,6 +208,7 @@ export class AuthService {
     }
     user.password = newPassword;
     await user.save();
+    await this.invalidateUserCache(userId);
     return { message: "Password changed successfully" };
   }
 
@@ -241,6 +263,7 @@ export class AuthService {
       { isUsed: true }
     );
     await this.refreshTokenModel.deleteMany({ userId: user._id });
+   await this.invalidateUserCache(user.id.toString());
     return { message: "Password has been reset successfully. Please login again." };
   }
 }

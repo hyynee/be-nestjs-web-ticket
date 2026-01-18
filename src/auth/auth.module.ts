@@ -13,6 +13,7 @@ import { GoogleStrategy } from "@src/strategy/google.strategy";
 import { LockLoginModule } from "@src/lock-login/lock-login.module";
 import { MailModule } from "@src/services/mail.module";
 import { ResetTokenSchema } from "@src/schemas/reset-token.schema";
+import { EventsModule } from "@src/events/events.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ResetTokenSchema } from "@src/schemas/reset-token.schema";
     }),
     PassportModule,
     ResponseModule,
+    EventsModule,
     MailModule
   ],
   controllers: [AuthController],

@@ -1,19 +1,25 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Booking } from '@src/schemas/booking.schema';
 import { Event } from '@src/schemas/event.schema';
 import { Zone } from '@src/schemas/zone.schema';
 import { Area } from '@src/schemas/area.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { QueryBookingDto } from './dto/query-booking.dto';
+import { PaginatedResponse } from '@src/common/interfaces/pagination-response';
 
 @Injectable()
 export class BookingService {
+    private readonly BOOKINGS_CACHE_LIST_KEY = new Set<string>(); // cache list admin
+    private readonly USER_BOOKINGS_CACHE_KEY = new Set<string>(); // cache list user
     constructor(
         @InjectModel(Booking.name) private bookingModel: Model<Booking>,
         @InjectModel(Event.name) private eventModel: Model<Event>,
         @InjectModel(Zone.name) private zoneModel: Model<Zone>,
         @InjectModel(Area.name) private areaModel: Model<Area>,
+        @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) { }
 
     /**
@@ -31,7 +37,33 @@ export class BookingService {
 
         return `BK${year}${month}${day}${timestamp}${random}`;
     }
+    /* genarate cache keys */
+    private generateBookingListCacheKey(query: QueryBookingDto): string {
+        const { eventId, search, status, paymentStatus, page, limit, sortBy, sortOrder } = query;
+        return `bookings:list:event=${eventId || 'all'}:search=${search || ''}:status=${status || 'all'}:payment=${paymentStatus || 'all'}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+    }
 
+    private async invalidateBookingCache(): Promise<void> {
+        for (const key of this.BOOKINGS_CACHE_LIST_KEY) {
+            await this.cacheManager.del(key);
+        }
+        this.BOOKINGS_CACHE_LIST_KEY.clear();
+    }
+
+    private async invalidateUserBookingCache(userId: string): Promise<void> {
+        const keysToDelete: string[] = [];
+        // collect keys
+        for (const key of this.USER_BOOKINGS_CACHE_KEY) {
+            if (key.includes(`bookings:user:${userId}:`)) {
+                keysToDelete.push(key); // lọc key thuộc user này
+            }
+        }
+        // delete safely
+        for (const key of keysToDelete) {
+            await this.cacheManager.del(key);
+            this.USER_BOOKINGS_CACHE_KEY.delete(key); // Xóa cache thật + xóa trong Set
+        }
+    }
 
     async createBooking(userId: string, data: CreateBookingDto) {
         const event = await this.eventModel.findById(data.eventId);
@@ -122,6 +154,8 @@ export class BookingService {
         }
         const newBooking = new this.bookingModel(bookingData);
         await newBooking.save();
+        await this.invalidateBookingCache();
+        await this.invalidateUserBookingCache(userId);
         // Cập nhật số lượng vé đã bán
         await this.zoneModel.findByIdAndUpdate(data.zoneId, {
             $inc: { soldCount: data.quantity }
@@ -133,8 +167,12 @@ export class BookingService {
         };
     }
 
-
     async getMyBookings(userId: string, status?: string, page: number = 1, limit: number = 10) {
+        const cacheKey = `bookings:user:${userId}:status=${status || 'all'}:page=${page}:limit=${limit}`;
+        const cachedData = await this.cacheManager.get<PaginatedResponse<Booking>>(cacheKey);
+        if (cachedData) {
+            return cachedData;
+        };
         const filter: any = {
             userId,
             isDeleted: false
@@ -153,16 +191,23 @@ export class BookingService {
                 .limit(limit),
             this.bookingModel.countDocuments(filter)
         ]);
-        return {
+        const result = {
             success: true,
-            data: bookings,
-            pagination: {
-                total,
-                page,
-                limit,
+            items: bookings,
+            meta: {
+                currentPage: page,
+                itemsPerPage: limit,
+                totalItems: total,
                 totalPages: Math.ceil(total / limit),
-            },
+                hasPreviousPage: page > 1,
+                hasNextPage: page < Math.ceil(total / limit),
+            }
         };
+
+        await this.cacheManager.set(cacheKey, result, 30);
+        this.USER_BOOKINGS_CACHE_KEY.add(cacheKey);
+
+        return result;
     }
     async getBookingByCode(userId: string, bookingCode: string) {
         const query: any = {
@@ -290,6 +335,8 @@ export class BookingService {
         }
 
         await this.zoneModel.findByIdAndUpdate(booking.zoneId, updateQuery);
+        await this.invalidateBookingCache();
+        await this.invalidateUserBookingCache(userId);
 
         return {
             success: true,
@@ -298,9 +345,16 @@ export class BookingService {
     }
 
     /* Admin */
-    async getAllBookings(query: any) {
-        const { eventId, status, paymentStatus, page = 1, limit = 20 } = query;
-
+    async getAllBookings(query: QueryBookingDto): Promise<PaginatedResponse<Booking>> {
+        const { eventId, search, status, paymentStatus, page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc' } = query;
+        if (eventId && !Types.ObjectId.isValid(eventId)) {
+            throw new BadRequestException("Invalid event ID");
+        }
+        const cacheKey = this.generateBookingListCacheKey(query);
+        const cachedData = await this.cacheManager.get<PaginatedResponse<Booking>>(cacheKey);
+        if (cachedData) {
+            return cachedData;
+        }
         const filter: any = { isDeleted: false };
 
         if (eventId) filter.eventId = eventId;
@@ -308,29 +362,42 @@ export class BookingService {
         if (paymentStatus) filter.paymentStatus = paymentStatus;
 
         const skip = (page - 1) * limit;
+        if (search) {
+            filter.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
+        const sort: any = {};
+        sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
         const [bookings, total] = await Promise.all([
             this.bookingModel.find(filter)
                 .populate('eventId', 'title startDate')
                 .populate('zoneId', 'name price')
                 .populate('userId', 'email name')
-                .sort({ createdAt: -1 })
+                .sort(sort)
                 .skip(skip)
                 .limit(limit),
             this.bookingModel.countDocuments(filter)
         ]);
-
-        return {
-            success: true,
-            data: bookings,
-            pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total,
-                totalPages: Math.ceil(total / limit),
-            },
+        const totalPages = Math.ceil(total / limit);
+        const result: PaginatedResponse<Booking> = {
+            items: bookings,
+            meta: {
+                currentPage: page,
+                itemsPerPage: limit,
+                totalItems: total,
+                totalPages,
+                hasPreviousPage: page > 1,
+                hasNextPage: page < totalPages,
+            }
         };
+        await this.cacheManager.set(cacheKey, result, 30000);
+        this.BOOKINGS_CACHE_LIST_KEY.add(cacheKey);
+        return result;
     }
+
 
     async expirePendingBookings() {
         const expiredBookings = await this.bookingModel.find({
@@ -346,7 +413,7 @@ export class BookingService {
                 $inc: { soldCount: -booking.quantity }
             });
         }
-
+        await this.invalidateBookingCache();
         return {
             success: true,
             message: `Đã expire ${expiredBookings.length} booking`,

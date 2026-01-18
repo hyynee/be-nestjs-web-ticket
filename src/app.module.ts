@@ -24,6 +24,8 @@ import { APP_PIPE } from '@nestjs/core';
 import { CustomThrottlerGuard } from "./helper/throtler.helper";
 import { StatisticalModule } from './statistical/statistical.module';
 import { LoggerModule } from "./logger/logger.module";
+import { CacheModule } from "@nestjs/cache-manager";
+import { EventsModule } from "./events/events.module";
 @Module({
   imports: [
     DatabaseModule,
@@ -48,6 +50,11 @@ import { LoggerModule } from "./logger/logger.module";
       ],
       errorMessage: "Quá nhiều request. Vui lòng thử lại sau.",
     }),
+    CacheModule.register({
+      isGlobal: true,
+      ttl: 30000,
+      max: 100,
+    }),
     AuthModule,
     UserModule,
     EventModule,
@@ -63,7 +70,8 @@ import { LoggerModule } from "./logger/logger.module";
     TicketModule,
     ChatModule,
     StatisticalModule,
-    LoggerModule
+    LoggerModule,
+    EventsModule
   ],
   controllers: [AppController, UploadController],
   providers: [

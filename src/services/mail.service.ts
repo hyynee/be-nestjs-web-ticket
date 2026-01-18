@@ -56,6 +56,22 @@ export class MailService {
     });
   }
 
+  async sendRegisterEmail(to: string, fullName: string) {
+    const mailOptions = {
+      from: 'Auth-backend service',
+      to: to,
+      subject: 'Welcome to Our Service',
+      html: `<p>Dear ${fullName},</p>
+             <p>Your account has been successfully created.</p>
+             <p>Please log in and change your password as soon as possible.</p>
+             <p>Best regards,<br/>Auth-backend Team</p>`,
+    };
+    try { 
+      await this.transporter.sendMail(mailOptions);
+    } catch (error) {
+      console.error('Error sending email:', error);
+    };
+  }
   async sendPasswordResetEmail(to: string, resetToken: string) {
     const resetLink = `${config.FRONTEND_URL}/reset-password?token=${resetToken}`;
     const mailOptions = {

@@ -19,9 +19,11 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@nestjs/cache-manager": "^3.1.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.1",
+    "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/mapped-types": "*",
     "@nestjs/mongoose": "^11.0.3",
@@ -34,6 +36,7 @@
     "@nestjs/websockets": "^11.1.9",
     "@paypal/checkout-server-sdk": "^1.0.3",
     "axios": "^1.13.2",
+    "cache-manager": "^7.2.8",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "cloudinary": "^2.8.0",
@@ -54,7 +57,8 @@
     "socket.io": "^4.8.1",
     "stripe": "^20.1.0",
     "uuidv4": "^6.2.13",
-    "winston": "^3.19.0"
+    "winston": "^3.19.0",
+    "bcrypt": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -73,7 +77,6 @@
     "@types/pdfkit": "^0.17.4",
     "@types/qrcode": "^1.5.6",
     "@types/supertest": "^6.0.2",
-    "bcrypt": "^6.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
