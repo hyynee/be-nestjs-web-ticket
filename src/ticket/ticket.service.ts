@@ -66,18 +66,19 @@ export class TicketService {
     }
     const ticketsData: any[] = [];
     const zone = booking.zoneId as any;
+
     if (zone.hasSeating && booking.seats?.length) {
       for (const seat of booking.seats) {
         const ticketCode = await this.generateTicketCode();
         ticketsData.push({
           bookingId: booking._id,
-          eventId: booking.eventId,
-          zoneId: booking.zoneId,
-          areaId: booking.areaId,
+          eventId: new Types.ObjectId(booking.eventId),
+          zoneId: new Types.ObjectId(booking.zoneId),
+          areaId: booking.areaId ? new Types.ObjectId(booking.areaId) : undefined,
           seatNumber: seat,
           status: 'valid',
           price: booking.pricePerTicket,
-          userId: booking.userId,
+          userId: new Types.ObjectId(booking.userId),
           ticketCode,
         });
       }
@@ -86,14 +87,15 @@ export class TicketService {
         const ticketCode = await this.generateTicketCode();
         ticketsData.push({
           bookingId: booking._id,
-          eventId: booking.eventId,
-          zoneId: booking.zoneId,
-          areaId: booking.areaId,
-          status: 'valid',
+          eventId: new Types.ObjectId(booking.eventId),
+          zoneId: new Types.ObjectId(booking.zoneId),
+          areaId: booking.areaId ? new Types.ObjectId(booking.areaId) : undefined,
+          userId: new Types.ObjectId(booking.userId),
           ticketCode,
           price: booking.pricePerTicket,
-          userId: booking.userId,
+          status: 'valid',
         });
+
       }
     }
     const createdTickets = await this.ticketModel.insertMany(
@@ -110,8 +112,8 @@ export class TicketService {
       bookingCode: booking.bookingCode,
       tickets: createdTickets.map(ticket => ({
         ticketCode: ticket.ticketCode,
-        eventId: ticket.eventId.toString(),
-        zoneId: ticket.zoneId.toString(),
+        eventId: ticket.eventId,
+        zoneId: ticket.zoneId,
         seatNumber: ticket.seatNumber || null,
         price: ticket.price,
         status: ticket.status,
@@ -134,8 +136,8 @@ export class TicketService {
 
   async validateTicket(ticketCode: string) {
     const ticket = await this.ticketModel.findOne({ ticketCode, isDeleted: false })
-    .populate('eventId', 'startDate endDate')
-    .exec();
+      .populate('eventId', 'startDate endDate')
+      .exec();
     if (!ticket) {
       throw new BadRequestException('Ticket not found');
     }
@@ -216,8 +218,8 @@ export class TicketService {
 
     this.ticketGateway.emitTicketCheckedIn({
       ticketCode: ticket.ticketCode,
-      eventId: ticket.eventId.toString(),
-      zoneId: ticket.zoneId.toString(),
+      eventId: ticket.eventId,
+      zoneId: ticket.zoneId,
       seatNumber: ticket.seatNumber || null,
       checkedInAt: ticket.checkedInAt as Date,
     });

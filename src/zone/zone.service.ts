@@ -60,8 +60,12 @@ export class ZoneService {
     currentUser: JwtPayload,
     createZoneDto: CreateZoneDto
   ): Promise<Zone> {
+    if (!Types.ObjectId.isValid(createZoneDto.eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
     const zone = new this.zoneModel({
       ...createZoneDto,
+      eventId: new Types.ObjectId(createZoneDto.eventId),
       createdBy: currentUser.userId,
     });
     await zone.save();

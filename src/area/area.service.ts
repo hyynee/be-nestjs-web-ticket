@@ -29,8 +29,12 @@ export class AreaService {
     }
 
     async createArea(currentUser, createAreaDto: CreateAreaDTO): Promise<Area> {
+        if (!Types.ObjectId.isValid(createAreaDto.zoneId)) {
+            throw new BadRequestException("Invalid zone ID");
+        }
         const area = new this.areaModel({
             ...createAreaDto,
+            zoneId: new Types.ObjectId(createAreaDto.zoneId),
             createdBy: currentUser.userId,
         });
         // invalidate cache existing area lists

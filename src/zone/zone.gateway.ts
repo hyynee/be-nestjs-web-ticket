@@ -5,10 +5,11 @@ import {
 } from '@nestjs/websockets';
 import { Server } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { Types } from 'mongoose';
 
 interface ZoneTicketUpdatePayload {
-    zoneId: string;
-    eventId: string;
+    zoneId: Types.ObjectId;
+    eventId: Types.ObjectId;
     capacity: number;
     soldCount: number;
     confirmedSoldCount: number;
@@ -30,7 +31,7 @@ export class ZoneGateway {
 
     emitZoneTicketUpdate(data: ZoneTicketUpdatePayload) {
         this.server
-            .to(`event:${data.eventId}`)
+            .to(`event:${data.eventId.toString()}`)
             .emit('zone.ticket_update', data);
         // chia room theo eventId de chi nhan thong bao cap nhat ve zone cho nhung client quan tam den event do
     }

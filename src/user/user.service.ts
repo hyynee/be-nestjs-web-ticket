@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { QueryUserDTO } from "./dto/query-user.dto";
 import { Payment } from "@src/schemas/payment.schema";
 
@@ -22,7 +22,7 @@ export class UserService {
     }
 
     const matchCondition: any = {
-      userId,
+      userId: new Types.ObjectId(userId),
       status: "succeeded",
       isDeleted: false,
       paidAt: { $ne: null },

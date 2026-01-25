@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { InjectModel } from "@nestjs/mongoose";
 import { Event } from "@src/schemas/event.schema";
 import { CreateEventDTO } from "./dto/create-event.dto";
@@ -73,7 +73,7 @@ export class EventService {
     eventData: CreateEventDTO
   ): Promise<Event> {
     const newEvent = new this.eventModel({
-      createdBy: currentUser.userId,
+      createdBy: new Types.ObjectId(currentUser.userId),
       ...eventData,
     });
     return newEvent.save();
@@ -96,7 +96,7 @@ export class EventService {
     const updatedEvent = await this.eventModel
       .findByIdAndUpdate(
         id,
-        { ...eventData, updatedBy: currentUser },
+        { ...eventData, updatedBy: new Types.ObjectId(currentUser.userId) },
         { new: true }
       )
       .exec();

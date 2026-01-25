@@ -6,12 +6,14 @@ import {
 import { Server } from 'socket.io';
 
 
+import { Types } from 'mongoose';
+
 interface TicketCreatedPayload {
     bookingCode: string;
     tickets: Array<{
         ticketCode: string;
-        eventId: string;
-        zoneId: string;
+        eventId: Types.ObjectId;
+        zoneId: Types.ObjectId;
         seatNumber: string | null;
         price: number;
         status: string;
@@ -20,8 +22,8 @@ interface TicketCreatedPayload {
 
 interface TicketCheckinPayload {
     ticketCode: string;
-    eventId: string;
-    zoneId: string;
+    eventId: Types.ObjectId;
+    zoneId: Types.ObjectId;
     seatNumber: string | null;
     checkedInAt: Date;
 };
@@ -40,13 +42,13 @@ export class TicketGateway {
         const eventId = data.tickets[0]?.eventId;
         if (!eventId) return;
         this.server
-            .to(`event:${eventId}`)
+            .to(`event:${eventId.toString()}`)
             .emit('ticket.created', data);
     }
 
     emitTicketCheckedIn(data: TicketCheckinPayload) {
         this.server
-            .to(`event:${data.eventId}`)
+            .to(`event:${data.eventId.toString()}`)
             .emit('ticket.checked_in', data);
         // chia room theo eventId de chi nhan thong bao checkin ve cho nhung client quan tam den event do
     }

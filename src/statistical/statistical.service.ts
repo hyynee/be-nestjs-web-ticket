@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { DashboardOverviewDto } from './dto/dashboard.dto';
+import { DashboardOverviewDto, RevenueStatisticsByEventResponseDto } from './dto/dashboard.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Booking } from '@src/schemas/booking.schema';
@@ -25,9 +25,10 @@ export class StatisticalService {
         const paymentFilter: any = {};
         const ticketFilter: any = { isDeleted: false };
         if (eventId) {
-            bookingFilter.eventId = eventId;
-            paymentFilter.eventId = eventId;
-            ticketFilter.eventId = eventId;
+            const eventObjectId = new Types.ObjectId(eventId);
+            bookingFilter.eventId = eventObjectId;
+            paymentFilter.eventId = eventObjectId;
+            ticketFilter.eventId = eventObjectId;
         }
         if (startDate && endDate) {
             const start = new Date(startDate);
@@ -88,7 +89,7 @@ export class StatisticalService {
     ) {
         const matchFilter: any = {};
         if (eventId) {
-            matchFilter.eventId = eventId;
+            matchFilter.eventId = new Types.ObjectId(eventId);
         }
         matchFilter.status = 'succeeded';
         matchFilter.isDeleted = false;
@@ -146,7 +147,7 @@ export class StatisticalService {
             throw new BadRequestException('Invalid event ID format');
         }
         const eventFilter = {
-            eventId,
+            eventId: new Types.ObjectId(eventId),
             status: 'succeeded',
             isDeleted: false
         };
@@ -163,7 +164,7 @@ export class StatisticalService {
                 },
             ]),
             this.ticketModel.countDocuments({
-                eventId,
+                eventId: new Types.ObjectId(eventId),
                 status: { $in: ['valid', 'used'] },
                 isDeleted: false,
             }),
@@ -179,4 +180,97 @@ export class StatisticalService {
             ticketsSold,
         };
     }
+
+    async getTopSellingEvents(
+        by: 'tickets' | 'revenue' = 'tickets',
+    ): Promise<RevenueStatisticsByEventResponseDto[]> {
+        const data = [
+            {
+                $match: {
+                    status: { $in: ['valid', 'used'] },
+                    isDeleted: false,
+                },
+            },
+            {
+                $group: {
+                    _id: '$eventId',
+                    ticketsSold: { $sum: 1 },
+                    totalRevenue: { $sum: '$price' },
+                },
+            },
+            {
+                $sort: (
+                    by === 'tickets'
+                        ? { ticketsSold: -1 }
+                        : { totalRevenue: -1 }
+                ) as Record<string, 1 | -1>,
+            },
+
+            { $limit: 5 },
+            {
+                $lookup: {
+                    from: 'events',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'event',
+                },
+            },
+            { $unwind: '$event' },
+            {
+                $project: {
+                    _id: 0,
+                    eventId: '$_id',
+                    eventName: '$event.title',
+                    ticketsSold: 1,
+                    totalRevenue: 1,
+                },
+            },
+        ];
+        return this.ticketModel.aggregate<RevenueStatisticsByEventResponseDto>(data);
+    }
+
+    async getTopPotentialCustomers() {
+        const topCustomers = await this.bookingModel.aggregate([
+            {
+                $match: {
+                    paymentStatus: 'paid',
+                    isDeleted: false,
+                },
+            },
+            {
+                $group: {
+                    _id: '$userId',
+                    totalBookings: { $sum: 1 },
+                    totalAmountSpent: { $sum: '$totalPrice' },
+                },
+            },
+            {
+                $sort: { totalAmountSpent: -1 },
+            },
+            {
+                $limit: 10,
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'userInfo',
+                },
+            },
+            { $unwind: '$userInfo' },
+            {
+                $project: {
+                    _id: 0,
+                    userId: '$_id',
+                    name: '$userInfo.name',
+                    email: '$userInfo.email',
+                    totalBookings: 1,
+                    totalAmountSpent: 1,
+                },
+            },
+        ]);
+        return topCustomers;
+    }
+   
 }

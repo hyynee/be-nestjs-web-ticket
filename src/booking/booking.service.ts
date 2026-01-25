@@ -71,8 +71,8 @@ export class BookingService {
             throw new NotFoundException('Sự kiện không tồn tại');
         }
         const zone = await this.zoneModel.findOne({
-            _id: data.zoneId,
-            eventId: data.eventId,
+            _id: new Types.ObjectId(data.zoneId),
+            eventId: new Types.ObjectId(data.eventId),
             isDeleted: false,
         });
 
@@ -86,7 +86,10 @@ export class BookingService {
 
         let bookingData: any = {
             ...data,
-            userId,
+            userId: new Types.ObjectId(userId),
+            eventId: new Types.ObjectId(data.eventId),
+            zoneId: new Types.ObjectId(data.zoneId),
+            areaId: data.areaId ? new Types.ObjectId(data.areaId) : undefined,
             pricePerTicket: zone.price,
             totalPrice: zone.price * data.quantity,
             bookingCode: this.generateBookingCode(),
@@ -101,8 +104,8 @@ export class BookingService {
                 throw new BadRequestException('Vui lòng chọn hàng ghế (area)');
             }
             const area = await this.areaModel.findOne({
-                _id: data.areaId,
-                zoneId: data.zoneId,
+                _id: new Types.ObjectId(data.areaId),
+                zoneId: new Types.ObjectId(data.zoneId),
                 isDeleted: false,
             });
             if (!area) {
@@ -123,9 +126,9 @@ export class BookingService {
                 }
                 // Kiểm tra seats đã được đặt chưa
                 const existingBookings = await this.bookingModel.find({
-                    eventId: data.eventId,
-                    zoneId: data.zoneId,
-                    areaId: data.areaId,
+                    eventId: new Types.ObjectId(data.eventId),
+                    zoneId: new Types.ObjectId(data.zoneId),
+                    areaId: new Types.ObjectId(data.areaId),
                     seats: { $in: data.seats },
                     status: { $nin: ['cancelled', 'expired'] },
                     isDeleted: false,
@@ -174,7 +177,7 @@ export class BookingService {
             return cachedData;
         };
         const filter: any = {
-            userId,
+            userId: new Types.ObjectId(userId),
             isDeleted: false
         };
         if (status) {
@@ -215,7 +218,7 @@ export class BookingService {
             isDeleted: false
         };
         if (userId) {
-            query.userId = userId;
+            query.userId = new Types.ObjectId(userId);
         }
 
         const booking = await this.bookingModel.findOne(query)
@@ -243,8 +246,8 @@ export class BookingService {
         }
 
         const zone = await this.zoneModel.findOne({
-            _id: zoneId,
-            eventId,
+            _id: new Types.ObjectId(zoneId),
+            eventId: new Types.ObjectId(eventId),
             isDeleted: false,
         }).populate('eventId', 'title startDate endDate');
 
@@ -258,13 +261,13 @@ export class BookingService {
 
         if (zone.hasSeating) {
             areas = await this.areaModel.find({
-                zoneId: zoneId,
+                zoneId: new Types.ObjectId(zoneId),
                 isDeleted: false,
             }).select('name description rowLabel seatCount');
 
             const bookings = await this.bookingModel.find({
-                eventId,
-                zoneId,
+                eventId: new Types.ObjectId(eventId),
+                zoneId: new Types.ObjectId(zoneId),
                 status: { $nin: ['cancelled', 'expired'] },
                 isDeleted: false,
             }).select('areaId seats');
@@ -304,7 +307,7 @@ export class BookingService {
     async cancelBooking(userId: string, bookingCode: string, reason?: string) {
         const booking = await this.bookingModel.findOne({
             bookingCode,
-            userId,
+            userId: new Types.ObjectId(userId),
             status: { $in: ['pending', 'confirmed'] },
             isDeleted: false,
         });
@@ -357,7 +360,7 @@ export class BookingService {
         }
         const filter: any = { isDeleted: false };
 
-        if (eventId) filter.eventId = eventId;
+        if (eventId) filter.eventId = new Types.ObjectId(eventId);
         if (status) filter.status = status;
         if (paymentStatus) filter.paymentStatus = paymentStatus;
 

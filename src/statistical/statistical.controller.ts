@@ -49,4 +49,19 @@ export class StatisticalController {
   ) {
     return this.statisticalService.getRevenueStatisticsByEvent(eventId);
   }
+  @Get('potential-customers')
+  @UseGuards(AuthGuard('jwt'), new RolesGuard(['admin']))
+  @ApiOperation({ summary: 'Get top potential customers' })
+  async getTopPotentialCustomers() {
+    return this.statisticalService.getTopPotentialCustomers();
+  }
+
+  @Get('top-selling-events')
+  @ApiOperation({ summary: 'Get top selling events' })
+  async getTopSellingEvents(
+    @Query('by') by: 'tickets' | 'revenue' = 'tickets',
+  ) {
+    return this.statisticalService.getTopSellingEvents(by);
+  }
+
 }

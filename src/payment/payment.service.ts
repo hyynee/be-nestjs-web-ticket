@@ -35,7 +35,7 @@ export class PaymentService {
         const booking = await this.bookingModel
             .findOne({
                 bookingCode: bookingCode,
-                userId: userId,
+                userId: new Types.ObjectId(userId),
                 isDeleted: false
             })
             .populate('eventId', 'title thumbnail location startDate endDate')
@@ -79,7 +79,7 @@ export class PaymentService {
                         images: [thumbnailUrl],
                         metadata: {
                             eventId: event._id.toString(),
-                            zoneId: zone._id.toString(),
+                            zoneId: zone._id.toString(), // Stripe metadata requires string
                         },
                     },
                     unit_amount: Math.round(booking.pricePerTicket),
@@ -161,7 +161,7 @@ export class PaymentService {
         const booking = await this.bookingModel
             .findOne({
                 bookingCode: bookingCode,
-                userId: userId,
+                userId: new Types.ObjectId(userId),
                 isDeleted: false
             })
             .populate('eventId', 'title thumbnail location startDate endDate')
@@ -209,9 +209,9 @@ export class PaymentService {
             const order = response.result;
 
             await this.paymentModel.create({
-                userId: userId,
+                userId: new Types.ObjectId(userId),
                 bookingId: booking._id,
-                eventId: booking.eventId,
+                eventId: new Types.ObjectId(booking.eventId),
                 amount: booking.totalPrice,
                 currency: 'VND',
                 status: 'pending',
@@ -312,9 +312,9 @@ export class PaymentService {
             await this.paymentModel.findOneAndUpdate(
                 { stripePaymentIntentId: session.payment_intent || session.id },
                 {
-                    userId: userId,
-                    bookingId: bookingId,
-                    eventId: updatedBooking.eventId,
+                    userId: new Types.ObjectId(userId),
+                    bookingId: new Types.ObjectId(bookingId),
+                    eventId: new Types.ObjectId(updatedBooking.eventId),
                     amount: session.amount_total,
                     currency: session.currency || 'vnd',
                     status: 'succeeded',
@@ -512,7 +512,7 @@ export class PaymentService {
 
     async getPaymentHistory(userId: string) {
         const payments = await this.paymentModel
-            .find({ userId, isDeleted: false })
+            .find({ userId: new Types.ObjectId(userId), isDeleted: false })
             .populate({
                 path: 'bookingId',
                 populate: [
