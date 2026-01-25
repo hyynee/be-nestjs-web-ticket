@@ -1,4 +1,4 @@
-import { Controller, UseGuards, Get, Query } from '@nestjs/common';
+import { Controller, UseGuards, Get, Query, Param } from '@nestjs/common';
 import { StatisticalService } from './statistical.service';
 import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
@@ -6,7 +6,7 @@ import { RolesGuard } from "@src/guards/role.guard";
 import { CurrentUser } from '@src/auth/decorator/currentUser.decorator';
 import { JwtPayload } from '@src/auth/dto/jwt-payload.dto';
 import { DashboardOverviewDto, RevenueStatisticsResponseDto } from './dto/dashboard.dto';
-import { DashboardQueryDto, RevenueStatisticsByEventQueryDto, RevenueStatisticsQueryDto } from './dto/dashboard-query.dto';
+import { DashboardQueryDto, RevenueStatisticsQueryDto } from './dto/dashboard-query.dto';
 
 
 @ApiBearerAuth()
@@ -43,11 +43,10 @@ export class StatisticalController {
 
   @Get('revenue/:eventId')
   @UseGuards(AuthGuard('jwt'), new RolesGuard(['admin']))
+  @ApiOperation({ summary: 'Get revenue statistics by event' })
   async getRevenueStatisticsByEvent(
-    @Query() data: RevenueStatisticsByEventQueryDto,
+    @Param('eventId') eventId: string,
   ) {
-    return this.statisticalService.getRevenueStatisticsByEvent(
-      data.eventId,
-    );
+    return this.statisticalService.getRevenueStatisticsByEvent(eventId);
   }
 }

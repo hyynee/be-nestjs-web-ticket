@@ -37,10 +37,3 @@ export class RevenueStatisticsQueryDto {
   @IsString()
   groupBy?: 'day' | 'month';
 }
-
-export class RevenueStatisticsByEventQueryDto {
-    @ApiPropertyOptional({ description: 'Event ID to filter statistics' })
-  @IsOptional()
-  @IsString()
-  eventId?: string;
-}

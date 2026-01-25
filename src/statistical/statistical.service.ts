@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DashboardOverviewDto } from './dto/dashboard.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Booking } from '@src/schemas/booking.schema';
 import { Payment } from '@src/schemas/payment.schema';
 import { Ticket } from '@src/schemas/ticket.schema';
@@ -96,14 +96,15 @@ export class StatisticalService {
             $gte: new Date(from),
             $lte: new Date(to),
         };
+        const TimeZone = '+07:00';
         const groupId: any = {};
         if (groupBy === 'day') {
-            groupId.year = { $year: '$createdAt' };
-            groupId.month = { $month: '$createdAt' };
-            groupId.day = { $dayOfMonth: '$createdAt' };
+            groupId.year = { $year: { date: '$createdAt', timezone: TimeZone } };
+            groupId.month = { $month: { date: '$createdAt', timezone: TimeZone } };
+            groupId.day = { $dayOfMonth: { date: '$createdAt', timezone: TimeZone } };
         } else if (groupBy === 'month') {
-            groupId.year = { $year: '$createdAt' };
-            groupId.month = { $month: '$createdAt' };
+            groupId.year = { $year: { date: '$createdAt', timezone: TimeZone } };
+            groupId.month = { $month: { date: '$createdAt', timezone: TimeZone } };
         }
         const revenueData = await this.paymentModel.aggregate([
             { $match: matchFilter },
@@ -111,6 +112,7 @@ export class StatisticalService {
                 $group: {
                     _id: groupId,
                     totalRevenue: { $sum: '$amount' },
+                    count: { $sum: 1 }
                 },
             },
             {
@@ -128,6 +130,7 @@ export class StatisticalService {
             return {
                 label,
                 revenue: item.totalRevenue,
+                count: item.count
             };
         });
         return { data: formattedData };
@@ -137,7 +140,10 @@ export class StatisticalService {
         eventId: string | undefined,
     ) {
         if (!eventId) {
-            throw new Error('Event ID is required');
+            throw new BadRequestException('Event ID is required');
+        }
+        if (!Types.ObjectId.isValid(eventId)) {
+            throw new BadRequestException('Invalid event ID format');
         }
         const eventFilter = {
             eventId,
@@ -163,7 +169,7 @@ export class StatisticalService {
             }),
         ]);
         if (!event) {
-            throw new Error('Event not found');
+            throw new NotFoundException('Event not found');
         }
         const totalRevenue = totalRevenueResult?.[0]?.total || 0;
         return {
