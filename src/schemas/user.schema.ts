@@ -17,7 +17,7 @@ export class User extends Document {
   phoneNumber: string;
 
   @Prop()
-  avatarUrl: string;
+  avatarPublicId: string;
 
   @Prop({ default: false })
   isVerified: boolean;

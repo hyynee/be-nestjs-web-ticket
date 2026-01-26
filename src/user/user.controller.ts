@@ -3,6 +3,8 @@ import {
   Get,
   HttpCode,
   UseGuards,
+  Body,
+  Patch,
   Param,
   Query,
 } from "@nestjs/common";
@@ -14,10 +16,17 @@ import { QueryUserDTO } from "./dto/query-user.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UserSpendingQueryDto } from "./dto/spending-user.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
 
 @Controller("user")
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(private readonly userService: UserService) { }
+  @Patch("/update-profile")
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard("jwt"))
+  updateProfileUser(@CurrentUser() user: JwtPayload, @Body() data: UpdateUserDto) {
+    return this.userService.updateProfileUser(user.userId, data);
+  }
 
   @Get("/spending")
   @UseGuards(AuthGuard("jwt"))

@@ -9,5 +9,6 @@ import { Payment,PaymentSchema } from "@src/schemas/payment.schema";
   imports: [MongooseModule.forFeature([{ name: "User", schema: UserSchema },{name:Payment.name,schema:PaymentSchema}])],
   controllers: [UserController],
   providers: [UserService],
+  exports: [UserService],
 })
 export class UserModule {}

@@ -28,6 +28,8 @@ import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { Logger } from "winston";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
+import { v2 as cloudinary } from 'cloudinary';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -135,14 +137,30 @@ export class AuthService {
 
   async getUserById(id: string) {
     const cacheKey = this.generateCacheKeyForUser(id);
-    const cachedUser = await this.cacheManager.get<User>(cacheKey);
-    if (cachedUser) {
-      return cachedUser;
+    let user: User | null = await this.cacheManager.get<User>(cacheKey) ?? null;
+    if (!user) {
+      user = await this.userModel
+        .findById(id)
+        .select('-password')
+        .lean<User>();
+      if (!user) return null;
+      await this.cacheManager.set(cacheKey, user, 1800000);
     }
-    const user = await this.userModel.findById(id).select("-password");
-    await this.cacheManager.set(cacheKey, user, 30000);
-    return user;
+    const avatarUrl = user.avatarPublicId
+      ? cloudinary.url(user.avatarPublicId, {
+        type: 'private',
+        sign_url: true,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        secure: true,
+      })
+      : null;
+
+    return {
+      ...user,
+      avatarUrl,
+    };
   }
+
 
   async refreshToken(data: RefreshTokenDTO) {
     const { refreshToken } = data;
@@ -263,7 +281,7 @@ export class AuthService {
       { isUsed: true }
     );
     await this.refreshTokenModel.deleteMany({ userId: user._id });
-   await this.invalidateUserCache(user.id.toString());
+    await this.invalidateUserCache(user.id.toString());
     return { message: "Password has been reset successfully. Please login again." };
   }
 }

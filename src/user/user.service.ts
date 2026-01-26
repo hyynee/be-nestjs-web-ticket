@@ -1,16 +1,40 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, Inject } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
 import { Model, Types } from "mongoose";
 import { QueryUserDTO } from "./dto/query-user.dto";
 import { Payment } from "@src/schemas/payment.schema";
+import { UpdateUserDto } from "./dto/update-user.dto";
+import { v2 as cloudinary } from 'cloudinary';
+import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
+
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>
+    @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) { }
+  private generateCacheKeyForUser(userId: string): string {
+    return `user:details:${userId}`;
+  };
+
+  async updateProfileUser(userId: string, data: UpdateUserDto) {
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: data },
+      { new: true },
+    );
+    if (!updatedUser) {
+      throw new NotFoundException('User not found');
+    }
+    const cacheKey = this.generateCacheKeyForUser(userId);
+    await this.cacheManager.del(cacheKey);
+
+    return updatedUser;
+  }
+
 
   private async calculateSpending(
     userId: string,
