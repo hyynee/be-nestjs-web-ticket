@@ -5,7 +5,7 @@ import { Area } from "@src/schemas/area.schema";
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { QueryAreaDto } from "./dto/query.dto";
 import { UpdateAreaDTO } from "./dto/update.dto";
-import { CACHE_MANAGER,Cache } from "@nestjs/cache-manager";
+import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
 
 @Injectable()
@@ -14,13 +14,13 @@ export class AreaService {
     constructor(
         @InjectModel(Area.name) private readonly areaModel: Model<Area>,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
-    ) {}
-   
+    ) { }
+
     private generateListCacheKey(query: QueryAreaDto): string {
-        const { zoneId, search, page, limit, sortBy, sortOrder } = query;
-        return `areas:list:zone=${zoneId || 'all'}:search=${search || ''}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+        const {eventId, zoneId, search, page, limit, sortBy, sortOrder } = query;
+        return `areas:list:event=${eventId || 'all'}:zone=${zoneId || 'all'}:search=${search || ''}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
     }
-    
+
     private async invalidateAreaCache(): Promise<void> {
         for (const key of this.AREA_CACHE_LIST_KEY) {
             await this.cacheManager.del(key);
@@ -29,11 +29,16 @@ export class AreaService {
     }
 
     async createArea(currentUser, createAreaDto: CreateAreaDTO): Promise<Area> {
-        if (!Types.ObjectId.isValid(createAreaDto.zoneId)) {
-            throw new BadRequestException("Invalid zone ID");
+        if (
+            !Types.ObjectId.isValid(createAreaDto.zoneId) ||
+            !Types.ObjectId.isValid(createAreaDto.eventId)
+        ) {
+            throw new BadRequestException("Invalid event or zone ID");
         }
+
         const area = new this.areaModel({
             ...createAreaDto,
+            eventId: new Types.ObjectId(createAreaDto.eventId),
             zoneId: new Types.ObjectId(createAreaDto.zoneId),
             createdBy: currentUser.userId,
         });
@@ -43,9 +48,12 @@ export class AreaService {
         return area;
     }
 
-      async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<Area>> {
-         const { zoneId, search, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = query;
-          if (zoneId && !Types.ObjectId.isValid(zoneId)) {
+    async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<Area>> {
+        const {eventId, zoneId, search, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = query;
+        if(eventId && !Types.ObjectId.isValid(eventId)) {
+            throw new BadRequestException("Invalid event ID");
+        }
+        if (zoneId && !Types.ObjectId.isValid(zoneId)) {
             throw new BadRequestException("Invalid zone ID");
         }
         const cacheKey = this.generateListCacheKey(query);
@@ -56,6 +64,9 @@ export class AreaService {
 
         const skip = (page - 1) * limit;
         const filter: any = { isDeleted: false };
+        if (eventId) {
+            filter.eventId = new Types.ObjectId(eventId);
+        }
 
         if (zoneId) {
             filter.zoneId = new Types.ObjectId(zoneId);
@@ -94,7 +105,7 @@ export class AreaService {
                 hasNextPage: page < totalPages,
             }
         };
-        await this.cacheManager.set(cacheKey, result,30000);
+        await this.cacheManager.set(cacheKey, result, 30000);
         this.AREA_CACHE_LIST_KEY.add(cacheKey);
         return result;
     }

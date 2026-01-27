@@ -25,7 +25,7 @@ import { Throttle } from "@nestjs/throttler";
 export class EventController {
   constructor(private readonly eventService: EventService) { }
 
-  @Throttle({default: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiBearerAuth()
   @UseGuards(OptionalJwtAuthGuard)
   @Get()
@@ -36,7 +36,12 @@ export class EventController {
     return this.eventService.getEvents(query, user);
   }
 
-     @Get(":id")
+  @Get(":id/zones")
+  async getEventZones(@Param("id") id: string) {
+    return this.eventService.getEventZones(id);
+  }
+
+  @Get(":id")
   async getEventById(@Param("id") id: string) {
     return this.eventService.getActiveEventById(id);
   }

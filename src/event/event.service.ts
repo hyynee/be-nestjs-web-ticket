@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { Model, Types } from "mongoose";
 import { InjectModel } from "@nestjs/mongoose";
 import { Event } from "@src/schemas/event.schema";
@@ -6,10 +6,12 @@ import { CreateEventDTO } from "./dto/create-event.dto";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
 import { QueryEventDTO } from "./dto/query-event.dto";
+import { Zone } from "@src/schemas/zone.schema";
 @Injectable()
 export class EventService {
   constructor(
-    @InjectModel(Event.name) private readonly eventModel: Model<Event>
+    @InjectModel(Event.name) private readonly eventModel: Model<Event>,
+    @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>
   ) { }
   async getEvents(
     query: QueryEventDTO,
@@ -51,6 +53,51 @@ export class EventService {
       totalPages: Math.ceil(total / limit),
     };
   }
+
+  async getEventZones(eventId: string) {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+
+    const event = await this.eventModel.findOne({
+      _id: new Types.ObjectId(eventId),
+      isDeleted: false,
+    });
+
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    return this.zoneModel.aggregate([
+      {
+        $match: {
+          eventId: event._id,
+          isDeleted: false,
+        },
+      },
+      {
+        $lookup: {
+          from: "areas",
+          localField: "_id",
+          foreignField: "zoneId",
+          as: "areas",
+          pipeline: [
+            { $match: { isDeleted: false } },
+            { $sort: { createdAt: 1 } }
+          ]
+        },
+      },
+      {
+        $addFields: {
+          hasAreas: { $gt: [{ $size: "$areas" }, 0] }
+        }
+      },
+      {
+        $sort: { createdAt: 1 }
+      }
+    ]);
+  }
+
 
   async getActiveEventById(id: string): Promise<Event> {
     const event = await this.eventModel

@@ -1,8 +1,12 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsMongoId, IsString } from "class-validator";
+import { IsMongoId, IsNumber, IsString } from "class-validator";
 
 export class CreateAreaDTO {
     @ApiProperty({ description: "Sự kiện liên quan" })
+    @IsMongoId()
+    @IsString()
+    eventId: string;
+    @ApiProperty({ description: "Khu vực liên quan" })
     @IsMongoId()
     @IsString()
     zoneId: string;
@@ -16,6 +20,7 @@ export class CreateAreaDTO {
     @IsString()
     rowLabel?: string;
     @ApiProperty({ description: "Số lượng ghế", required: false })
+    @IsNumber()
     seatCount?: number;
     @ApiProperty({ description: "Danh sách ghế", required: false })
     seats?: string[];

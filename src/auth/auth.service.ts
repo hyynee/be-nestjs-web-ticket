@@ -154,9 +154,9 @@ export class AuthService {
         secure: true,
       })
       : null;
-
+    const {avatarPublicId,...profile} = user;
     return {
-      ...user,
+      ...profile,
       avatarUrl,
     };
   }
