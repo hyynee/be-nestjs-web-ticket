@@ -25,7 +25,8 @@ export class UserService {
       userId,
       { $set: data },
       { new: true },
-    );
+    )
+    .select('-password');
     if (!updatedUser) {
       throw new NotFoundException('User not found');
     }

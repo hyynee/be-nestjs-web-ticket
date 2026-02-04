@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose/dist/common/mongoose.decorators";
 import { Zone } from "@src/schemas/zone.schema";
 import { Model, Types } from "mongoose";
@@ -10,7 +10,7 @@ import { UpdateZoneDto } from "./dto/update-zone.dto";
 export class ZoneService {
   constructor(
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>
-  ) {}
+  ) { }
   async getAllActiveZones(query: QueryZoneDto): Promise<PaginatedZones> {
     const { eventId, page = 1, limit = 10 } = query;
     const skip = (page - 1) * limit;
@@ -42,6 +42,57 @@ export class ZoneService {
     };
   }
 
+  async getZoneWithAreas(zoneId: string): Promise<Zone> {
+    if (!Types.ObjectId.isValid(zoneId)) {
+      throw new BadRequestException("Invalid zone ID");
+    }
+    const zones = await this.zoneModel.aggregate([
+      { $match: { _id: new Types.ObjectId(zoneId), isDeleted: false } },
+      {
+        $lookup: {
+          from: "areas",
+          let: { zoneId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$zoneId", "$$zoneId"] },
+                isDeleted: false
+              }
+            },
+            {
+              $project: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                rowLabel: 1,
+                seatCount: 1,
+                seats: 1,
+              },
+            },
+          ],
+          as: "areas",
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          eventId: 1,
+          name: 1,
+          price: 1,
+          hasSeating: 1,
+          saleStartDate: 1,
+          saleEndDate: 1,
+          areas: 1,
+        },
+      },
+    ]);
+
+    if (zones.length === 0) {
+      throw new NotFoundException("Zone not found");
+    }
+    return zones[0];
+  }
+
   async getZoneById(id: string): Promise<Zone> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException("Invalid zone ID");
@@ -66,6 +117,7 @@ export class ZoneService {
     const zone = new this.zoneModel({
       ...createZoneDto,
       eventId: new Types.ObjectId(createZoneDto.eventId),
+      soldCount: 0,
       createdBy: currentUser.userId,
     });
     await zone.save();

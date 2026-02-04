@@ -3,8 +3,6 @@ import { StatisticalService } from './statistical.service';
 import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from "@src/guards/role.guard";
-import { CurrentUser } from '@src/auth/decorator/currentUser.decorator';
-import { JwtPayload } from '@src/auth/dto/jwt-payload.dto';
 import { DashboardOverviewDto, RevenueStatisticsResponseDto } from './dto/dashboard.dto';
 import { DashboardQueryDto, RevenueStatisticsQueryDto } from './dto/dashboard-query.dto';
 
@@ -13,6 +11,14 @@ import { DashboardQueryDto, RevenueStatisticsQueryDto } from './dto/dashboard-qu
 @Controller('statistical')
 export class StatisticalController {
   constructor(private readonly statisticalService: StatisticalService) { }
+
+   @Get('top-selling-events')
+  @ApiOperation({ summary: 'Get top selling events' })
+  async getTopSellingEvents(
+    @Query('by') by: 'tickets' | 'revenue' = 'tickets',
+  ) {
+    return this.statisticalService.getTopSellingEvents(by);
+  }
 
   @Get('overview')
   @UseGuards(AuthGuard('jwt'), new RolesGuard(['admin']))
@@ -56,12 +62,12 @@ export class StatisticalController {
     return this.statisticalService.getTopPotentialCustomers();
   }
 
-  @Get('top-selling-events')
-  @ApiOperation({ summary: 'Get top selling events' })
-  async getTopSellingEvents(
-    @Query('by') by: 'tickets' | 'revenue' = 'tickets',
+  @Get('checkin-zones/:eventId')
+  @UseGuards(AuthGuard('jwt'), new RolesGuard(['admin']))
+  @ApiOperation({ summary: 'Get check-in user with zones' })
+  async getCheckInZones (
+    @Param('eventId') eventId: string,
   ) {
-    return this.statisticalService.getTopSellingEvents(by);
+    return this.statisticalService.getCheckInZones(eventId);
   }
-
 }

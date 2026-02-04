@@ -54,50 +54,72 @@ export class EventService {
     };
   }
 
-  async getEventZones(eventId: string) {
+  async getEventZones(eventId: string, user?: JwtPayload) {
+    const isAdmin = user?.role === 'admin';
+
     if (!Types.ObjectId.isValid(eventId)) {
-      throw new BadRequestException("Invalid event ID");
+      throw new BadRequestException('Invalid event ID');
     }
 
     const event = await this.eventModel.findOne({
       _id: new Types.ObjectId(eventId),
-      isDeleted: false,
+      ...(isAdmin ? {} : { isDeleted: false }),
     });
 
     if (!event) {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
-    return this.zoneModel.aggregate([
+    const pipeline: any[] = [
       {
         $match: {
           eventId: event._id,
-          isDeleted: false,
+          ...(isAdmin ? {} : { isDeleted: false }),
         },
       },
       {
         $lookup: {
-          from: "areas",
-          localField: "_id",
-          foreignField: "zoneId",
-          as: "areas",
+          from: 'areas',
+          localField: '_id',
+          foreignField: 'zoneId',
+          as: 'areas',
           pipeline: [
-            { $match: { isDeleted: false } },
-            { $sort: { createdAt: 1 } }
-          ]
+            { $match: { ...(isAdmin ? {} : { isDeleted: false }) } },
+            { $sort: { createdAt: 1 } },
+            ...(isAdmin
+              ? []
+              : [
+                {
+                  $project: {
+                    name: 1,
+                  },
+                },
+              ]),
+          ],
         },
       },
       {
         $addFields: {
-          hasAreas: { $gt: [{ $size: "$areas" }, 0] }
-        }
+          hasAreas: { $gt: [{ $size: '$areas' }, 0] },
+        },
       },
-      {
-        $sort: { createdAt: 1 }
-      }
-    ]);
-  }
+      { $sort: { createdAt: 1 } },
+    ];
 
+    if (!isAdmin) {
+      pipeline.push({
+        $project: {
+          name: 1,
+          price: 1,
+          hasSeating: 1,
+          hasAreas: 1,
+          areas: 1,
+        },
+      });
+    }
+
+    return this.zoneModel.aggregate(pipeline);
+  }
 
   async getActiveEventById(id: string): Promise<Event> {
     const event = await this.eventModel

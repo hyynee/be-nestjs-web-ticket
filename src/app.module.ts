@@ -26,6 +26,7 @@ import { StatisticalModule } from './statistical/statistical.module';
 import { LoggerModule } from "./logger/logger.module";
 import { CacheModule } from "@nestjs/cache-manager";
 import { EventsModule } from "./events/events.module";
+import { ExportModule } from "./export/export.module";
 @Module({
   imports: [
     DatabaseModule,
@@ -71,7 +72,8 @@ import { EventsModule } from "./events/events.module";
     ChatModule,
     StatisticalModule,
     LoggerModule,
-    EventsModule
+    EventsModule,
+    ExportModule
   ],
   controllers: [AppController, UploadController],
   providers: [

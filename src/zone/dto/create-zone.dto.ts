@@ -33,13 +33,6 @@ export class CreateZoneDto {
   @Type(() => Number)
   capacity?: number;
 
-  @ApiProperty({ description: "số vé đã bán", required: false })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  @Type(() => Number)
-  soldCount?: number;
-
   @ApiProperty({ description: "Zone có ghế ngồi hay không", required: false })
   @IsOptional()
   hasSeating?: boolean;

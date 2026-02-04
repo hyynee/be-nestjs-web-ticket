@@ -272,5 +272,68 @@ export class StatisticalService {
         ]);
         return topCustomers;
     }
-   
+
+    async getCheckInZones(
+        eventId: string,
+    ) {
+        if (!Types.ObjectId.isValid(eventId)) {
+            throw new BadRequestException('Invalid event ID format');
+        }
+        return this.ticketModel.aggregate([
+            {
+                $match: {
+                    eventId: new Types.ObjectId(eventId),
+                    isDeleted: false,
+                }
+            },
+            {
+                $group: {
+                    _id: '$zoneId',
+                    totalTickets: { $sum: 1 }, // tổng số vé trong zone đó
+                    checkedInCount: { // vé đã check-in
+                        $sum: {
+                            $cond: [{ $eq: ['$status', 'used'] }, 1, 0],
+                            // count số vé đã check-in ( field status = 'used' : true + 1 : false + 0 )
+                        },
+                    },
+                }
+            },
+            {
+                $lookup: {
+                    from: 'zones',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'zone',
+                }
+            },
+            { $unwind: '$zone' },
+            {
+                $project: {
+                    _id: 0,
+                    zoneId: '$_id',
+                    zoneName: '$zone.name',
+                    price: '$zone.price',
+                    totalTickets: 1,
+                    checkedInCount: 1,
+                    notCheckedIn: {
+                        $subtract: ['$totalTickets', '$checkedInCount'],
+                    },
+                    // Tỉ lệ check-in (%) = (số vé đã check-in / tổng số vé) * 100
+                    checkInRate: {
+                        $cond: [
+                            { $eq: ['$totalTickets', 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ['$checkedInCount', '$totalTickets'] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
+                }
+            },
+            { $sort: { zoneName: 1 } }
+        ]);
+    }
 }

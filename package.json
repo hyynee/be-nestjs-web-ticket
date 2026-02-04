@@ -36,14 +36,17 @@
     "@nestjs/websockets": "^11.1.9",
     "@paypal/checkout-server-sdk": "^1.0.3",
     "axios": "^1.13.2",
+    "bcrypt": "^6.0.0",
     "cache-manager": "^7.2.8",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "cloudinary": "^2.8.0",
     "cookie-parser": "^1.4.7",
     "crypto": "^1.0.1",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
+    "json2csv": "^6.0.0-alpha.2",
     "mongoose": "^8.17.1",
     "nest-winston": "^1.10.2",
     "nodemailer": "^7.0.11",
@@ -57,8 +60,7 @@
     "socket.io": "^4.8.1",
     "stripe": "^20.1.0",
     "uuidv4": "^6.2.13",
-    "winston": "^3.19.0",
-    "bcrypt": "^6.0.0"
+    "winston": "^3.19.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

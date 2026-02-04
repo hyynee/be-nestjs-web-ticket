@@ -21,7 +21,7 @@ import { UpdateZoneDto } from "./dto/update-zone.dto";
 @ApiTags("Zone")
 @Controller("zone")
 export class ZoneController {
-  constructor(private readonly zoneService: ZoneService) {}
+  constructor(private readonly zoneService: ZoneService) { }
 
   @Get()
   async getAllZones(@Query() query: QueryZoneDto) {
@@ -32,6 +32,11 @@ export class ZoneController {
   @ApiOperation({ summary: "Lấy thông tin khu vực theo ID" })
   async getZoneActiveById(@Param("id") id: string) {
     return this.zoneService.getZoneById(id);
+  }
+
+  @Get(":id/with-areas")
+  async getZoneWithAreas(@Param("id") zoneId: string) {
+    return this.zoneService.getZoneWithAreas(zoneId);
   }
 
   @ApiBearerAuth()
@@ -57,5 +62,5 @@ export class ZoneController {
     return this.zoneService.updateZone(currentUser, id, updateZoneDto);
   }
 
-  
+
 }

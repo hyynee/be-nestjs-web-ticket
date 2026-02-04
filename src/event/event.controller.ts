@@ -36,9 +36,14 @@ export class EventController {
     return this.eventService.getEvents(query, user);
   }
 
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(":id/zones")
-  async getEventZones(@Param("id") id: string) {
-    return this.eventService.getEventZones(id);
+  getEventZones(
+    @Param("id") id: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.eventService.getEventZones(id, user);
   }
 
   @Get(":id")
