@@ -26,6 +26,11 @@ export class QueryZoneDto {
   @IsOptional()
   name?: string;
 
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+
   @IsBoolean()
   @IsOptional()
   @Type(() => Boolean)
@@ -43,4 +48,12 @@ export class QueryZoneDto {
   @IsOptional()
   @Type(() => Number)
   limit?: number = 10;
+
+  @IsOptional()
+  @IsString()
+  sortBy?: string = 'createdAt';
+
+  @IsOptional()
+  @IsString()
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

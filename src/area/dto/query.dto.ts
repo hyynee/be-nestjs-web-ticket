@@ -11,9 +11,7 @@ export interface PaginatedArea {
 }
 
 export class QueryAreaDto {
-  @IsOptional()
-  @IsMongoId({ message: 'eventId phải là ObjectId hợp lệ' })
-  eventId?: string;
+ 
   @IsOptional()
   @IsMongoId({ message: 'zoneId phải là ObjectId hợp lệ' })
   zoneId?: string;

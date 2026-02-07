@@ -37,7 +37,7 @@ export class Zone extends Document {
 
 export const ZoneSchema = SchemaFactory.createForClass(Zone);
 
-ZoneSchema.index({ eventId: 1, name: 1 }, { unique: true });
+ZoneSchema.index({ eventId: 1, name: 1 }, { unique: true, partialFilterExpression: { isDeleted: false } });
 
 ZoneSchema.index({ eventId: 1 });
 
