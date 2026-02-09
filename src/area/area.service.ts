@@ -7,12 +7,14 @@ import { QueryAreaDto } from "./dto/query.dto";
 import { SoftDeleteAreaDTO, UpdateAreaDTO } from "./dto/update.dto";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
+import { Zone } from "@src/schemas/zone.schema";
 
 @Injectable()
 export class AreaService {
     private readonly AREA_CACHE_LIST_KEY: Set<string> = new Set();
     constructor(
         @InjectModel(Area.name) private readonly areaModel: Model<Area>,
+        @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
     ) { }
 
@@ -28,24 +30,69 @@ export class AreaService {
         this.AREA_CACHE_LIST_KEY.clear();
     }
 
-    async createArea(currentUser, createAreaDto: CreateAreaDTO): Promise<Area> {
-        if (
-            !Types.ObjectId.isValid(createAreaDto.zoneId)
-        ) {
+    async createArea(
+        currentUser,
+        createAreaDto: CreateAreaDTO
+    ): Promise<Area> {
+        const { zoneId, name, description, rowLabel, seatCount, seats } = createAreaDto;
+
+        if (!Types.ObjectId.isValid(zoneId)) {
             throw new BadRequestException("Invalid zone ID");
+        }
+        const zone = await this.zoneModel
+            .findById(zoneId)
+            .select('eventId')
+            .lean();
+
+        if (!zone) {
+            throw new BadRequestException("Zone not found");
+        }
+
+        if (seatCount && seatCount <= 0) {
+            throw new BadRequestException("Seat count must be greater than 0");
+        }
+        if (seatCount && !rowLabel && (!seats || seats.length === 0)) {
+            throw new BadRequestException("rowLabel is required when seatCount is provided");
+        }
+
+        let finalSeats: string[] = seats ?? [];
+
+        if (
+            finalSeats.length === 0 &&
+            seatCount &&
+            rowLabel
+        ) {
+            // rowlabel = A ; seatcount = 5 => A1,A2,A3,A4,A5
+            finalSeats = Array.from(
+                { length: seatCount },
+                (_, index) => `${rowLabel.toUpperCase()}${index + 1}` // A1, A2, A3...
+            );
         }
 
         const area = new this.areaModel({
-            ...createAreaDto,
-            zoneId: new Types.ObjectId(createAreaDto.zoneId),
-            name: createAreaDto.name.trim().toUpperCase(),
+            eventId: zone.eventId,
+            zoneId: new Types.ObjectId(zoneId),
+            name: name.trim().toUpperCase(),
+            description,
+            rowLabel,
+            seatCount,
+            seats: finalSeats,
             createdBy: currentUser.userId,
         });
-        // invalidate cache existing area lists
-        await this.invalidateAreaCache();
-        await area.save();
-        return area;
+
+        try {
+            await area.save();
+            await this.invalidateAreaCache();
+
+            return area;
+        } catch (err) {
+            if (err.code === 11000) {
+                throw new BadRequestException("Area name already exists in this zone");
+            }
+            throw err;
+        }
     }
+
 
     async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<Area>> {
         const { zoneId, name, search, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = query;
@@ -88,6 +135,7 @@ export class AreaService {
                 .sort(sort)
                 .skip(skip)
                 .limit(limit)
+                .lean()
                 .exec(),
             this.areaModel.countDocuments(filter).exec()
         ]);
@@ -119,7 +167,7 @@ export class AreaService {
         }
 
         const area = await this.areaModel.findOneAndUpdate(
-            { _id: id },
+            { _id: id ,isDeleted: false },
             {
                 isDeleted: dto.isDeleted,
                 updatedBy: currentUser.userId,
