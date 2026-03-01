@@ -8,7 +8,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { JwtPayload } from '@src/auth/dto/jwt-payload.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
-
+import {CancleBookingDto} from './dto/cancle-booking.dto';
 
 @Controller('booking')
 export class BookingController {
@@ -58,7 +58,7 @@ export class BookingController {
   @HttpCode(200)
   cancelBooking(
     @CurrentUser () currentUser: JwtPayload,
-    @Body ('bookingCode') bookingCode: string
+    @Body() bookingCode: CancleBookingDto
   ) {
     const userId = currentUser.userId;
     return this.bookingService.cancelBooking(userId,bookingCode);

@@ -1,5 +1,5 @@
 import { IsOptional, IsString, IsBoolean, IsMongoId, IsInt, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { Area } from "@src/schemas/area.schema";
 
 export interface PaginatedArea {
@@ -11,17 +11,28 @@ export interface PaginatedArea {
 }
 
 export class QueryAreaDto {
+
   @IsOptional()
   @IsMongoId({ message: 'zoneId phải là ObjectId hợp lệ' })
   zoneId?: string;
 
   @IsOptional()
   @IsString()
-  name?: string; 
+  name?: string;
 
   @IsOptional()
   @IsString()
-  search?: string; 
+  search?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  hasSeating?: boolean;
+
 
   @IsOptional()
   @IsBoolean()
@@ -42,7 +53,7 @@ export class QueryAreaDto {
 
   @IsOptional()
   @IsString()
-  sortBy?: string = 'createdAt'; 
+  sortBy?: string = 'createdAt';
 
   @IsOptional()
   @IsString()

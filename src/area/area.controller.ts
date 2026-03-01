@@ -7,18 +7,18 @@ import { CreateAreaDTO } from "./dto/create.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { QueryAreaDto } from "./dto/query.dto";
-import { UpdateAreaDTO } from "./dto/update.dto";
+import { SoftDeleteAreaDTO, UpdateAreaDTO } from "./dto/update.dto";
 
 @ApiTags("Area")
 @Controller("area")
 export class AreaController {
-  constructor(private readonly areaService: AreaService) {}
+  constructor(private readonly areaService: AreaService) { }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Post("/create")
-  createArea(@CurrentUser() currentUser: JwtPayload,@Body() createAreaDto: CreateAreaDTO) {
-    return this.areaService.createArea(currentUser,createAreaDto);
+  createArea(@CurrentUser() currentUser: JwtPayload, @Body() createAreaDto: CreateAreaDTO) {
+    return this.areaService.createArea(currentUser, createAreaDto);
   }
 
   @Get()
@@ -26,15 +26,26 @@ export class AreaController {
     return this.areaService.getAllAreas(query);
   }
 
+  @Put("/:id/delete")
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  softDeleteArea(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string,
+    @Body() dto: SoftDeleteAreaDTO,
+  ) {
+    return this.areaService.softDeleteArea(currentUser, id, dto);
+  }
+
   @Put("/:id")
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   updateArea(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
-    @Body() updateAreaDto: UpdateAreaDTO
+    @Body() dto: UpdateAreaDTO,
   ) {
-    return this.areaService.updateArea(currentUser, id, updateAreaDto);
+    return this.areaService.updateArea(currentUser, id, dto);
   }
 
   @ApiBearerAuth()

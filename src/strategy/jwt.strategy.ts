@@ -32,7 +32,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // Đọc JWT từ Bearer header (cho cả login email/password và Google OAuth)
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: jwtConstants.secret,
+      secretOrKey: jwtConstants.secret as string,
     });
   }
 

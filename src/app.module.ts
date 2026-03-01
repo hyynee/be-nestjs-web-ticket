@@ -26,9 +26,12 @@ import { StatisticalModule } from './statistical/statistical.module';
 import { LoggerModule } from "./logger/logger.module";
 import { CacheModule } from "@nestjs/cache-manager";
 import { EventsModule } from "./events/events.module";
+import { ExportModule } from "./export/export.module";
+import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     DatabaseModule,
+    ScheduleModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot({
       throttlers: [
@@ -71,7 +74,8 @@ import { EventsModule } from "./events/events.module";
     ChatModule,
     StatisticalModule,
     LoggerModule,
-    EventsModule
+    EventsModule,
+    ExportModule
   ],
   controllers: [AppController, UploadController],
   providers: [
@@ -84,7 +88,6 @@ import { EventsModule } from "./events/events.module";
     },
     {
       provide: APP_PIPE,
-      useClass: ValidationPipe,
       useValue: new ValidationPipe({
         transform: true,
         whitelist: true,

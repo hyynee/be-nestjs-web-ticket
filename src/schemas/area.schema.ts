@@ -3,6 +3,9 @@ import { Document, Types } from "mongoose";
 
 @Schema({ timestamps: true })
 export class Area extends Document {
+  @Prop({ type: Types.ObjectId, ref: "Event", required: true })
+  eventId: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: "Zone", required: true })
   zoneId: Types.ObjectId;
 
@@ -28,5 +31,6 @@ seats?: string[];
 export const AreaSchema = SchemaFactory.createForClass(Area);
 
 // Index
-AreaSchema.index({ zoneId: 1 });
+AreaSchema.index({ eventId: 1, zoneId: 1 });
+AreaSchema.index({ zoneId: 1, name: 1 }, { unique: true });
 AreaSchema.index({ isDeleted: 1 });

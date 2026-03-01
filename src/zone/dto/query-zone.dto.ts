@@ -8,7 +8,7 @@ import {
   Min,
   IsPositive,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { Zone } from "@src/schemas/zone.schema";
 
 export interface PaginatedZones {
@@ -26,10 +26,24 @@ export class QueryZoneDto {
   @IsOptional()
   name?: string;
 
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+
   @IsBoolean()
   @IsOptional()
   @Type(() => Boolean)
   isDeleted?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  hasSeating?: boolean;
 
   @IsNumber()
   @Min(1)
@@ -43,4 +57,12 @@ export class QueryZoneDto {
   @IsOptional()
   @Type(() => Number)
   limit?: number = 10;
+
+  @IsOptional()
+  @IsString()
+  sortBy?: string = 'createdAt';
+
+  @IsOptional()
+  @IsString()
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

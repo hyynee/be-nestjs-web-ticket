@@ -1,6 +1,6 @@
-import { Injectable, BadRequestException, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Booking } from '@src/schemas/booking.schema';
+import { Booking, BookingStatus, PaymentStatus } from '@src/schemas/booking.schema';
 import { Event } from '@src/schemas/event.schema';
 import { Zone } from '@src/schemas/zone.schema';
 import { Area } from '@src/schemas/area.schema';
@@ -9,6 +9,8 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import { QueryBookingDto } from './dto/query-booking.dto';
 import { PaginatedResponse } from '@src/common/interfaces/pagination-response';
+import { Ticket } from '@src/schemas/ticket.schema';
+import {CancleBookingDto} from './dto/cancle-booking.dto'
 
 @Injectable()
 export class BookingService {
@@ -19,6 +21,7 @@ export class BookingService {
         @InjectModel(Event.name) private eventModel: Model<Event>,
         @InjectModel(Zone.name) private zoneModel: Model<Zone>,
         @InjectModel(Area.name) private areaModel: Model<Area>,
+        @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
         @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) { }
 
@@ -94,8 +97,8 @@ export class BookingService {
             totalPrice: zone.price * data.quantity,
             bookingCode: this.generateBookingCode(),
             expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-            status: 'pending',
-            paymentStatus: 'unpaid',
+            status: BookingStatus.PENDING,
+            paymentStatus: PaymentStatus.UNPAID,
         };
         // Xử lý logic seating
         if (zone.hasSeating) {
@@ -125,7 +128,7 @@ export class BookingService {
                     throw new BadRequestException(`Các ghế không hợp lệ: ${invalidSeats.join(', ')}`);
                 }
                 // Kiểm tra seats đã được đặt chưa
-                const existingBookings = await this.bookingModel.find({
+                const conflictCount = await this.bookingModel.countDocuments({
                     eventId: new Types.ObjectId(data.eventId),
                     zoneId: new Types.ObjectId(data.zoneId),
                     areaId: new Types.ObjectId(data.areaId),
@@ -133,11 +136,8 @@ export class BookingService {
                     status: { $nin: ['cancelled', 'expired'] },
                     isDeleted: false,
                 });
-
-                if (existingBookings.length > 0) {
-                    const bookedSeats = existingBookings.flatMap(b => b.seats); // ==> ["A1", "A2", "B1", "C1", "C2"]
-                    const conflictSeats = data.seats.filter(seat => bookedSeats.includes(seat));
-                    throw new BadRequestException(`Các ghế đã được đặt: ${conflictSeats.join(', ')}`);
+                if (conflictCount > 0) {
+                    throw new BadRequestException('Một số ghế đã được đặt, vui lòng chọn lại');
                 }
                 bookingData.seats = data.seats;
             } else {
@@ -157,12 +157,14 @@ export class BookingService {
         }
         const newBooking = new this.bookingModel(bookingData);
         await newBooking.save();
-        await this.invalidateBookingCache();
-        await this.invalidateUserBookingCache(userId);
         // Cập nhật số lượng vé đã bán
-        await this.zoneModel.findByIdAndUpdate(data.zoneId, {
-            $inc: { soldCount: data.quantity }
-        });
+        await Promise.all([
+            this.invalidateBookingCache(),
+            this.invalidateUserBookingCache(userId),
+            this.zoneModel.findByIdAndUpdate(data.zoneId, {
+                $inc: { soldCount: data.quantity }
+            }),
+        ]);
         return {
             success: true,
             message: 'Tạo booking thành công',
@@ -198,8 +200,8 @@ export class BookingService {
             success: true,
             items: bookings,
             meta: {
-                currentPage: page,
-                itemsPerPage: limit,
+                currentPage: Number(page),
+                itemsPerPage: Number(limit),
                 totalItems: total,
                 totalPages: Math.ceil(total / limit),
                 hasPreviousPage: page > 1,
@@ -304,47 +306,75 @@ export class BookingService {
     /**
      * Hủy booking
      */
-    async cancelBooking(userId: string, bookingCode: string, reason?: string) {
-        const booking = await this.bookingModel.findOne({
-            bookingCode,
-            userId: new Types.ObjectId(userId),
-            status: { $in: ['pending', 'confirmed'] },
-            isDeleted: false,
-        });
-        if (!booking) {
-            throw new NotFoundException('Booking không tồn tại hoặc không thể hủy');
+    async cancelBooking( userId: string,dto: CancleBookingDto) {
+        const session = await this.bookingModel.db.startSession();
+        const {bookingCode} = dto;
+        try {
+            await session.withTransaction(async () => {
+                const booking = await this.bookingModel.findOne({
+                    bookingCode: bookingCode.trim().toUpperCase(),
+                    isDeleted: false,
+                }).session(session);
+
+                if (!booking) throw new NotFoundException("Booking not found");
+
+                if (booking.userId.toString() !== userId)
+                    throw new ForbiddenException();
+
+                if (
+                    ![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(
+                        booking.status
+                    )
+                ) {
+                    throw new BadRequestException(
+                        `Cannot cancel booking with status ${booking.status}`
+                    );
+                }
+
+                const oldStatus = booking.status;
+
+                booking.status = BookingStatus.CANCELLED;
+                booking.cancelledAt = new Date();
+                booking.cancelledBy = new Types.ObjectId(userId);
+
+                await booking.save({ session });
+
+                await this.ticketModel.updateMany(
+                    {
+                        bookingId: booking._id,
+                        status: "valid",
+                    },
+                    {
+                        $set: {
+                            status: "cancelled",
+                            cancelledAt: new Date(),
+                            cancelledBy: new Types.ObjectId(userId),
+                        },
+                    },
+                    { session }
+                );
+
+                if (oldStatus === BookingStatus.CONFIRMED) {
+                    await this.zoneModel.findByIdAndUpdate(
+                        booking.zoneId,
+                        { $inc: { soldCount: -booking.quantity } },
+                        { session }
+                    );
+                }
+            });
+            await Promise.all([
+                this.invalidateBookingCache(),
+                this.invalidateUserBookingCache(userId),
+              ]);
+
+            return { message: "Booking cancelled successfully" };
+        } catch (error) {
+            console.error("CANCEL BOOKING ERROR:", error); 
+            throw error;
+         }
+        finally {
+            session.endSession();
         }
-        const wasPaid = booking.paymentStatus === 'paid';
-        // Kiểm tra thời gian hủy
-        const now = new Date();
-        const event = await this.eventModel.findById(booking.eventId);
-        if (event && event.startDate && now > event.startDate) {
-            throw new BadRequestException('Không thể hủy vé sau khi sự kiện đã bắt đầu');
-        }
-
-        booking.status = 'cancelled';
-        booking.cancelledAt = new Date();
-        booking.cancellationReason = reason;
-        booking.paymentStatus = booking.paymentStatus === 'paid' ? 'refunded' : 'unpaid';
-
-        await booking.save();
-
-        // Hoàn lại số lượng vé
-        const updateQuery: any = {
-            $inc: { soldCount: -booking.quantity }
-        };
-        if (wasPaid) {
-            updateQuery.$inc.confirmedSoldCount = -booking.quantity;
-        }
-
-        await this.zoneModel.findByIdAndUpdate(booking.zoneId, updateQuery);
-        await this.invalidateBookingCache();
-        await this.invalidateUserBookingCache(userId);
-
-        return {
-            success: true,
-            message: 'Hủy booking thành công',
-        };
     }
 
     /* Admin */
@@ -367,8 +397,11 @@ export class BookingService {
         const skip = (page - 1) * limit;
         if (search) {
             filter.$or = [
-                { name: { $regex: search, $options: 'i' } },
-                { description: { $regex: search, $options: 'i' } }
+                { bookingCode: { $regex: search, $options: 'i' } },
+                { customerName: { $regex: search, $options: 'i' } },
+                { customerEmail: { $regex: search, $options: 'i' } },
+                { customerPhone: { $regex: search, $options: 'i' } },
+                { notes: { $regex: search, $options: 'i' } },
             ];
         }
         const sort: any = {};
@@ -401,25 +434,50 @@ export class BookingService {
         return result;
     }
 
-
     async expirePendingBookings() {
         const expiredBookings = await this.bookingModel.find({
-            status: 'pending',
+            status: BookingStatus.PENDING,
             expiresAt: { $lt: new Date() },
             isDeleted: false,
-        });
-        for (const booking of expiredBookings) {
-            booking.status = 'expired';
-            await booking.save();
-            // Hoàn lại số lượng vé
-            await this.zoneModel.findByIdAndUpdate(booking.zoneId, {
-                $inc: { soldCount: -booking.quantity }
-            });
+        }).select('_id zoneId quantity').lean();
+    
+        if (expiredBookings.length === 0) {
+            return { success: true, message: 'Không có booking hết hạn' };
         }
+    
+        await this.bookingModel.updateMany(
+            { _id: { $in: expiredBookings.map(b => b._id) } },
+            { $set: { status: BookingStatus.EXPIRED } }
+        );
+    
+        const zoneMap = new Map<string, number>();
+        for (const b of expiredBookings) {
+            const key = b.zoneId.toString();
+            zoneMap.set(key, (zoneMap.get(key) || 0) + b.quantity);
+        }
+    
+        await this.zoneModel.bulkWrite(
+            [...zoneMap.entries()].map(([zoneId, quantity]) => ({
+                updateOne: {
+                    filter: { _id: new Types.ObjectId(zoneId) },
+                    update: { $inc: { soldCount: -quantity } },
+                }
+            }))
+        );
+    
         await this.invalidateBookingCache();
+    
         return {
             success: true,
             message: `Đã expire ${expiredBookings.length} booking`,
         };
+    }
+
+    async cleanupOldBookings(before: Date) {
+        await this.bookingModel.deleteMany({
+            status: { $in: ['expired', 'cancelled'] },
+            updatedAt: { $lt: before },
+            isDeleted: false,
+        });
     }
 }

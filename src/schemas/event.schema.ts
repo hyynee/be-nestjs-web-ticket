@@ -2,6 +2,13 @@ import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
 import { User } from "./user.schema";
 
+export enum EventStatus {
+  DRAFT = "draft",
+  ACTIVE = "active",
+  INACTIVE = "inactive",
+  ENDED = "ended",
+};
+
 @Schema({ timestamps: true })
 export class Event extends Document {
   @Prop({ required: true })
@@ -24,10 +31,10 @@ export class Event extends Document {
 
   @Prop({
     type: String,
-    enum: ["draft", "active", "inactive", "ended"],
-    default: "draft",
+    enum: EventStatus,
+    default: EventStatus.DRAFT,
   })
-  status: "draft" | "active" | "inactive" | "ended";
+  status: EventStatus
 
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
   createdBy: User;

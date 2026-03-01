@@ -74,8 +74,14 @@ TicketSchema.virtual("isValid").get(function () {
 
 // Indexes
 TicketSchema.index({ ticketCode: 1 }, { unique: true });
+TicketSchema.index({ eventId: 1, status: 1, isDeleted: 1 });
+TicketSchema.index({ userId: 1, isDeleted: 1 });
 TicketSchema.index({ bookingId: 1 });
-TicketSchema.index({ userId: 1 });
-TicketSchema.index({ eventId: 1, status: 1 });
-TicketSchema.index({ status: 1 });
-TicketSchema.index({ isDeleted: 1 });
+TicketSchema.index({ status: 1, isDeleted: 1 });
+TicketSchema.index({ createdAt: -1 });
+
+// chăn double check-in
+// TicketSchema.index(
+//   { ticketCode: 1, status: 1 },
+//   { unique: true, partialFilterExpression: { status: 'valid' } }
+// );

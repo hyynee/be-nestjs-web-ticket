@@ -19,7 +19,7 @@ import { v4 as uuidv4 } from "uuid";
 import * as bcrypt from "bcrypt";
 import { RefreshTokenDTO } from "./dto/refreshToken.dto";
 import { ChangePasswordDTO } from "./dto/password.dto";
-import { FRONTEND_URL } from "app-config/config.json";
+import envConfig from "@src/config/config";
 import { LockLoginService } from "@src/lock-login/lock-login.service";
 import { MailService } from "@src/services/mail.service";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
@@ -29,6 +29,8 @@ import { Logger } from "winston";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
 import { v2 as cloudinary } from 'cloudinary';
+
+const { FRONTEND_URL } = envConfig;
 
 @Injectable()
 export class AuthService {
@@ -154,9 +156,9 @@ export class AuthService {
         secure: true,
       })
       : null;
-
+    const {avatarPublicId,...profile} = user;
     return {
-      ...user,
+      ...profile,
       avatarUrl,
     };
   }

@@ -1,8 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import config from '@src/config/config';
 import Stripe from 'stripe';
-import { ConfigService } from '@nestjs/config';
-import { Booking } from '@src/schemas/booking.schema';
+import { Booking, BookingStatus, PaymentStatus } from '@src/schemas/booking.schema';
 import { Model, Types } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { Payment } from '@src/schemas/payment.schema';
@@ -23,10 +22,10 @@ export class PaymentService {
         private ticketService: TicketService,
         private mailService: MailService
     ) {
-        this.stripe = new Stripe(`${config.STRIPE_SECRET_KEY}`)
+        this.stripe = new Stripe(`${process.env.STRIPE_SECRET_KEY}`)
         const env_paypal = new paypal.core.SandboxEnvironment(
-            config.PAYPAL_CLIENT_ID,
-            config.PAYPAL_CLIENT_SECRET
+            process.env.PAYPAL_CLIENT_ID,
+            process.env.PAYPAL_CLIENT_SECRET
         );
         this.paypal = new paypal.core.PayPalHttpClient(env_paypal);
     }
@@ -56,7 +55,7 @@ export class PaymentService {
 
         // Check booking expiration
         if (new Date() > booking.expiresAt) {
-            booking.status = "expired";
+            booking.status = BookingStatus.EXPIRED;
             await booking.save();
             throw new BadRequestException("Booking has expired");
         }
@@ -178,7 +177,7 @@ export class PaymentService {
             throw new BadRequestException("Booking already paid");
         }
         if (new Date() > booking.expiresAt) {
-            booking.status = "expired";
+            booking.status = BookingStatus.EXPIRED;
             await booking.save();
             throw new BadRequestException("Booking has expired");
         }
@@ -200,7 +199,7 @@ export class PaymentService {
             }],
             application_context: {
                 return_url: `${config.FRONTEND_URL}/payment/paypal-success?bookingCode=${booking.bookingCode}`,
-                cancel_url: `${config.FRONTEND_URL}/payment/paypal-cancel?bookingCode=${booking.bookingCode}`,
+                cancel_url: `${config.FRONTEND_URL}/booking/cancel?bookingCode=${booking.bookingCode}`,
             }
         });
 
@@ -452,8 +451,8 @@ export class PaymentService {
             return;
         }
 
-        booking.paymentStatus = 'paid';
-        booking.status = 'confirmed';
+        booking.paymentStatus = PaymentStatus.PAID;
+        booking.status = BookingStatus.CONFIRMED;
         booking.paidAt = new Date();
 
         if (booking.quantity > 0) {
@@ -528,4 +527,27 @@ export class PaymentService {
         };
     }
 
+    async handlePaymentCancelled(userId: string, bookingCode: string) {
+        const booking = await this.bookingModel.findOne({
+          bookingCode,
+          userId: new Types.ObjectId(userId),
+          status: 'pending',
+          paymentStatus: 'unpaid',
+          isDeleted: false,
+        });
+      
+        if (!booking) return;
+      
+        booking.status = BookingStatus.CANCELLED;
+        booking.cancellationReason = 'Payment cancelled by user';
+        await booking.save();
+      
+        await this.zoneModel.findByIdAndUpdate(booking.zoneId, {
+          $inc: { soldCount: -booking.quantity }
+        });
+        return {
+            status: 200,
+            message: 'Payment cancelled successfully',
+        };
+      }
 }

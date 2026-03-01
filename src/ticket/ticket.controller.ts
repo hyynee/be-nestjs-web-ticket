@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, HttpCode, Param, UseGuards ,Query} from '@nestjs/common';
 import { TicketService } from './ticket.service';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { Post, Body } from '@nestjs/common';
@@ -6,6 +6,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '@src/guards/role.guard';
 import { JwtPayload } from '@src/auth/dto/jwt-payload.dto';
 import { CurrentUser } from '@src/auth/decorator/currentUser.decorator';
+import { QueryTicketDto } from './dto/query.dto';
 
 @Controller('ticket')
 export class TicketController {
@@ -35,9 +36,11 @@ export class TicketController {
   @HttpCode(200)
   @Get(':ticketCode')
   async getTicketByCode(
+    @CurrentUser() user: JwtPayload,
     @Param('ticketCode') ticketCode: string,
   ) {
-    return this.ticketService.getTicketByCode(ticketCode);
+    const userId = user.userId;
+    return this.ticketService.getTicketByCode(userId,ticketCode);
   }
 
 
@@ -66,5 +69,25 @@ export class TicketController {
   ) {
     const userId = user.userId;
     return this.ticketService.cancelTicket(ticketCode, userId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @HttpCode(200)
+  @Get('checkin-history/:ticketCode')
+  async getCheckInHistory(
+    @Param('ticketCode') ticketCode: string,
+  ) {
+    return this.ticketService.getCheckInHistory(ticketCode);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @HttpCode(200)
+  @Get('admin/all-tickets')
+  async getAllTickets(
+    @Query() query: QueryTicketDto,
+  ) {
+    return this.ticketService.getAllTickets(query);
   }
 }

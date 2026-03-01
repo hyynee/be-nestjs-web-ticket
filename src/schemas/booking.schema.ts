@@ -1,6 +1,20 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
 
+
+export enum BookingStatus {
+  PENDING = "pending",
+  CONFIRMED = "confirmed",
+  CANCELLED = "cancelled",
+  EXPIRED = "expired",
+};
+
+export enum PaymentStatus {
+  UNPAID = "unpaid",
+  PAID = "paid",
+  REFUNDED = "refunded",
+}
+
 @Schema({ timestamps: true })
 export class Booking extends Document {
   // Mã booking unique để tracking
@@ -34,17 +48,17 @@ export class Booking extends Document {
   // Trạng thái booking
   @Prop({
     type: String,
-    enum: ["pending", "confirmed", "cancelled", "expired"],
-    default: "pending",
+    enum: BookingStatus,
+    default: BookingStatus.PENDING,
   })
-  status: "pending" | "confirmed" | "cancelled" | "expired";
+  status: BookingStatus;
 
   @Prop({
     type: String,
-    enum: ["unpaid", "paid", "refunded"],
-    default: "unpaid",
+    enum: PaymentStatus,
+    default: PaymentStatus.UNPAID,
   })
-  paymentStatus: "unpaid" | "paid" | "refunded";
+  paymentStatus: PaymentStatus;
 
   @Prop({ type: String })
   stripePaymentIntentId?: string;
@@ -70,6 +84,9 @@ export class Booking extends Document {
 
   @Prop({ type: Date })
   cancelledAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: "User" })
+cancelledBy?: Types.ObjectId;
 
   @Prop({ type: String })
   cancellationReason?: string;

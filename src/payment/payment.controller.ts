@@ -94,4 +94,12 @@ export class PaymentController {
     const userId = user.userId;
     return this.paymentService.getPaymentHistory(userId);
   }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(200)
+  @Post('cancel')
+async cancelPayment(@Body() dto: { bookingCode: string }, @Req() req) {
+  return this.paymentService.handlePaymentCancelled(req.user.id, dto.bookingCode);
+}
 }

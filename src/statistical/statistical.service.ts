@@ -20,16 +20,29 @@ export class StatisticalService {
         startDate?: string,
         endDate?: string,
     ): Promise<DashboardOverviewDto> {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth();
+
+        const startOfCurrentMonth = new Date(Date.UTC(year, month, 1));
+        const startOfNextMonth = new Date(Date.UTC(year, month + 1, 1));
+        const startOfPreviousMonth = new Date(Date.UTC(year, month - 1, 1));
+
+        if (eventId && !Types.ObjectId.isValid(eventId)) {
+            throw new BadRequestException('Invalid event ID format');
+        }
 
         const bookingFilter: any = {};
         const paymentFilter: any = {};
         const ticketFilter: any = { isDeleted: false };
+
         if (eventId) {
             const eventObjectId = new Types.ObjectId(eventId);
             bookingFilter.eventId = eventObjectId;
             paymentFilter.eventId = eventObjectId;
             ticketFilter.eventId = eventObjectId;
         }
+
         if (startDate && endDate) {
             const start = new Date(startDate);
             const end = new Date(endDate);
@@ -38,47 +51,136 @@ export class StatisticalService {
             ticketFilter.createdAt = { $gte: start, $lte: end };
         }
 
-        const [totalRevenueResult, totalTicketsSoldResult, totalBookings, totalPaidBookingsResult, totalCheckedInResult] = await Promise.all([
-            // Tổng doanh thu (payment = succeeded)
+        const comparisonPaymentFilter: any = { status: 'succeeded', isDeleted: false };
+        const comparisonTicketFilter: any = { isDeleted: false, status: { $in: ['valid', 'used'] } };
+        if (eventId) {
+            comparisonPaymentFilter.eventId = new Types.ObjectId(eventId);
+            comparisonTicketFilter.eventId = new Types.ObjectId(eventId);
+        }
+
+        const [
+            totalRevenueResult,
+            totalTicketsSold,
+            totalBookings,
+            totalPaidBookings,
+            totalCheckedIn,
+            revenueComparisonResult,
+            ticketComparisonResult,
+        ] = await Promise.all([
             this.paymentModel.aggregate([
-                {
-                    $match: {
-                        ...paymentFilter,
-                        status: 'succeeded',
-                        isDeleted: false,
-                    },
-                },
-                {
-                    $group: {
-                        _id: null,
-                        total: { $sum: '$amount' },
-                    },
-                },
+                { $match: { ...paymentFilter, status: 'succeeded', isDeleted: false } },
+                { $group: { _id: null, total: { $sum: '$amount' } } },
             ]),
-            // Tổng vé đã bán (booking đã thanh toán)
+
             this.ticketModel.countDocuments({
                 ...ticketFilter,
                 status: { $in: ['valid', 'used'] },
             }),
-            // Tổng booking đã tạo
+
             this.bookingModel.countDocuments(bookingFilter),
-            //  Tổng booking đã thanh toán
+
             this.bookingModel.countDocuments({
                 ...bookingFilter,
                 paymentStatus: 'paid',
             }),
-            // Tổng booking đã check-in
+
             this.ticketModel.countDocuments({
                 ...ticketFilter,
                 status: 'used',
-            })
+            }),
 
+            this.paymentModel.aggregate([
+                { $match: comparisonPaymentFilter },
+                {
+                    $facet: {
+                        currentMonth: [
+                            { $match: { createdAt: { $gte: startOfCurrentMonth, $lt: startOfNextMonth } } },
+                            { $group: { _id: null, total: { $sum: '$amount' } } },
+                        ],
+                        previousMonth: [
+                            { $match: { createdAt: { $gte: startOfPreviousMonth, $lt: startOfCurrentMonth } } },
+                            { $group: { _id: null, total: { $sum: '$amount' } } },
+                        ],
+                    },
+                },
+            ]),
+
+            this.ticketModel.aggregate([
+                { $match: comparisonTicketFilter },
+                {
+                    $facet: {
+                        currentMonth: [
+                            { $match: { createdAt: { $gte: startOfCurrentMonth, $lt: startOfNextMonth } } },
+                            {
+                                $group: {
+                                    _id: null,
+                                    ticketsSold: { $sum: 1 },
+                                    checkedIn: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+                                },
+                            },
+                        ],
+                        previousMonth: [
+                            { $match: { createdAt: { $gte: startOfPreviousMonth, $lt: startOfCurrentMonth } } },
+                            {
+                                $group: {
+                                    _id: null,
+                                    ticketsSold: { $sum: 1 },
+                                    checkedIn: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+                                },
+                            },
+                        ],
+                    },
+                },
+            ]),
         ]);
+
         const totalRevenue = totalRevenueResult?.[0]?.total || 0;
-        const totalTicketsSold = totalTicketsSoldResult || 0;
-        const totalPaidBookings = totalPaidBookingsResult || 0;
-        const totalCheckedIn = totalCheckedInResult || 0;
-        return { totalRevenue, totalTicketsSold, totalBookings, totalPaidBookings, totalCheckedIn, totalRefundedAmount: 0 }
+
+        // Revenue comparison
+        const currentMonthRevenue = revenueComparisonResult[0]?.currentMonth?.[0]?.total || 0;
+        const previousMonthRevenue = revenueComparisonResult[0]?.previousMonth?.[0]?.total || 0;
+        const revenueDifference = currentMonthRevenue - previousMonthRevenue;
+        const percentageChange =
+            previousMonthRevenue === 0
+                ? currentMonthRevenue === 0 ? 0 : 100
+                : (revenueDifference / previousMonthRevenue) * 100;
+
+        // Tickets sold comparison
+        const currentMonthTicketsSold = ticketComparisonResult[0]?.currentMonth?.[0]?.ticketsSold || 0;
+        const previousMonthTicketsSold = ticketComparisonResult[0]?.previousMonth?.[0]?.ticketsSold || 0;
+        const ticketsSoldDifference = currentMonthTicketsSold - previousMonthTicketsSold;
+        const ticketsSoldPercentageChange =
+            previousMonthTicketsSold === 0
+                ? currentMonthTicketsSold === 0 ? 0 : 100
+                : (ticketsSoldDifference / previousMonthTicketsSold) * 100;
+
+        // CheckIn comparison
+        const currentMonthCheckedIn = ticketComparisonResult[0]?.currentMonth?.[0]?.checkedIn || 0;
+        const previousMonthCheckedIn = ticketComparisonResult[0]?.previousMonth?.[0]?.checkedIn || 0;
+        const checkedInDifference = currentMonthCheckedIn - previousMonthCheckedIn;
+        const checkedInPercentageChange =
+            previousMonthCheckedIn === 0
+                ? currentMonthCheckedIn === 0 ? 0 : 100
+                : (checkedInDifference / previousMonthCheckedIn) * 100;
+
+        return {
+            totalRevenue,
+            totalTicketsSold,
+            totalBookings,
+            totalPaidBookings,
+            totalCheckedIn,
+            totalRefundedAmount: 0,
+            currentMonthRevenue,
+            previousMonthRevenue,
+            revenueDifference,
+            percentageChange,
+            currentMonthTicketsSold,
+            previousMonthTicketsSold,
+            ticketsSoldPercentageChange,
+            currentMonthCheckedIn,
+            previousMonthCheckedIn,
+            checkedInPercentageChange,
+        };
     }
 
     async getRevenueStatistics(
@@ -272,5 +374,68 @@ export class StatisticalService {
         ]);
         return topCustomers;
     }
-   
+
+    async getCheckInZones(
+        eventId: string,
+    ) {
+        if (!Types.ObjectId.isValid(eventId)) {
+            throw new BadRequestException('Invalid event ID format');
+        }
+        return this.ticketModel.aggregate([
+            {
+                $match: {
+                    eventId: new Types.ObjectId(eventId),
+                    isDeleted: false,
+                }
+            },
+            {
+                $group: {
+                    _id: '$zoneId',
+                    totalTickets: { $sum: 1 }, // tổng số vé trong zone đó
+                    checkedInCount: { // vé đã check-in
+                        $sum: {
+                            $cond: [{ $eq: ['$status', 'used'] }, 1, 0],
+                            // count số vé đã check-in ( field status = 'used' : true + 1 : false + 0 )
+                        },
+                    },
+                }
+            },
+            {
+                $lookup: {
+                    from: 'zones',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'zone',
+                }
+            },
+            { $unwind: '$zone' },
+            {
+                $project: {
+                    _id: 0,
+                    zoneId: '$_id',
+                    zoneName: '$zone.name',
+                    price: '$zone.price',
+                    totalTickets: 1,
+                    checkedInCount: 1,
+                    notCheckedIn: {
+                        $subtract: ['$totalTickets', '$checkedInCount'],
+                    },
+                    // Tỉ lệ check-in (%) = (số vé đã check-in / tổng số vé) * 100
+                    checkInRate: {
+                        $cond: [
+                            { $eq: ['$totalTickets', 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ['$checkedInCount', '$totalTickets'] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
+                }
+            },
+            { $sort: { zoneName: 1 } }
+        ]);
+    }
 }
