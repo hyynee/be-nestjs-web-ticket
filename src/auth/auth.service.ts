@@ -13,7 +13,6 @@ import { User } from "@src/schemas/user.schema";
 import { Model } from "mongoose";
 import { RegisterDTO } from "./dto/create.dto";
 import { JwtService } from "@nestjs/jwt";
-import { jwtConstants } from "./constants";
 import { RefreshToken } from "@src/schemas/refresh-token.schema";
 import { v4 as uuidv4 } from "uuid";
 import * as bcrypt from "bcrypt";
@@ -194,7 +193,7 @@ export class AuthService {
     }
     const accessToken = this.jwtService.sign(
       { userId, role: user.role },
-      { secret: jwtConstants.secret, expiresIn: "1h" }
+      { expiresIn: "1h" }
     );
     const refreshToken = uuidv4();
     // Xoá refresh token cũ

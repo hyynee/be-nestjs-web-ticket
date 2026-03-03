@@ -12,6 +12,11 @@ import { DashboardQueryDto, RevenueStatisticsQueryDto } from './dto/dashboard-qu
 export class StatisticalController {
   constructor(private readonly statisticalService: StatisticalService) { }
 
+  @Get("hot-events")
+  @ApiOperation({ summary: 'Get hot events based on revenue' })
+  async getHotEventsByRevenue() {
+    return this.statisticalService.getHotEventsByRevenue();
+  }
   @Get('top-selling-events')
   @ApiOperation({ summary: 'Get top selling events' })
   async getTopSellingEvents(

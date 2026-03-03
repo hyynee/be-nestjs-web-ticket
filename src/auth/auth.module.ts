@@ -4,7 +4,6 @@ import { AuthController } from "./auth.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { UserSchema } from "@src/schemas/user.schema";
 import { JwtModule } from "@nestjs/jwt";
-import { jwtConstants } from "./constants";
 import { RefreshTokenSchema } from "@src/schemas/refresh-token.schema";
 import { ResponseModule } from "@src/common/reponse/response.module";
 import { PassportModule } from "@nestjs/passport";
@@ -14,25 +13,33 @@ import { LockLoginModule } from "@src/lock-login/lock-login.module";
 import { MailModule } from "@src/services/mail.module";
 import { ResetTokenSchema } from "@src/schemas/reset-token.schema";
 import { EventsModule } from "@src/events/events.module";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 
 @Module({
   imports: [
+
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema },
       { name: "RefreshToken", schema: RefreshTokenSchema },
       { name: "ResetToken", schema: ResetTokenSchema },
     ]),
-    LockLoginModule,
-    JwtModule.register({
-      global: true,
-      secret: jwtConstants.secret,
+
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        global: true,
+        secret: configService.get<string>("SECRET_KEY"),
+        signOptions: { expiresIn: "1d" },
+      }),
     }),
+
     PassportModule,
+    LockLoginModule,
     ResponseModule,
     EventsModule,
-    MailModule
+    MailModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, GoogleStrategy],
 })
-export class AuthModule { }
+export class AuthModule {}

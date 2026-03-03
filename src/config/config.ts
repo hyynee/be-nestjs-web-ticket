@@ -12,6 +12,7 @@ const envConfig = {
   STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || "",
   PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID || "",
   PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET || "",
+  SECRET_KEY: process.env.SECRET_KEY || "your-secret-key",
   SMTP_HOST: process.env.SMTP_HOST || "",
   SMTP_PORT: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587,
   SMTP_USER: process.env.SMTP_USER || "",

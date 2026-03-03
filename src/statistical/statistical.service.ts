@@ -15,6 +15,46 @@ export class StatisticalService {
         @InjectModel(Event.name) private eventModel: Model<Event>,
     ) { }
 
+    async getHotEventsByRevenue() {
+        return this.paymentModel.aggregate([
+            {
+                $match: {
+                    status: 'succeeded',
+                    isDeleted: false,
+                },
+            },
+            {
+                $group: {
+                    _id: '$eventId',
+                    totalRevenue: { $sum: '$amount' },
+                    totalPayments: { $sum: 1 },
+                },
+            },
+            {
+                $sort: { totalRevenue: -1 },
+            },
+            { $limit: 5 },
+            {
+                $lookup: {
+                    from: 'events',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'event',
+                },
+            },
+            { $unwind: '$event' },
+            {
+                $project: {
+                    _id: 0,
+                    eventId: '$_id',
+                    eventName: '$event.title',
+                    totalRevenue: 1,
+                    totalPayments: 1,
+                },
+            },
+        ]);
+    }
+
     async getOverviewStatistics(
         eventId?: string,
         startDate?: string,
