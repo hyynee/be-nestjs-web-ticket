@@ -33,7 +33,7 @@ export class StatisticalService {
             {
                 $sort: { totalRevenue: -1 },
             },
-            { $limit: 5 },
+            { $limit: 10 },
             {
                 $lookup: {
                     from: 'events',
@@ -46,8 +46,9 @@ export class StatisticalService {
             {
                 $project: {
                     _id: 0,
-                    eventId: '$_id',
-                    eventName: '$event.title',
+                    id: '$_id',
+                    title: '$event.title',
+                    thumbnail: '$event.thumbnail',
                     totalRevenue: 1,
                     totalPayments: 1,
                 },

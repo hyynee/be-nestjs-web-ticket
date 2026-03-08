@@ -10,7 +10,7 @@ import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import { QueryBookingDto } from './dto/query-booking.dto';
 import { PaginatedResponse } from '@src/common/interfaces/pagination-response';
 import { Ticket } from '@src/schemas/ticket.schema';
-import {CancleBookingDto} from './dto/cancle-booking.dto'
+import { CancleBookingDto } from './dto/cancle-booking.dto'
 
 @Injectable()
 export class BookingService {
@@ -68,108 +68,287 @@ export class BookingService {
         }
     }
 
+    // async createBooking(userId: string, data: CreateBookingDto) {
+    //     const event = await this.eventModel.findById(data.eventId);
+    //     if (!event) {
+    //         throw new NotFoundException('Sự kiện không tồn tại');
+    //     }
+    //     const zone = await this.zoneModel.findOne({
+    //         _id: new Types.ObjectId(data.zoneId),
+    //         eventId: new Types.ObjectId(data.eventId),
+    //         isDeleted: false,
+    //     });
+
+    //     if (!zone) {
+    //         throw new NotFoundException('Khu vực không tồn tại hoặc không thuộc sự kiện này');
+    //     }
+    //     const availableTickets = zone.capacity - zone.soldCount;
+    //     if (availableTickets < data.quantity) {
+    //         throw new BadRequestException(`Chỉ còn ${availableTickets} vé trống trong khu vực này`);
+    //     }
+
+    //     let bookingData: any = {
+    //         ...data,
+    //         userId: new Types.ObjectId(userId),
+    //         eventId: new Types.ObjectId(data.eventId),
+    //         zoneId: new Types.ObjectId(data.zoneId),
+    //         areaId: data.areaId ? new Types.ObjectId(data.areaId) : undefined,
+    //         pricePerTicket: zone.price,
+    //         totalPrice: zone.price * data.quantity,
+    //         bookingCode: this.generateBookingCode(),
+    //         expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    //         status: BookingStatus.PENDING,
+    //         paymentStatus: PaymentStatus.UNPAID,
+    //     };
+    //     // Xử lý logic seating
+    //     if (zone.hasSeating) {
+    //         // Zone có chỗ ngồi
+    //         if (!data.areaId) {
+    //             throw new BadRequestException('Vui lòng chọn hàng ghế (area)');
+    //         }
+    //         const area = await this.areaModel.findOne({
+    //             _id: new Types.ObjectId(data.areaId),
+    //             zoneId: new Types.ObjectId(data.zoneId),
+    //             isDeleted: false,
+    //         });
+    //         if (!area) {
+    //             throw new NotFoundException('Hàng ghế không tồn tại');
+    //         }
+    //         // Xử lý seats
+    //         if (data.seats && data.seats.length > 0) {
+    //             // Kiểm tra số lượng seats match với quantity
+    //             if (data.seats.length !== data.quantity) {
+    //                 throw new BadRequestException('Số lượng ghế phải bằng số lượng vé');
+    //             }
+    //             // Kiểm tra seats có hợp lệ trong area
+    //             const validSeats = area.seats || [];
+    //             const invalidSeats = data.seats.filter(seat => !validSeats.includes(seat));
+
+    //             if (invalidSeats.length > 0) {
+    //                 throw new BadRequestException(`Các ghế không hợp lệ: ${invalidSeats.join(', ')}`);
+    //             }
+    //             // Kiểm tra seats đã được đặt chưa
+    //             const conflictCount = await this.bookingModel.countDocuments({
+    //                 eventId: new Types.ObjectId(data.eventId),
+    //                 zoneId: new Types.ObjectId(data.zoneId),
+    //                 areaId: new Types.ObjectId(data.areaId),
+    //                 seats: { $in: data.seats },
+    //                 status: { $nin: ['cancelled', 'expired'] },
+    //                 isDeleted: false,
+    //             });
+    //             if (conflictCount > 0) {
+    //                 throw new BadRequestException('Một số ghế đã được đặt, vui lòng chọn lại');
+    //             }
+    //             bookingData.seats = data.seats;
+    //         } else {
+    //             // Không chọn ghế cụ thể
+    //             bookingData.seats = [];
+    //         }
+    //     } else {
+    //         // Zone không có chỗ ngồi (standing zone)
+    //         if (data.seats && data.seats.length > 0) {
+    //             throw new BadRequestException('Không thể chọn ghế cho khu vực không có chỗ ngồi');
+    //         }
+    //         if (data.areaId) {
+    //             throw new BadRequestException('Không thể chọn hàng ghế cho khu vực không có chỗ ngồi');
+    //         }
+    //         bookingData.seats = [];
+    //         bookingData.areaId = undefined;
+    //     }
+    //     const newBooking = new this.bookingModel(bookingData);
+    //     await newBooking.save();
+    //     // Cập nhật số lượng vé đã bán
+    //     await Promise.all([
+    //         this.invalidateBookingCache(),
+    //         this.invalidateUserBookingCache(userId),
+    //         this.zoneModel.findByIdAndUpdate(data.zoneId, {
+    //             $inc: { soldCount: data.quantity }
+    //         }),
+    //     ]);
+    //     return {
+    //         success: true,
+    //         message: 'Tạo booking thành công',
+    //         data: newBooking,
+    //     };
+    // }
     async createBooking(userId: string, data: CreateBookingDto) {
-        const event = await this.eventModel.findById(data.eventId);
-        if (!event) {
-            throw new NotFoundException('Sự kiện không tồn tại');
-        }
-        const zone = await this.zoneModel.findOne({
-            _id: new Types.ObjectId(data.zoneId),
-            eventId: new Types.ObjectId(data.eventId),
-            isDeleted: false,
-        });
+        const session = await this.bookingModel.db.startSession();
 
-        if (!zone) {
-            throw new NotFoundException('Khu vực không tồn tại hoặc không thuộc sự kiện này');
-        }
-        const availableTickets = zone.capacity - zone.soldCount;
-        if (availableTickets < data.quantity) {
-            throw new BadRequestException(`Chỉ còn ${availableTickets} vé trống trong khu vực này`);
-        }
+        try {
+            let result: any;
 
-        let bookingData: any = {
-            ...data,
-            userId: new Types.ObjectId(userId),
-            eventId: new Types.ObjectId(data.eventId),
-            zoneId: new Types.ObjectId(data.zoneId),
-            areaId: data.areaId ? new Types.ObjectId(data.areaId) : undefined,
-            pricePerTicket: zone.price,
-            totalPrice: zone.price * data.quantity,
-            bookingCode: this.generateBookingCode(),
-            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-            status: BookingStatus.PENDING,
-            paymentStatus: PaymentStatus.UNPAID,
-        };
-        // Xử lý logic seating
-        if (zone.hasSeating) {
-            // Zone có chỗ ngồi
-            if (!data.areaId) {
-                throw new BadRequestException('Vui lòng chọn hàng ghế (area)');
-            }
-            const area = await this.areaModel.findOne({
-                _id: new Types.ObjectId(data.areaId),
-                zoneId: new Types.ObjectId(data.zoneId),
-                isDeleted: false,
-            });
-            if (!area) {
-                throw new NotFoundException('Hàng ghế không tồn tại');
-            }
-            // Xử lý seats
-            if (data.seats && data.seats.length > 0) {
-                // Kiểm tra số lượng seats match với quantity
-                if (data.seats.length !== data.quantity) {
-                    throw new BadRequestException('Số lượng ghế phải bằng số lượng vé');
+            await session.withTransaction(async () => {
+
+                const event = await this.eventModel
+                    .findById(data.eventId)
+                    .session(session);
+
+                if (!event || event.isDeleted) {
+                    throw new NotFoundException('Sự kiện không tồn tại');
                 }
-                // Kiểm tra seats có hợp lệ trong area
-                const validSeats = area.seats || [];
-                const invalidSeats = data.seats.filter(seat => !validSeats.includes(seat));
 
-                if (invalidSeats.length > 0) {
-                    throw new BadRequestException(`Các ghế không hợp lệ: ${invalidSeats.join(', ')}`);
+                if (event.endDate < new Date()) {
+                    throw new BadRequestException('Sự kiện đã kết thúc');
                 }
-                // Kiểm tra seats đã được đặt chưa
-                const conflictCount = await this.bookingModel.countDocuments({
+
+                const zone = await this.zoneModel
+                    .findOne({
+                        _id: new Types.ObjectId(data.zoneId),
+                        eventId: new Types.ObjectId(data.eventId),
+                        isDeleted: false
+                    })
+                    .session(session);
+
+                if (!zone) {
+                    throw new NotFoundException('Khu vực không tồn tại');
+                }
+
+                const now = new Date();
+
+                if (zone.saleStartDate && now < zone.saleStartDate) {
+                    throw new BadRequestException('Chưa tới thời gian bán vé');
+                }
+
+                if (zone.saleEndDate && now > zone.saleEndDate) {
+                    throw new BadRequestException('Đã hết thời gian bán vé');
+                }
+
+                let bookingData: any = {
+                    ...data,
+                    userId: new Types.ObjectId(userId),
                     eventId: new Types.ObjectId(data.eventId),
                     zoneId: new Types.ObjectId(data.zoneId),
-                    areaId: new Types.ObjectId(data.areaId),
-                    seats: { $in: data.seats },
-                    status: { $nin: ['cancelled', 'expired'] },
-                    isDeleted: false,
-                });
-                if (conflictCount > 0) {
-                    throw new BadRequestException('Một số ghế đã được đặt, vui lòng chọn lại');
+                    areaId: data.areaId ? new Types.ObjectId(data.areaId) : undefined,
+                    pricePerTicket: zone.price,
+                    totalPrice: zone.price * data.quantity,
+                    bookingCode: this.generateBookingCode(),
+                    expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+                    status: BookingStatus.PENDING,
+                    paymentStatus: PaymentStatus.UNPAID,
+                };
+
+                if (zone.hasSeating) {
+
+                    if (!data.areaId) {
+                        throw new BadRequestException('Vui lòng chọn hàng ghế (area)');
+                    }
+
+                    const area = await this.areaModel
+                        .findOne({
+                            _id: new Types.ObjectId(data.areaId),
+                            zoneId: new Types.ObjectId(data.zoneId),
+                            isDeleted: false,
+                        })
+                        .session(session);
+
+                    if (!area) {
+                        throw new NotFoundException('Hàng ghế không tồn tại');
+                    }
+
+                    if (data.seats && data.seats.length > 0) {
+
+                        if (data.seats.length !== data.quantity) {
+                            throw new BadRequestException('Số lượng ghế phải bằng số lượng vé');
+                        }
+
+                        const validSeats = area.seats || [];
+
+                        const invalidSeats = data.seats.filter(
+                            seat => !validSeats.includes(seat)
+                        );
+
+                        if (invalidSeats.length > 0) {
+                            throw new BadRequestException(
+                                `Các ghế không hợp lệ: ${invalidSeats.join(', ')}`
+                            );
+                        }
+
+                        const conflict = await this.bookingModel
+                            .findOne({
+                                eventId: new Types.ObjectId(data.eventId),
+                                zoneId: new Types.ObjectId(data.zoneId),
+                                areaId: new Types.ObjectId(data.areaId),
+                                seats: { $in: data.seats },
+                                status: { $nin: ['cancelled', 'expired'] },
+                                isDeleted: false,
+                            })
+                            .session(session)
+                            .select('_id');
+
+                        if (conflict) {
+                            throw new BadRequestException(
+                                'Một số ghế đã được đặt, vui lòng chọn lại'
+                            );
+                        }
+
+                        bookingData.seats = data.seats;
+
+                    } else {
+                        bookingData.seats = [];
+                    }
+
+                } else {
+
+                    if (data.seats && data.seats.length > 0) {
+                        throw new BadRequestException(
+                            'Không thể chọn ghế cho khu vực không có chỗ ngồi'
+                        );
+                    }
+
+                    if (data.areaId) {
+                        throw new BadRequestException(
+                            'Không thể chọn hàng ghế cho khu vực không có chỗ ngồi'
+                        );
+                    }
+
+                    bookingData.seats = [];
+                    bookingData.areaId = undefined;
                 }
-                bookingData.seats = data.seats;
-            } else {
-                // Không chọn ghế cụ thể
-                bookingData.seats = [];
-            }
-        } else {
-            // Zone không có chỗ ngồi (standing zone)
-            if (data.seats && data.seats.length > 0) {
-                throw new BadRequestException('Không thể chọn ghế cho khu vực không có chỗ ngồi');
-            }
-            if (data.areaId) {
-                throw new BadRequestException('Không thể chọn hàng ghế cho khu vực không có chỗ ngồi');
-            }
-            bookingData.seats = [];
-            bookingData.areaId = undefined;
+
+                const zoneUpdate = await this.zoneModel.findOneAndUpdate(
+                    {
+                        _id: new Types.ObjectId(data.zoneId),
+                        eventId: new Types.ObjectId(data.eventId),
+                        isDeleted: false,
+                        $expr: {
+                            $gte: [
+                                { $subtract: ['$capacity', '$soldCount'] },
+                                data.quantity
+                            ]
+                        }
+                    },
+                    { $inc: { soldCount: data.quantity } },
+                    { session, new: true }
+                );
+
+                if (!zoneUpdate) {
+                    throw new BadRequestException('Không đủ vé');
+                }
+
+                const newBooking = new this.bookingModel(bookingData);
+
+                await newBooking.save({ session });
+
+                result = {
+                    success: true,
+                    message: 'Tạo booking thành công',
+                    data: newBooking,
+                };
+
+            });
+
+            await Promise.all([
+                this.invalidateBookingCache(),
+                this.invalidateUserBookingCache(userId),
+            ]);
+
+            return result;
+
+        } catch (error) {
+            throw error;
+        } finally {
+            session.endSession();
         }
-        const newBooking = new this.bookingModel(bookingData);
-        await newBooking.save();
-        // Cập nhật số lượng vé đã bán
-        await Promise.all([
-            this.invalidateBookingCache(),
-            this.invalidateUserBookingCache(userId),
-            this.zoneModel.findByIdAndUpdate(data.zoneId, {
-                $inc: { soldCount: data.quantity }
-            }),
-        ]);
-        return {
-            success: true,
-            message: 'Tạo booking thành công',
-            data: newBooking,
-        };
     }
 
     async getMyBookings(userId: string, status?: string, page: number = 1, limit: number = 10) {
@@ -306,9 +485,9 @@ export class BookingService {
     /**
      * Hủy booking
      */
-    async cancelBooking( userId: string,dto: CancleBookingDto) {
+    async cancelBooking(userId: string, dto: CancleBookingDto) {
         const session = await this.bookingModel.db.startSession();
-        const {bookingCode} = dto;
+        const { bookingCode } = dto;
         try {
             await session.withTransaction(async () => {
                 const booking = await this.bookingModel.findOne({
@@ -321,22 +500,16 @@ export class BookingService {
                 if (booking.userId.toString() !== userId)
                     throw new ForbiddenException();
 
-                if (
-                    ![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(
-                        booking.status
-                    )
-                ) {
+                if (![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
                     throw new BadRequestException(
                         `Cannot cancel booking with status ${booking.status}`
                     );
                 }
 
                 const oldStatus = booking.status;
-
                 booking.status = BookingStatus.CANCELLED;
                 booking.cancelledAt = new Date();
                 booking.cancelledBy = new Types.ObjectId(userId);
-
                 await booking.save({ session });
 
                 await this.ticketModel.updateMany(
@@ -353,11 +526,17 @@ export class BookingService {
                     },
                     { session }
                 );
-
-                if (oldStatus === BookingStatus.CONFIRMED) {
+                if ([BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(oldStatus)) {
                     await this.zoneModel.findByIdAndUpdate(
                         booking.zoneId,
-                        { $inc: { soldCount: -booking.quantity } },
+                        {
+                            $inc: {
+                                soldCount: -booking.quantity,
+                                ...(oldStatus === BookingStatus.CONFIRMED && {
+                                    confirmedSoldCount: -booking.quantity
+                                }),
+                            }
+                        },
                         { session }
                     );
                 }
@@ -365,13 +544,13 @@ export class BookingService {
             await Promise.all([
                 this.invalidateBookingCache(),
                 this.invalidateUserBookingCache(userId),
-              ]);
+            ]);
 
             return { message: "Booking cancelled successfully" };
         } catch (error) {
-            console.error("CANCEL BOOKING ERROR:", error); 
+            console.error("CANCEL BOOKING ERROR:", error);
             throw error;
-         }
+        }
         finally {
             session.endSession();
         }
@@ -435,42 +614,54 @@ export class BookingService {
     }
 
     async expirePendingBookings() {
-        const expiredBookings = await this.bookingModel.find({
-            status: BookingStatus.PENDING,
-            expiresAt: { $lt: new Date() },
-            isDeleted: false,
-        }).select('_id zoneId quantity').lean();
-    
-        if (expiredBookings.length === 0) {
-            return { success: true, message: 'Không có booking hết hạn' };
-        }
-    
-        await this.bookingModel.updateMany(
-            { _id: { $in: expiredBookings.map(b => b._id) } },
-            { $set: { status: BookingStatus.EXPIRED } }
-        );
-    
-        const zoneMap = new Map<string, number>();
-        for (const b of expiredBookings) {
-            const key = b.zoneId.toString();
-            zoneMap.set(key, (zoneMap.get(key) || 0) + b.quantity);
-        }
-    
-        await this.zoneModel.bulkWrite(
-            [...zoneMap.entries()].map(([zoneId, quantity]) => ({
-                updateOne: {
-                    filter: { _id: new Types.ObjectId(zoneId) },
-                    update: { $inc: { soldCount: -quantity } },
+        const session = await this.bookingModel.db.startSession();
+        try {
+            return await session.withTransaction(async () => {
+                const expiredBookings = await this.bookingModel
+                    .find({
+                        status: BookingStatus.PENDING,
+                        expiresAt: { $lt: new Date() },
+                        isDeleted: false,
+                    })
+                    .select('_id zoneId quantity')
+                    .session(session)
+                    .lean();
+
+                if (!expiredBookings.length) {
+                    return { success: true, message: 'Không có booking hết hạn' };
                 }
-            }))
-        );
-    
-        await this.invalidateBookingCache();
-    
-        return {
-            success: true,
-            message: `Đã expire ${expiredBookings.length} booking`,
-        };
+
+                await this.bookingModel.updateMany(
+                    { _id: { $in: expiredBookings.map(b => b._id) } },
+                    { $set: { status: BookingStatus.EXPIRED } },
+                    { session }
+                );
+
+                const zoneMap = new Map<string, number>();
+                for (const b of expiredBookings) {
+                    const key = b.zoneId.toString();
+                    zoneMap.set(key, (zoneMap.get(key) || 0) + b.quantity);
+                }
+
+                await this.zoneModel.bulkWrite( // PMbulkWrite cho phép gửi nhiều write operations trong 1 request đến MongoDB thay vì gửi từng cái một (nếu có 100 booking expired thuộc 10 zone khác nhau thì thay vì 10 round-trips, chỉ cần 1)
+                    [...zoneMap.entries()].map(([zoneId, quantity]) => ({
+                        updateOne: {
+                            filter: { _id: new Types.ObjectId(zoneId) },
+                            update: { $inc: { soldCount: -quantity } },
+                        }
+                    })),
+                    { session }
+                );
+
+                return {
+                    success: true,
+                    message: `Đã expire ${expiredBookings.length} booking`,
+                };
+            });
+        } finally {
+            session.endSession();
+            await this.invalidateBookingCache();
+        }
     }
 
     async cleanupOldBookings(before: Date) {
