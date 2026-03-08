@@ -73,13 +73,10 @@ export class BookingService {
 
         try {
             let result: any;
-
             await session.withTransaction(async () => {
-
                 const event = await this.eventModel
                     .findById(data.eventId)
                     .session(session);
-
                 if (!event || event.isDeleted) {
                     throw new NotFoundException('Sự kiện không tồn tại');
                 }
@@ -125,19 +122,17 @@ export class BookingService {
                 };
 
                 if (zone.hasSeating) {
-
                     if (!data.areaId) {
                         throw new BadRequestException('Vui lòng chọn hàng ghế (area)');
                     }
-
                     const area = await this.areaModel
                         .findOne({
                             _id: new Types.ObjectId(data.areaId),
                             zoneId: new Types.ObjectId(data.zoneId),
                             isDeleted: false,
                         })
+                        .select('seats')
                         .session(session);
-
                     if (!area) {
                         throw new NotFoundException('Hàng ghế không tồn tại');
                     }

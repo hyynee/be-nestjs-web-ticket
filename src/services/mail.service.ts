@@ -56,6 +56,43 @@ export class MailService {
     });
   }
 
+  private buildQrAttachment(ticketCode: string, qrCode: string): {
+    cid: string;
+    attachment?: nodemailer.Attachment;
+    src: string;
+  } {
+    if (!qrCode) {
+      return {
+        cid: `qr-${ticketCode}`,
+        src: "",
+      };
+    }
+
+    const match = qrCode.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!match) {
+      return {
+        cid: `qr-${ticketCode}`,
+        src: qrCode,
+      };
+    }
+
+    const [, mimeType, base64Content] = match;
+    const extension = mimeType.split("/")[1] || "png";
+    const cid = `qr-${ticketCode}`;
+
+    return {
+      cid,
+      src: `cid:${cid}`,
+      attachment: {
+        filename: `${ticketCode}.${extension}`,
+        content: base64Content,
+        encoding: "base64",
+        contentType: mimeType,
+        cid,
+      },
+    };
+  }
+
   async sendRegisterEmail(to: string, fullName: string) {
     const mailOptions = {
       from: 'Auth-backend service',
@@ -105,9 +142,20 @@ export class MailService {
     const formattedDate = this.formatDate(eventDate);
     const formattedPrice = this.formatPrice(totalPrice);
 
+    const attachments: nodemailer.Attachment[] = [];
+
     const ticketsHtml = tickets
-      .map(
-        (ticket, index) => `
+      .map((ticket, index) => {
+        const qrAsset = this.buildQrAttachment(ticket.ticketCode, ticket.qrCode);
+        if (qrAsset.attachment) {
+          attachments.push(qrAsset.attachment);
+        }
+
+        const qrSection = qrAsset.src
+          ? `<img src="${qrAsset.src}" style="width:120px;height:120px;" />`
+          : `<div style="width:120px;height:120px;display:flex;align-items:center;justify-content:center;border:1px dashed #d1d5db;color:#9ca3af;font-size:11px;">QR chưa sẵn sàng</div>`;
+
+        return `
       <div style="background: white; padding: 20px; margin: 10px 0; border-radius: 8px; border: 2px solid #e5e7eb;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <div>
@@ -119,13 +167,13 @@ export class MailService {
           }
           </div>
           <div style="text-align: center;">
-            <img src="${ticket.qrCode}" style="width:120px;height:120px;" />
+            ${qrSection}
             <p style="font-size:12px;color:#6b7280;">Quét mã để check-in</p>
           </div>
         </div>
       </div>
     `
-      )
+      })
       .join("");
 
     const htmlContent = `
@@ -173,6 +221,7 @@ export class MailService {
       to: email,
       subject: `Xác nhận đặt vé - ${bookingCode}`,
       html: htmlContent,
+      attachments,
     });
   }
 
