@@ -7,7 +7,6 @@ import { JwtPayload } from '@src/auth/dto/jwt-payload.dto';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { CreateCheckoutSessionDto } from './dto/create-checkout.dto';
 import Stripe from 'stripe';
-import { startWith } from 'rxjs';
 @Controller('payment')
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) { }
@@ -26,32 +25,34 @@ export class PaymentController {
 
   @Post('webhook')
   @HttpCode(200)
-  async handleWebhook(
-    @Headers('stripe-signature') signature: string,
-    @Req() req: any,
-    @Res() res: any
-  ) {
+  async handleWebhook(@Headers('stripe-signature') signature: string, @Req() req: any, @Res() res: any) {
     let event: Stripe.Event;
     try {
       event = this.paymentService.verifyWebhook(req.body, signature);
     } catch (err) {
-      console.error(`Webhook Error: ${err.message}`);
-      return res
-        .status(400, HttpStatus.BAD_REQUEST)
-        .send(`Webhook Error: ${err.message}`);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    switch (event.type) {
-      case 'payment_intent.succeeded':
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        await this.paymentService.handlePaymentIntentSucceeded(paymentIntent);
-        break;
-      case 'checkout.session.completed':
-        const session = event.data.object as Stripe.Checkout.Session;
-        await this.paymentService.handleCheckoutSessionCompleted(session);
-        break;
-      default:
-        console.error(`Unhandled event type ${event.type}`);
+    try {
+      switch (event.type) {
+        case 'payment_intent.succeeded':
+          await this.paymentService.handlePaymentIntentSucceeded(
+            event.data.object as Stripe.PaymentIntent
+          );
+          break;
+        case 'checkout.session.completed':
+          await this.paymentService.handleCheckoutSessionCompleted(
+            event.data.object as Stripe.Checkout.Session
+          );
+          break;
+        default:
+          console.log(`Unhandled event type ${event.type}`);
+      }
+
+      return res.status(200).json({ received: true });
+    } catch (err) {
+      console.error('Webhook handler error:', err);
+      return res.status(500).send(`Handler Error: ${err.message}`);
     }
   }
 
@@ -84,7 +85,7 @@ export class PaymentController {
     return this.paymentService.finalizePaypalTransaction(id);
   }
 
-   @ApiBearerAuth()
+  @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(200)
   @Get('history')
@@ -97,9 +98,11 @@ export class PaymentController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
-  @HttpCode(200)
   @Post('cancel')
-async cancelPayment(@Body() dto: { bookingCode: string }, @Req() req) {
-  return this.paymentService.handlePaymentCancelled(req.user.id, dto.bookingCode);
-}
+  async cancelPayment(
+    @Body() dto: { bookingCode: string },
+    @CurrentUser() user: JwtPayload
+  ) {
+    return this.paymentService.handlePaymentCancelled(user.userId, dto.bookingCode);
+  }
 }
