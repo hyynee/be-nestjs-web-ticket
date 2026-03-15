@@ -4,7 +4,6 @@ import { AuthController } from "./auth.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { UserSchema } from "@src/schemas/user.schema";
 import { JwtModule } from "@nestjs/jwt";
-import { RefreshTokenSchema } from "@src/schemas/refresh-token.schema";
 import { ResponseModule } from "@src/common/reponse/response.module";
 import { PassportModule } from "@nestjs/passport";
 import { JwtStrategy } from "@src/strategy/jwt.strategy";
@@ -20,7 +19,6 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema },
-      { name: "RefreshToken", schema: RefreshTokenSchema },
       { name: "ResetToken", schema: ResetTokenSchema },
     ]),
 

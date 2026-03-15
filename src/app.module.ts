@@ -1,4 +1,4 @@
-import { Module, ValidationPipe } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule, RequestMethod, ValidationPipe } from "@nestjs/common";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { ConfigModule } from "@nestjs/config";
@@ -28,6 +28,8 @@ import { CacheModule } from "@nestjs/cache-manager";
 import { EventsModule } from "./events/events.module";
 import { ExportModule } from "./export/export.module";
 import { ScheduleModule } from '@nestjs/schedule';
+import { RedisModule } from "./redis/redis.module";
+import { GeoIpMiddleware } from "./middleware/geoip.middleware";
 @Module({
   imports: [
     DatabaseModule,
@@ -58,6 +60,7 @@ import { ScheduleModule } from '@nestjs/schedule';
       ttl: 30000,
       max: 100,
     }),
+    RedisModule,
     AuthModule,
     UserModule,
     EventModule,
@@ -95,4 +98,13 @@ import { ScheduleModule } from '@nestjs/schedule';
     }
   ],
 })
-export class AppModule { }
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(GeoIpMiddleware)
+      .forRoutes(
+        { path: 'auth/login', method: RequestMethod.POST },
+        { path: 'ticket/checkin', method: RequestMethod.POST },
+      );
+  }
+}

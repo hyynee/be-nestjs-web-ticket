@@ -33,6 +33,11 @@ export class PaymentController {
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
+    const isFirstProcessing = await this.paymentService.acquireWebhookIdempotency(event.id);
+    if (!isFirstProcessing) {
+      return res.status(200).json({ received: true, deduplicated: true });
+    }
+
     try {
       switch (event.type) {
         case 'payment_intent.succeeded':

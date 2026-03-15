@@ -5,6 +5,7 @@
   "author": "",
   "private": true,
   "license": "UNLICENSED",
+  "packageManager": "pnpm@10.14.0",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -37,6 +38,7 @@
     "@paypal/checkout-server-sdk": "^1.0.3",
     "axios": "^1.13.2",
     "bcrypt": "^6.0.0",
+    "body-parser": "^2.2.2",
     "cache-manager": "^7.2.8",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
@@ -45,9 +47,11 @@
     "crypto": "^1.0.1",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "geoip-lite": "^2.0.0",
     "helmet": "^8.1.0",
     "json2csv": "^6.0.0-alpha.2",
     "mongoose": "^8.17.1",
+    "multer": "^2.1.1",
     "nest-winston": "^1.10.2",
     "nodemailer": "^7.0.11",
     "passport": "^0.7.0",
@@ -55,11 +59,12 @@
     "passport-jwt": "^4.0.1",
     "pdfkit": "^0.17.2",
     "qrcode": "^1.5.4",
+    "redis": "^5.11.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
     "stripe": "^20.1.0",
-    "uuidv4": "^6.2.13",
+    "uuid": "^8.3.2",
     "winston": "^3.19.0"
   },
   "devDependencies": {
@@ -104,6 +109,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^@src/(.*)$": "<rootDir>/$1"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

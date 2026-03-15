@@ -9,6 +9,7 @@ import { Zone } from '@src/schemas/zone.schema';
 import { TicketService } from '@src/ticket/ticket.service';
 import { MailService } from '@src/services/mail.service';
 import * as paypal from '@paypal/checkout-server-sdk';
+import { RedisService } from '@src/redis/redis.service';
 
 @Injectable()
 export class PaymentService {
@@ -20,7 +21,8 @@ export class PaymentService {
         @InjectModel(Booking.name) private bookingModel: Model<Booking>,
         @InjectModel(Zone.name) private zoneModel: Model<Zone>,
         private ticketService: TicketService,
-        private mailService: MailService
+        private mailService: MailService,
+        private readonly redisService: RedisService,
     ) {
         this.stripe = new Stripe(`${process.env.STRIPE_SECRET_KEY}`)
         const env_paypal = new paypal.core.SandboxEnvironment(
@@ -28,6 +30,30 @@ export class PaymentService {
             process.env.PAYPAL_CLIENT_SECRET
         );
         this.paypal = new paypal.core.PayPalHttpClient(env_paypal);
+    }
+
+    private getPaymentIdempotencyKey(eventId: string): string {
+        return `idemp:payment:${eventId}`;
+    }
+
+    async acquireWebhookIdempotency(eventId: string): Promise<boolean> {
+        if (!eventId) {
+            return true;
+        }
+
+        try {
+            const result = await this.redisService.client.set(
+                this.getPaymentIdempotencyKey(eventId),
+                '1',
+                { NX: true, EX: 300 },
+            );
+
+            return result === 'OK';
+        } catch (error) {
+            console.error('Payment idempotency check failed:', error);
+            // Redis lỗi thì không chặn xử lý payment để tránh miss webhook.
+            return true;
+        }
     }
 
     async createCheckoutSession(userId: string, bookingCode: string) {

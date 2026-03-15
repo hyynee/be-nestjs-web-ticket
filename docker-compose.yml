@@ -3,33 +3,50 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nestjs-ticket-be
     ports:
-      - "9000:9000"
-    environment:
-      - NODE_ENV=production
-      - MONGODB_URI=mongodb://mongo:27017/ticket-be
+      - "${PORT:-9000}:9000"
     env_file:
       - .env
-    depends_on:
-      - mongo
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://localhost:9000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     networks:
       - ticket-network
 
-  mongo:
-    image: mongo:7
-    container_name: nestjs-ticket-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
+  redis:
+    image: redis:7.4-alpine
     restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     networks:
       - ticket-network
 
 volumes:
-  mongo-data:
+  redis-data:
 
 networks:
   ticket-network:

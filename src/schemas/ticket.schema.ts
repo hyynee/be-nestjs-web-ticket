@@ -1,9 +1,9 @@
 // ticket.schema.ts
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { Document, Types } from "mongoose";
+import { Types } from "mongoose";
 
 @Schema({ timestamps: true })
-export class Ticket extends Document {
+export class Ticket {
   // Mã vé unique (dùng để sinh QR code)
   @Prop({ required: true, unique: true })
   ticketCode: string; // VD: TK202412190001

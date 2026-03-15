@@ -1,8 +1,8 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { Document, Types } from "mongoose";
+import { Types } from "mongoose";
 
 @Schema({ timestamps: true })
-export class Area extends Document {
+export class Area {
   @Prop({ type: Types.ObjectId, ref: "Event", required: true })
   eventId: Types.ObjectId;
 

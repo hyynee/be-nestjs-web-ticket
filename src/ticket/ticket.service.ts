@@ -147,8 +147,13 @@ export class TicketService {
           filter: { _id: ticket._id },
           update: { $set: { qrCode: qrCodes[i] } },
         }
-      }))
+      })),
+      { session: session || undefined }
     );
+
+    createdTickets.forEach((ticket, i) => {
+      ticket.qrCode = qrCodes[i];
+    });
     this.ticketGateway.emitTicketCreated({
       bookingCode: booking.bookingCode,
       tickets: createdTickets.map(ticket => ({

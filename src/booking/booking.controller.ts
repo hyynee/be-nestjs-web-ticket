@@ -66,7 +66,7 @@ export class BookingController {
 
 
   @ApiBearerAuth()
-  @UseGuards(AuthGuard("jwt"))
+  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Get("/admin/all-bookings")
   @HttpCode(200)
   getAllBookings(@Query() query: QueryBookingDto) {

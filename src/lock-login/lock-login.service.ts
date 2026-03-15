@@ -1,38 +1,36 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import { LoginAttempt } from "@src/schemas/lock-login.schema";
-import { Model } from "mongoose";
+import { RedisService } from "@src/redis/redis.service";
 import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { Logger } from "winston";
 
 @Injectable()
 export class LockLoginService {
     private readonly MAX_FAILED_ATTEMPTS = 5;
-    private readonly LOCK_TIME = 15 * 60 * 1000; // 15 minutes
+    private readonly LOCK_TIME_SECONDS = 15 * 60; // 15 minutes
 
     constructor(
-        @InjectModel(LoginAttempt.name)
-        private readonly loginModel: Model<LoginAttempt>,
         @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
+        private readonly redisService: RedisService,
     ) { }
+
+    private buildLockKey(identifier: string, ipAddress: string): string {
+        const safeIdentifier = encodeURIComponent((identifier || 'unknown').trim().toLowerCase());
+        const safeIpAddress = encodeURIComponent((ipAddress || 'unknown').trim());
+        return `auth:fail:${safeIdentifier}:${safeIpAddress}`;
+    }
 
     // Check tài khoản có bị khóa không
     async isLocked(identifier: string, ipAddress: string): Promise<boolean> {
-        const record = await this.loginModel.findOne({ identifier, ipAddress });
-        if (!record || !record.lockedUntil) {
+        const key = this.buildLockKey(identifier, ipAddress);
+        const failedCount = Number(await this.redisService.client.get(key) || 0);
+
+        if (failedCount < this.MAX_FAILED_ATTEMPTS) {
             return false;
         }
-        const now = new Date();
-        // Auto-unlock nếu hết thời gian
-        if (record.lockedUntil <= now) {
-            await this.resetLocked(identifier, ipAddress);
-            this.logger.info({
-                message: 'Account auto-unlocked after lock period expired',
-                context: 'security',
-                identifier,
-                ipAddress,
-                lockedUntil: record.lockedUntil.toISOString()
-            });
+        const ttl = await this.redisService.client.ttl(key);
+        // TTL <= 0 nghĩa là key đã hết hạn hoặc không có expire, dọn key để tránh trạng thái kẹt.
+        if (ttl <= 0) {
+            await this.redisService.client.del(key);
             return false;
         }
         return true;
@@ -40,79 +38,46 @@ export class LockLoginService {
 
     // Ghi nhận lần đăng nhập sai
     async recordFailedAttempt(identifier: string, ipAddress: string): Promise<void> {
-        let record = await this.loginModel.findOne({ identifier, ipAddress });
-        const now = new Date();
-
-        if (!record) {
-            record = new this.loginModel({
-                identifier,
-                ipAddress,
-                failedCount: 1,
-                lastFailedAt: now,
-            });
-
-            this.logger.warn({
-                message: 'First failed login attempt',
+        const key = this.buildLockKey(identifier, ipAddress);
+        const failedCount = await this.redisService.client.incr(key);
+        // Lần fail đầu tiên thì gắn TTL cho toàn bộ cửa sổ lock.
+        if (failedCount === 1) {
+            await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
+        }
+        let ttl = await this.redisService.client.ttl(key);
+        if (ttl < 0) {
+            await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
+            ttl = this.LOCK_TIME_SECONDS;
+        }
+        if (failedCount >= this.MAX_FAILED_ATTEMPTS) {
+            this.logger.error({
+                message: 'Account LOCKED due to too many failed attempts',
                 context: 'security',
                 identifier,
                 ipAddress,
-                attemptCount: 1,
-                remainingAttempts: this.MAX_FAILED_ATTEMPTS - 1
+                failedCount,
+                ttlSeconds: ttl,
+                lockDurationMinutes: this.LOCK_TIME_SECONDS / 60,
             });
-
-        } else {
-            if (record.lockedUntil && record.lockedUntil <= now) { // Hết thời gian khóa
-                await this.loginModel.deleteOne({ identifier, ipAddress });
-                record = new this.loginModel({
-                    identifier,
-                    ipAddress,
-                    failedCount: 1,
-                    lastFailedAt: now,
-                });
-                this.logger.warn({
-                    message: 'Failed login after lock period expired (record reset)',
-                    context: 'security',
-                    identifier,
-                    ipAddress,
-                    attemptCount: 1,
-                    remainingAttempts: this.MAX_FAILED_ATTEMPTS - 1
-                });
-            } else {
-                record.failedCount += 1;
-                record.lastFailedAt = now;
-
-                if (record.failedCount >= this.MAX_FAILED_ATTEMPTS) {
-                    record.lockedUntil = new Date(Date.now() + this.LOCK_TIME);
-
-                    this.logger.error({
-                        message: 'Account LOCKED due to too many failed attempts',
-                        context: 'security',
-                        identifier,
-                        ipAddress,
-                        failedCount: record.failedCount,
-                        lockedUntil: record.lockedUntil.toISOString(),
-                        lockDurationMinutes: this.LOCK_TIME / 60000
-                    });
-
-                } else {
-                    this.logger.warn({
-                        message: 'Failed login attempt',
-                        context: 'security',
-                        identifier,
-                        ipAddress,
-                        attemptCount: record.failedCount,
-                        remainingAttempts: this.MAX_FAILED_ATTEMPTS - record.failedCount
-                    });
-                }
-            }
+            return;
         }
-        await record.save();
+
+        this.logger.warn({
+            message: failedCount === 1 ? 'First failed login attempt' : 'Failed login attempt',
+            context: 'security',
+            identifier,
+            ipAddress,
+            attemptCount: failedCount,
+            remainingAttempts: this.MAX_FAILED_ATTEMPTS - failedCount,
+            ttlSeconds: ttl,
+        });
     }
 
     async resetLocked(identifier: string, ipAddress: string): Promise<void> {
-        const result = await this.loginModel.deleteOne({ identifier, ipAddress });
+        const key = this.buildLockKey(identifier, ipAddress);
+        const deletedCount = await this.redisService.client.del(key);
 
-        if (result.deletedCount > 0) {
+        if (deletedCount > 0) {
             this.logger.info({
                 message: 'Login attempts reset (successful login or manual unlock)',
                 context: 'security',

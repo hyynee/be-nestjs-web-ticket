@@ -13,9 +13,7 @@ import { User } from "@src/schemas/user.schema";
 import { Model } from "mongoose";
 import { RegisterDTO } from "./dto/create.dto";
 import { JwtService } from "@nestjs/jwt";
-import { RefreshToken } from "@src/schemas/refresh-token.schema";
 import { v4 as uuidv4 } from "uuid";
-import * as bcrypt from "bcrypt";
 import { RefreshTokenDTO } from "./dto/refreshToken.dto";
 import { ChangePasswordDTO } from "./dto/password.dto";
 import envConfig from "@src/config/config";
@@ -28,14 +26,16 @@ import { Logger } from "winston";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
 import { v2 as cloudinary } from 'cloudinary';
+import { RedisService } from "@src/redis/redis.service";
 
 const { FRONTEND_URL } = envConfig;
 
 @Injectable()
 export class AuthService {
+  private readonly REFRESH_TOKEN_TTL_SECONDS = 3 * 24 * 60 * 60;
+
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(RefreshToken.name) private readonly refreshTokenModel: Model<RefreshToken>,
     @InjectModel(ResetToken.name) private readonly resetTokenModel: Model<ResetToken>,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -44,6 +44,7 @@ export class AuthService {
     private loginAttemptService: LockLoginService,
     private readonly userEventsService: UserEventsService,
     private mailService: MailService,
+    private readonly redisService: RedisService,
   ) { }
   private generateCacheKeyForUser(userId: string): string {
     return `user:details:${userId}`;
@@ -52,6 +53,27 @@ export class AuthService {
     const cacheKey = this.generateCacheKeyForUser(userId);
     await this.cacheManager.del(cacheKey);
   };
+
+  private getRefreshTokenKey(token: string): string {
+    return `auth:refresh:${token}`;
+  }
+
+  private getUserRefreshTokenSetKey(userId: string): string {
+    return `auth:user:${userId}:refresh-tokens`;
+  }
+
+  private async revokeAllUserRefreshTokens(userId: string): Promise<void> {
+    const userTokenSetKey = this.getUserRefreshTokenSetKey(userId);
+    const tokens = await this.redisService.client.sMembers(userTokenSetKey);
+
+    const multi = this.redisService.client.multi();
+    for (const token of tokens) {
+      multi.del(this.getRefreshTokenKey(token));
+    }
+    multi.del(userTokenSetKey);
+
+    await multi.exec();
+  }
 
   async register(data: RegisterDTO): Promise<User> {
     const { email, password, confirmPassword, fullName, role = "user" } = data;
@@ -168,19 +190,26 @@ export class AuthService {
     if (!refreshToken) {
       throw new BadRequestException("Refresh token is required");
     }
-    const token = await this.refreshTokenModel.findOne({ token: refreshToken });
-    if (!token) {
+
+    const refreshTokenKey = this.getRefreshTokenKey(refreshToken);
+    const userId = await this.redisService.client.get(refreshTokenKey);
+
+    if (!userId) {
       throw new UnauthorizedException("Invalid refresh token");
     }
-    if (token.expiryDate < new Date()) {
-      await this.refreshTokenModel.deleteOne({ token: refreshToken });
-      throw new UnauthorizedException("Refresh token has expired");
-    }
-    return this.generateUserTokens(token.userId);
+
+    // Rotate refresh token: consume token cũ trước khi phát token mới.
+    await this.redisService.client
+      .multi()
+      .del(refreshTokenKey)
+      .sRem(this.getUserRefreshTokenSetKey(userId), refreshToken)
+      .exec();
+
+    return this.generateUserTokens(userId);
   }
 
   async logout(userId: string, accessToken: string) {
-    await this.refreshTokenModel.deleteMany({ userId });
+    await this.revokeAllUserRefreshTokens(userId);
     await this.invalidateUserCache(userId);
     return { message: "Logged out successfully" };
   }
@@ -191,27 +220,33 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
+
+    const userIdString = user._id.toString();
     const accessToken = this.jwtService.sign(
-      { userId, role: user.role },
+      { userId: userIdString, role: user.role },
       { expiresIn: "1h" }
     );
     const refreshToken = uuidv4();
-    // Xoá refresh token cũ
-    await this.refreshTokenModel.deleteMany({ userId });
+
+    // Mỗi user chỉ giữ một phiên refresh token để revoke nhanh và rõ ràng.
+    await this.revokeAllUserRefreshTokens(userIdString);
+
     // Tạo refresh token mới
-    await this.storeRefreshToken(refreshToken, userId);
+    await this.storeRefreshToken(refreshToken, userIdString);
     return { accessToken, refreshToken };
   }
 
   //  refresh token
   async storeRefreshToken(token: string, userId: string) {
-    const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + 3);
-    await this.refreshTokenModel.updateOne(
-      { userId },
-      { $set: { token, expiryDate } },
-      { upsert: true }
-    );
+    const refreshTokenKey = this.getRefreshTokenKey(token);
+    const userTokenSetKey = this.getUserRefreshTokenSetKey(userId);
+
+    await this.redisService.client
+      .multi()
+      .set(refreshTokenKey, userId, { EX: this.REFRESH_TOKEN_TTL_SECONDS })
+      .sAdd(userTokenSetKey, token)
+      .expire(userTokenSetKey, this.REFRESH_TOKEN_TTL_SECONDS)
+      .exec();
   }
 
   // changePassword
@@ -281,7 +316,7 @@ export class AuthService {
       { token: resetToken },
       { isUsed: true }
     );
-    await this.refreshTokenModel.deleteMany({ userId: user._id });
+    await this.revokeAllUserRefreshTokens(user._id.toString());
     await this.invalidateUserCache(user.id.toString());
     return { message: "Password has been reset successfully. Please login again." };
   }

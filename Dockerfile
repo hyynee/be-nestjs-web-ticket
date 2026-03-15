@@ -3,25 +3,29 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY yarn.lock ./
+RUN corepack enable
 
-RUN yarn install --frozen-lockfile
+COPY package.json pnpm-lock.yaml ./
+
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-RUN yarn build
+RUN pnpm build
 
 # Stage 2: Production stage
 FROM node:22-alpine AS production
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY yarn.lock ./
+ENV NODE_ENV=production
 
-RUN yarn install --frozen-lockfile --production && \
-    yarn cache clean
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml ./
+
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts && \
+    pnpm store prune
 
 COPY --from=builder /app/dist ./dist
 
@@ -34,7 +38,7 @@ USER nestjs
 
 EXPOSE 9000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:9000/swagger', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:9000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 CMD ["node", "dist/main.js"]
