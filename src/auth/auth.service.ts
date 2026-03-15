@@ -3,7 +3,6 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
-  Request,
   NotFoundException,
   Inject,
 } from "@nestjs/common";
@@ -14,7 +13,6 @@ import { Model } from "mongoose";
 import { RegisterDTO } from "./dto/create.dto";
 import { JwtService } from "@nestjs/jwt";
 import { v4 as uuidv4 } from "uuid";
-import { RefreshTokenDTO } from "./dto/refreshToken.dto";
 import { ChangePasswordDTO } from "./dto/password.dto";
 import envConfig from "@src/config/config";
 import { LockLoginService } from "@src/lock-login/lock-login.service";
@@ -27,12 +25,22 @@ import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
 import { v2 as cloudinary } from 'cloudinary';
 import { RedisService } from "@src/redis/redis.service";
+import { CookieOptions, Response } from "express";
 
 const { FRONTEND_URL } = envConfig;
+
+type GoogleProfile = {
+  email?: string;
+  name?: string;
+  picture?: string;
+};
 
 @Injectable()
 export class AuthService {
   private readonly REFRESH_TOKEN_TTL_SECONDS = 3 * 24 * 60 * 60;
+  private readonly ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+  private readonly REFRESH_TOKEN_TTL_MS =
+    this.REFRESH_TOKEN_TTL_SECONDS * 1000;
 
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
@@ -60,6 +68,75 @@ export class AuthService {
 
   private getUserRefreshTokenSetKey(userId: string): string {
     return `auth:user:${userId}:refresh-tokens`;
+  }
+
+  private isCookieSecure(): boolean {
+    if (process.env.AUTH_COOKIE_SECURE) {
+      return process.env.AUTH_COOKIE_SECURE === "true";
+    }
+
+    return process.env.NODE_ENV === "production";
+  }
+
+  private getCookieSameSite(): "lax" | "strict" | "none" {
+    const rawValue = (process.env.AUTH_COOKIE_SAME_SITE || "strict").toLowerCase();
+
+    if (rawValue === "lax" || rawValue === "strict" || rawValue === "none") {
+      return rawValue;
+    }
+
+    this.logger.warn(
+      `Invalid AUTH_COOKIE_SAME_SITE value "${rawValue}", falling back to "strict"`
+    );
+    return "strict";
+  }
+
+  private getTokenCookieOptions(maxAge: number): CookieOptions {
+    const secure = this.isCookieSecure();
+    let sameSite = this.getCookieSameSite();
+
+    if (sameSite === "none" && !secure) {
+      this.logger.warn(
+        "AUTH_COOKIE_SAME_SITE=none requires secure cookies, falling back to sameSite=strict"
+      );
+      sameSite = "strict";
+    }
+
+    const cookieOptions: CookieOptions = {
+      httpOnly: true,
+      secure,
+      sameSite,
+      maxAge,
+      path: "/",
+    };
+
+    if (process.env.AUTH_COOKIE_DOMAIN) {
+      cookieOptions.domain = process.env.AUTH_COOKIE_DOMAIN;
+    }
+
+    return cookieOptions;
+  }
+
+  private setTokenCookies(
+    res: Response,
+    tokens: { accessToken: string; refreshToken: string }
+  ): void {
+    res.cookie(
+      "access_token",
+      tokens.accessToken,
+      this.getTokenCookieOptions(this.ACCESS_TOKEN_TTL_MS)
+    );
+    res.cookie(
+      "refresh_token",
+      tokens.refreshToken,
+      this.getTokenCookieOptions(this.REFRESH_TOKEN_TTL_MS)
+    );
+  }
+
+  private clearTokenCookies(res: Response): void {
+    const clearOptions = this.getTokenCookieOptions(0);
+    res.clearCookie("access_token", clearOptions);
+    res.clearCookie("refresh_token", clearOptions);
   }
 
   private async revokeAllUserRefreshTokens(userId: string): Promise<void> {
@@ -96,7 +173,7 @@ export class AuthService {
     return user;
   }
 
-  async login(data: LoginDTO, ip: string) {
+  async login(data: LoginDTO, ip: string, res: Response) {
     const { email, password } = data;
     const user = await this.userModel.findOne({ email });
 
@@ -115,11 +192,14 @@ export class AuthService {
     // Login đúng → reset count
     await this.loginAttemptService.resetLocked(email, ip);
     // Tạo token
-    return this.generateUserTokens(user._id);
+    const tokens = await this.generateUserTokens(user._id);
+
+    this.setTokenCookies(res, tokens);
+    return { message: "Logged in successfully" };
   }
 
 
-  async loginWithGoogle(profile: any) {
+  async loginWithGoogle(profile: GoogleProfile) {
     const { email, name, picture } = profile;
     if (!email) {
       throw new BadRequestException(
@@ -130,7 +210,7 @@ export class AuthService {
     if (!user) {
       user = new this.userModel({
         email,
-        name,
+        fullName: name || email.split("@")[0],
         avatar: picture,
         role: "user",
       });
@@ -139,22 +219,27 @@ export class AuthService {
     return this.generateUserTokens(user._id);
   }
 
-  async handleGoogleLoginCallback(profile: any, res: any) {
-    const jwt = await this.loginWithGoogle(profile);
-    // Redirect về trang login với tokens trong query params
-    // Frontend sẽ check query params và lấy tokens để lưu vào localStorage
-    const tokens = encodeURIComponent(JSON.stringify({
-      accessToken: jwt.accessToken,
-      refreshToken: jwt.refreshToken
-    }));
-    res.redirect(`${FRONTEND_URL}/login?google=true&tokens=${tokens}`);
+  async handleGoogleLoginCallback(profile: GoogleProfile | undefined, res: Response) {
+    if (!profile) {
+      throw new BadRequestException("Invalid Google profile: profile is required");
+    }
+
+    const tokens = await this.loginWithGoogle(profile);
+    this.setTokenCookies(res, tokens);
+
+    const frontendBaseUrl = FRONTEND_URL?.replace(/\/+$/, "");
+    const redirectTarget = frontendBaseUrl
+      ? `${frontendBaseUrl}/`
+      : "/";
+
+    res.redirect(redirectTarget);
   }
 
   async status() {
     return { message: "Logged in successfully" };
   }
 
-  async getCurrentUser(@Request() req) {
+  async getCurrentUser(req: any) {
     return req.currentUser;
   }
 
@@ -185,8 +270,7 @@ export class AuthService {
   }
 
 
-  async refreshToken(data: RefreshTokenDTO) {
-    const { refreshToken } = data;
+  async refreshToken(refreshToken: string, res: Response) {
     if (!refreshToken) {
       throw new BadRequestException("Refresh token is required");
     }
@@ -205,12 +289,19 @@ export class AuthService {
       .sRem(this.getUserRefreshTokenSetKey(userId), refreshToken)
       .exec();
 
-    return this.generateUserTokens(userId);
+    const tokens = await this.generateUserTokens(userId);
+    this.setTokenCookies(res, tokens);
+    return { message: "Token refreshed successfully" };
   }
 
-  async logout(userId: string, accessToken: string) {
+  async logout(userId: string, res?: Response) {
     await this.revokeAllUserRefreshTokens(userId);
     await this.invalidateUserCache(userId);
+
+    if (res) {
+      this.clearTokenCookies(res);
+    }
+
     return { message: "Logged out successfully" };
   }
 

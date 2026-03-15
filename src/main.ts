@@ -36,6 +36,10 @@ async function bootstrap() {
       .setTitle("Ticket_System")
       .setVersion("1.1.3")
       .addBearerAuth()
+      .addCookieAuth("access_token", {
+        type: "apiKey",
+        in: "cookie",
+      })
       .build();
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup("swagger", app, document);

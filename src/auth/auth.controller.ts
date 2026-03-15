@@ -4,15 +4,14 @@ import {
   Get,
   Post,
   Put,
-  Request,
-  Response,
+  Req,
+  Res,
   UseGuards,
   HttpCode,
 } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { LoginDTO } from "./dto/login.dto";
 import { RegisterDTO } from "./dto/create.dto";
-import { RefreshTokenDTO } from "./dto/refreshToken.dto";
 import { AuthGuard } from "@nestjs/passport";
 import { CurrentUser } from "./decorator/currentUser.decorator";
 import {
@@ -27,6 +26,7 @@ import { LockLoginGuard } from "@src/guards/lock-login.guard";
 import { ForgotPassword } from "./dto/forgot-password.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { Throttle } from "@nestjs/throttler";
+import type { Request, Response } from "express";
 
 @Controller("auth")
 @ApiTags("Auth")
@@ -49,8 +49,12 @@ export class AuthController {
   @ApiOperation({ summary: "Đăng nhập bằng email và mật khẩu" })
   @ApiResponse({ status: 200, description: "Đăng nhập thành công" })
   @ApiResponse({ status: 401, description: "Thông tin đăng nhập không hợp lệ" })
-  login(@Body() loginDto: LoginDTO,@Request() req) {
-    return this.authService.login(loginDto,req.ip);
+  async login(
+    @Body() loginDto: LoginDTO,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ) {
+    return this.authService.login(loginDto, req.ip || "unknown", res);
   }
   @Get("google")
   @UseGuards(AuthGuard("google"))
@@ -68,10 +72,10 @@ export class AuthController {
   @ApiOperation({ summary: "Xử lý callback đăng nhập Google" })
   @ApiResponse({
     status: 302,
-    description: "Chuyển hướng về frontend với token",
+    description: "Set cookie HttpOnly và chuyển hướng về frontend",
   })
   @ApiResponse({ status: 400, description: "Profile Google không hợp lệ" })
-  async googleLoginCallback(@Request() req, @Response() res) {
+  async googleLoginCallback(@Req() req: Request, @Res() res: Response) {
     return this.authService.handleGoogleLoginCallback(req.user, res);
   }
 
@@ -86,8 +90,12 @@ export class AuthController {
 
   @Post("refresh-token")
   @ApiOperation({ summary: "Làm mới JWT token" })
-  refreshToken(@Body() token: RefreshTokenDTO) {
-    return this.authService.refreshToken(token);
+  refreshToken(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ) {
+    const refreshToken = req.cookies?.refresh_token;
+    return this.authService.refreshToken(refreshToken, res);
   }
 
   @Get("me")
@@ -103,10 +111,12 @@ export class AuthController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard("jwt"))
   @ApiOperation({ summary: "Đăng xuất người dùng" })
-  logout(@CurrentUser() currentUser: JwtPayload) {
+  logout(
+    @CurrentUser() currentUser: JwtPayload,
+    @Res({ passthrough: true }) res: Response
+  ) {
     const userId = currentUser.userId;
-    const accessToken = currentUser.accessToken;
-    return this.authService.logout(userId, accessToken);
+    return this.authService.logout(userId, res);
   }
 
   @Put("change-password")
