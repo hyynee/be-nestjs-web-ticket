@@ -5,6 +5,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
 import * as bodyParser from "body-parser";
+import * as express from "express";
 import helmet from "helmet";
 import { WINSTON_MODULE_NEST_PROVIDER } from "nest-winston";
 import { IoAdapter } from "@nestjs/platform-socket.io";
@@ -15,7 +16,6 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
   });
-
  
   const redisHost = process.env.REDIS_HOST || "redis";
   const redisPort = Number(process.env.REDIS_PORT) || 6379;
@@ -55,9 +55,10 @@ async function bootstrap() {
 
 
   app.use(helmet());
+   app.use(express.static("."));
   app.use(cookieParser());
 
-  app.use("/payment/webhook", bodyParser.raw({ type: "*/*" }));
+ app.use("/payment/webhook", bodyParser.raw({ type: "application/json" }));
 
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
