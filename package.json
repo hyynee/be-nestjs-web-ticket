@@ -80,6 +80,7 @@
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
     "@types/bcrypt": "^6.0.0",
+    "@types/body-parser": "^1.19.6",
     "@types/cookie-parser": "^1.4.9",
     "@types/express": "^5.0.0",
     "@types/geoip-lite": "^1.4.4",
