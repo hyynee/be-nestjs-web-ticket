@@ -5,85 +5,93 @@ import { Logger } from "winston";
 
 @Injectable()
 export class LockLoginService {
-    private readonly MAX_FAILED_ATTEMPTS = 5;
-    private readonly LOCK_TIME_SECONDS = 15 * 60; // 15 minutes
+  private readonly MAX_FAILED_ATTEMPTS = 5;
+  private readonly LOCK_TIME_SECONDS = 15 * 60; // 15 minutes
 
-    constructor(
-        @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
-        private readonly redisService: RedisService,
-    ) { }
+  constructor(
+    @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
+    private readonly redisService: RedisService
+  ) {}
 
-    private buildLockKey(identifier: string, ipAddress: string): string {
-        const safeIdentifier = encodeURIComponent((identifier || 'unknown').trim().toLowerCase());
-        const safeIpAddress = encodeURIComponent((ipAddress || 'unknown').trim());
-        return `auth:fail:${safeIdentifier}:${safeIpAddress}`;
+  private buildLockKey(identifier: string, ipAddress: string): string {
+    const safeIdentifier = encodeURIComponent(
+      (identifier || "unknown").trim().toLowerCase()
+    );
+    const safeIpAddress = encodeURIComponent((ipAddress || "unknown").trim());
+    return `auth:fail:${safeIdentifier}:${safeIpAddress}`;
+  }
+
+  // Check tài khoản có bị khóa không
+  async isLocked(identifier: string, ipAddress: string): Promise<boolean> {
+    const key = this.buildLockKey(identifier, ipAddress);
+    const failedCount = Number((await this.redisService.client.get(key)) || 0);
+
+    if (failedCount < this.MAX_FAILED_ATTEMPTS) {
+      return false;
+    }
+    const ttl = await this.redisService.client.ttl(key);
+    // TTL <= 0 nghĩa là key đã hết hạn hoặc không có expire, dọn key để tránh trạng thái kẹt.
+    if (ttl <= 0) {
+      await this.redisService.client.del(key);
+      return false;
+    }
+    return true;
+  }
+
+  // Ghi nhận lần đăng nhập sai
+  async recordFailedAttempt(
+    identifier: string,
+    ipAddress: string
+  ): Promise<void> {
+    const key = this.buildLockKey(identifier, ipAddress);
+    const failedCount = await this.redisService.client.incr(key);
+    // Lần fail đầu tiên thì gắn TTL cho toàn bộ cửa sổ lock.
+    if (failedCount === 1) {
+      await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
+    }
+    let ttl = await this.redisService.client.ttl(key);
+    if (ttl < 0) {
+      await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
+      ttl = this.LOCK_TIME_SECONDS;
+    }
+    if (failedCount >= this.MAX_FAILED_ATTEMPTS) {
+      this.logger.error({
+        message: "Account LOCKED due to too many failed attempts",
+        context: "security",
+        identifier,
+        ipAddress,
+        failedCount,
+        ttlSeconds: ttl,
+        lockDurationMinutes: this.LOCK_TIME_SECONDS / 60,
+      });
+      return;
     }
 
-    // Check tài khoản có bị khóa không
-    async isLocked(identifier: string, ipAddress: string): Promise<boolean> {
-        const key = this.buildLockKey(identifier, ipAddress);
-        const failedCount = Number(await this.redisService.client.get(key) || 0);
+    this.logger.warn({
+      message:
+        failedCount === 1
+          ? "First failed login attempt"
+          : "Failed login attempt",
+      context: "security",
+      identifier,
+      ipAddress,
+      attemptCount: failedCount,
+      remainingAttempts: this.MAX_FAILED_ATTEMPTS - failedCount,
+      ttlSeconds: ttl,
+    });
+  }
 
-        if (failedCount < this.MAX_FAILED_ATTEMPTS) {
-            return false;
-        }
-        const ttl = await this.redisService.client.ttl(key);
-        // TTL <= 0 nghĩa là key đã hết hạn hoặc không có expire, dọn key để tránh trạng thái kẹt.
-        if (ttl <= 0) {
-            await this.redisService.client.del(key);
-            return false;
-        }
-        return true;
+  async resetLocked(identifier: string, ipAddress: string): Promise<void> {
+    const key = this.buildLockKey(identifier, ipAddress);
+    const deletedCount = await this.redisService.client.del(key);
+
+    if (deletedCount > 0) {
+      this.logger.info({
+        message: "Login attempts reset (successful login or manual unlock)",
+        context: "security",
+        identifier,
+        ipAddress,
+      });
     }
-
-    // Ghi nhận lần đăng nhập sai
-    async recordFailedAttempt(identifier: string, ipAddress: string): Promise<void> {
-        const key = this.buildLockKey(identifier, ipAddress);
-        const failedCount = await this.redisService.client.incr(key);
-        // Lần fail đầu tiên thì gắn TTL cho toàn bộ cửa sổ lock.
-        if (failedCount === 1) {
-            await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
-        }
-        let ttl = await this.redisService.client.ttl(key);
-        if (ttl < 0) {
-            await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
-            ttl = this.LOCK_TIME_SECONDS;
-        }
-        if (failedCount >= this.MAX_FAILED_ATTEMPTS) {
-            this.logger.error({
-                message: 'Account LOCKED due to too many failed attempts',
-                context: 'security',
-                identifier,
-                ipAddress,
-                failedCount,
-                ttlSeconds: ttl,
-                lockDurationMinutes: this.LOCK_TIME_SECONDS / 60,
-            });
-            return;
-        }
-
-        this.logger.warn({
-            message: failedCount === 1 ? 'First failed login attempt' : 'Failed login attempt',
-            context: 'security',
-            identifier,
-            ipAddress,
-            attemptCount: failedCount,
-            remainingAttempts: this.MAX_FAILED_ATTEMPTS - failedCount,
-            ttlSeconds: ttl,
-        });
-    }
-
-    async resetLocked(identifier: string, ipAddress: string): Promise<void> {
-        const key = this.buildLockKey(identifier, ipAddress);
-        const deletedCount = await this.redisService.client.del(key);
-
-        if (deletedCount > 0) {
-            this.logger.info({
-                message: 'Login attempts reset (successful login or manual unlock)',
-                context: 'security',
-                identifier,
-                ipAddress
-            });
-        }
-    }
+  }
 }

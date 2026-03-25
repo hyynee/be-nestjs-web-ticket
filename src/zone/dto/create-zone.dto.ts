@@ -20,6 +20,11 @@ export class CreateZoneDto {
   @IsString()
   name: string;
 
+  @ApiProperty({ description: "mô tả khu vực", required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
   @ApiProperty({ description: "giá vé khu vực" })
   @IsNumber()
   @IsPositive()

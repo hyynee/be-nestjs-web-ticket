@@ -6,7 +6,6 @@ export class DashboardOverviewDto {
   totalCheckedIn: number;
   totalRefundedAmount: number;
 
-
   currentMonthRevenue: number;
   previousMonthRevenue: number;
   revenueDifference: number;

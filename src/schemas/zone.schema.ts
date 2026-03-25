@@ -10,6 +10,9 @@ export class Zone extends Document {
   @Prop({ required: true })
   name: string;
 
+  @Prop({ type: String })
+  description?: string;
+
   @Prop({ type: Number, required: true, min: 0 })
   price: number;
 
@@ -29,15 +32,24 @@ export class Zone extends Document {
   hasSeating: boolean; // Zone có ghế ngồi hay không
 
   @Prop({ type: Date })
-  saleStartDate?: Date; 
+  saleStartDate?: Date;
 
   @Prop({ type: Date })
-  saleEndDate?: Date; 
+  saleEndDate?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: "User" })
+  createdBy?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: "User" })
+  updatedBy?: Types.ObjectId;
 }
 
 export const ZoneSchema = SchemaFactory.createForClass(Zone);
 
-ZoneSchema.index({ eventId: 1, name: 1 }, { unique: true, partialFilterExpression: { isDeleted: false } });
+ZoneSchema.index(
+  { eventId: 1, name: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 
 ZoneSchema.index({ eventId: 1 });
 

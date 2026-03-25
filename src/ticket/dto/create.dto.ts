@@ -8,7 +8,7 @@ export class CheckInTicketDto {
 
   @IsOptional()
   @IsString()
-  checkInLocation?: string; 
+  checkInLocation?: string;
 
   @IsOptional()
   deviceInfo?: string;

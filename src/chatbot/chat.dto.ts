@@ -1,8 +1,8 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsNumber, Min, Max } from 'class-validator';
+import { ApiProperty } from "@nestjs/swagger";
+import { IsString, IsOptional, IsNumber, Min, Max } from "class-validator";
 
 export class ChatRequestDto {
-    @ApiProperty({ description: 'User message to send to the chatbot' })
+  @ApiProperty({ description: "User message to send to the chatbot" })
   @IsString()
   message: string;
 
@@ -17,7 +17,7 @@ export class ChatRequestDto {
 export class EventRecommendationDto {
   @IsOptional()
   @IsString()
-  category?: 'active' | 'upcoming' | 'popular';
+  category?: "active" | "upcoming" | "popular";
 
   @IsOptional()
   @IsNumber()

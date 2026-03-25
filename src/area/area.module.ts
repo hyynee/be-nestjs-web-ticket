@@ -7,7 +7,10 @@ import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Area.name, schema: AreaSchema },{ name: Zone.name, schema: ZoneSchema }]),
+    MongooseModule.forFeature([
+      { name: Area.name, schema: AreaSchema },
+      { name: Zone.name, schema: ZoneSchema },
+    ]),
   ],
   controllers: [AreaController],
   providers: [AreaService],

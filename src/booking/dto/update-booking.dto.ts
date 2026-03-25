@@ -1,5 +1,4 @@
-import { ApiProperty } from "@nestjs/swagger";
-import { IsEmpty, IsNotEmpty, IsOptional, IsString } from "class-validator";
+import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class UpdateBookingDto {
   @IsString()
@@ -17,10 +16,7 @@ export class UpdateBookingDto {
   @IsNotEmpty()
   status: string;
 
-
   @IsOptional()
   @IsString()
   notes?: string;
 }
-
-

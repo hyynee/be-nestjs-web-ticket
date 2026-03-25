@@ -1,5 +1,5 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { Document } from "mongoose";
 
 @Schema({ timestamps: true })
 export class LoginAttempt extends Document {
@@ -19,5 +19,4 @@ export class LoginAttempt extends Document {
   lockedUntil: Date;
 }
 
-export const LoginAttemptSchema =
-  SchemaFactory.createForClass(LoginAttempt);
+export const LoginAttemptSchema = SchemaFactory.createForClass(LoginAttempt);

@@ -5,13 +5,15 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { EventSchema } from "@src/schemas/event.schema";
 import { UserSchema } from "@src/schemas/user.schema";
 import { ZoneSchema } from "@src/schemas/zone.schema";
+import { AreaSchema } from "@src/schemas/area.schema";
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: "Event", schema: EventSchema },
       { name: "User", schema: UserSchema },
-      {name: "Zone", schema: ZoneSchema}
+      { name: "Zone", schema: ZoneSchema },
+      { name: "Area", schema: AreaSchema },
     ]),
   ],
   controllers: [EventController],

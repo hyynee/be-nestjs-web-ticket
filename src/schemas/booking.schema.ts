@@ -1,13 +1,13 @@
+/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
-
 
 export enum BookingStatus {
   PENDING = "pending",
   CONFIRMED = "confirmed",
   CANCELLED = "cancelled",
   EXPIRED = "expired",
-};
+}
 
 export enum PaymentStatus {
   UNPAID = "unpaid",
@@ -63,7 +63,7 @@ export class Booking extends Document {
   @Prop({ type: String })
   stripePaymentIntentId?: string;
 
-  // Thời gian hết hạn giữ vé (15 phút từ lúc tạo)
+  // Thời gian hết hạn giữ vé (30 phút từ lúc tạo)
   @Prop({ type: Date, required: true })
   expiresAt: Date;
 
@@ -86,7 +86,7 @@ export class Booking extends Document {
   cancelledAt?: Date;
 
   @Prop({ type: Types.ObjectId, ref: "User" })
-cancelledBy?: Types.ObjectId;
+  cancelledBy?: Types.ObjectId;
 
   @Prop({ type: String })
   cancellationReason?: string;
@@ -107,17 +107,16 @@ BookingSchema.virtual("canCancel").get(function () {
   return this.status === "confirmed" && this.paymentStatus === "paid";
 });
 
-BookingSchema.index({ userId: 1, createdAt: -1 }); 
-BookingSchema.index({ bookingCode: 1 }, { unique: true }); 
-BookingSchema.index({ eventId: 1 }); 
-BookingSchema.index({ status: 1, expiresAt: 1 }); 
-BookingSchema.index({ stripePaymentIntentId: 1 }); 
+BookingSchema.index({ userId: 1, createdAt: -1 });
+BookingSchema.index({ eventId: 1 });
+BookingSchema.index({ status: 1, expiresAt: 1 });
+BookingSchema.index({ stripePaymentIntentId: 1 });
 BookingSchema.index({ isDeleted: 1 });
 
-// Pre-save: Tự động tính expiresAt (15 phút)
+// Pre-save: Tự động tính expiresAt (30 phút)
 BookingSchema.pre<Booking>("save", function (next) {
   if (this.isNew && !this.expiresAt) {
-    this.expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 phút
+    this.expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 phút
   }
   next();
 });

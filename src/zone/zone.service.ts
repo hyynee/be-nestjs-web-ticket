@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException, Inject } from "@nestjs/common";
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  Inject,
+} from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose/dist/common/mongoose.decorators";
 import { Zone } from "@src/schemas/zone.schema";
 import { Model, Types } from "mongoose";
@@ -8,33 +14,69 @@ import { CreateZoneDto } from "./dto/create-zone.dto";
 import { UpdateZoneDto } from "./dto/update-zone.dto";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
+import { Event } from "@src/schemas/event.schema";
+import { Area } from "@src/schemas/area.schema";
 
 @Injectable()
 export class ZoneService {
   private readonly ZONE_CACHE_LIST_KEY: Set<string> = new Set();
   constructor(
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
-  ) { }
+    @InjectModel(Event.name) private readonly eventModel: Model<Event>,
+    @InjectModel(Area.name) private readonly areaModel: Model<Area>,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache
+  ) {}
+
+  private async ensureActiveEvent(eventId: string | Types.ObjectId) {
+    const normalizedEventId =
+      typeof eventId === "string" ? new Types.ObjectId(eventId) : eventId;
+    const event = await this.eventModel
+      .findOne({ _id: normalizedEventId, isDeleted: false })
+      .select("_id")
+      .lean();
+
+    if (!event) {
+      throw new BadRequestException("Event not found or has been deleted");
+    }
+  }
 
   private generateListCacheKey(query: QueryZoneDto): string {
-    const { eventId, search, hasSeating, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = query;
-    return `zones:list:event=${eventId || 'all'}:search=${search || ''}:hasSeating=${hasSeating ?? 'all'}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
-}
+    const {
+      eventId,
+      search,
+      hasSeating,
+      page = 1,
+      limit = 10,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = query;
+    return `zones:list:event=${eventId || "all"}:search=${search || ""}:hasSeating=${hasSeating ?? "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+  }
   private async invalidateZoneCache(): Promise<void> {
     for (const key of this.ZONE_CACHE_LIST_KEY) {
       await this.cacheManager.del(key);
     }
     this.ZONE_CACHE_LIST_KEY.clear();
   }
-  async getAllActiveZones(query: QueryZoneDto): Promise<PaginatedResponse<Zone>> {
-    const { eventId, search, hasSeating, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = query;
+  async getAllActiveZones(
+    query: QueryZoneDto
+  ): Promise<PaginatedResponse<Zone>> {
+    const {
+      eventId,
+      search,
+      hasSeating,
+      page = 1,
+      limit = 10,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = query;
 
     if (eventId && !Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
     const cacheKey = this.generateListCacheKey(query);
-    const cachedData = await this.cacheManager.get<PaginatedResponse<Zone>>(cacheKey);
+    const cachedData =
+      await this.cacheManager.get<PaginatedResponse<Zone>>(cacheKey);
     if (cachedData) {
       return cachedData;
     }
@@ -45,24 +87,24 @@ export class ZoneService {
     }
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { name: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
       ];
     }
     if (hasSeating !== undefined) {
       filter.hasSeating = hasSeating;
     }
     const sort: any = {};
-    sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+    sort[sortBy] = sortOrder === "asc" ? 1 : -1;
     const [data, total] = await Promise.all([
       this.zoneModel
         .find(filter)
-        .select('-__v')
+        .select("-__v")
         .sort(sort)
         .skip(skip)
         .limit(limit)
         .exec(),
-      this.zoneModel.countDocuments(filter).exec()
+      this.zoneModel.countDocuments(filter).exec(),
     ]);
     const totalPages = Math.ceil(total / limit);
     const result: PaginatedResponse<Zone> = {
@@ -74,7 +116,7 @@ export class ZoneService {
         totalPages,
         hasPreviousPage: page > 1,
         hasNextPage: page < totalPages,
-      }
+      },
     };
     await this.cacheManager.set(cacheKey, result, 30000);
     this.ZONE_CACHE_LIST_KEY.add(cacheKey);
@@ -95,8 +137,8 @@ export class ZoneService {
             {
               $match: {
                 $expr: { $eq: ["$zoneId", "$$zoneId"] },
-                isDeleted: false
-              }
+                isDeleted: false,
+              },
             },
             {
               $project: {
@@ -160,6 +202,7 @@ export class ZoneService {
     if (!Types.ObjectId.isValid(createZoneDto.eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
+    await this.ensureActiveEvent(createZoneDto.eventId);
     const existingZone = await this.zoneModel.findOne({
       eventId: new Types.ObjectId(eventId),
       name: name.trim().toUpperCase(),
@@ -215,6 +258,8 @@ export class ZoneService {
       ? new Types.ObjectId(eventId)
       : currentZone.eventId;
 
+    await this.ensureActiveEvent(targetEventId);
+
     if (name) {
       const existingZone = await this.zoneModel.findOne({
         _id: { $ne: new Types.ObjectId(id) },
@@ -229,6 +274,20 @@ export class ZoneService {
         );
       }
     }
+
+    if (updateZoneDto.hasSeating === false && currentZone.hasSeating) {
+      const activeAreas = await this.areaModel.countDocuments({
+        zoneId: new Types.ObjectId(id),
+        isDeleted: false,
+      });
+
+      if (activeAreas > 0) {
+        throw new BadRequestException(
+          "Cannot disable seating while active areas still exist in this zone"
+        );
+      }
+    }
+
     const updatedData = {
       ...updateZoneDto,
       updatedBy: currentUser.userId,

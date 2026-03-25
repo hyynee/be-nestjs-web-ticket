@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
 import { User } from "./user.schema";
@@ -7,7 +8,7 @@ export enum EventStatus {
   ACTIVE = "active",
   INACTIVE = "inactive",
   ENDED = "ended",
-};
+}
 
 @Schema({ timestamps: true })
 export class Event extends Document {
@@ -34,7 +35,7 @@ export class Event extends Document {
     enum: EventStatus,
     default: EventStatus.DRAFT,
   })
-  status: EventStatus
+  status: EventStatus;
 
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
   createdBy: User;

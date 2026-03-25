@@ -12,11 +12,10 @@ import { LockLoginModule } from "@src/lock-login/lock-login.module";
 import { MailModule } from "@src/services/mail.module";
 import { ResetTokenSchema } from "@src/schemas/reset-token.schema";
 import { EventsModule } from "@src/events/events.module";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ConfigService } from "@nestjs/config";
 
 @Module({
   imports: [
-
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema },
       { name: "ResetToken", schema: ResetTokenSchema },
@@ -26,7 +25,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         global: true,
-        secret: configService.get<string>("SECRET_KEY"),
+        secret: configService.getOrThrow<string>("SECRET_KEY"),
         signOptions: { expiresIn: "1d" },
       }),
     }),

@@ -6,9 +6,7 @@ import {
   IsEmail,
   IsOptional,
   Min,
-  ArrayMinSize,
   IsMongoId,
-  ValidateIf,
 } from "class-validator";
 import { Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
@@ -24,15 +22,15 @@ export class CreateBookingDto {
   @IsMongoId()
   zoneId: string;
 
-  @ApiPropertyOptional({ 
-    description: "ID khu vực con (area) – nếu zone có seating" 
+  @ApiPropertyOptional({
+    description: "ID khu vực con (area) – nếu zone có seating",
   })
   @IsOptional()
   @IsMongoId()
   areaId?: string;
 
-  @ApiPropertyOptional({ 
-    description: "Danh sách ghế (chỉ khi zone có seating và area đã chọn)" 
+  @ApiPropertyOptional({
+    description: "Danh sách ghế (chỉ khi zone có seating và area đã chọn)",
   })
   @IsOptional()
   @IsArray()

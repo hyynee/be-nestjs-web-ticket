@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   ConflictException,
   Injectable,
@@ -9,7 +10,7 @@ import {
 import { LoginDTO } from "./dto/login.dto";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { RegisterDTO } from "./dto/create.dto";
 import { JwtService } from "@nestjs/jwt";
 import { v4 as uuidv4 } from "uuid";
@@ -23,11 +24,9 @@ import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { Logger } from "winston";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
-import { v2 as cloudinary } from 'cloudinary';
+import { v2 as cloudinary } from "cloudinary";
 import { RedisService } from "@src/redis/redis.service";
 import { CookieOptions, Response } from "express";
-
-const { FRONTEND_URL } = envConfig;
 
 type GoogleProfile = {
   email?: string;
@@ -39,12 +38,12 @@ type GoogleProfile = {
 export class AuthService {
   private readonly REFRESH_TOKEN_TTL_SECONDS = 3 * 24 * 60 * 60;
   private readonly ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
-  private readonly REFRESH_TOKEN_TTL_MS =
-    this.REFRESH_TOKEN_TTL_SECONDS * 1000;
+  private readonly REFRESH_TOKEN_TTL_MS = this.REFRESH_TOKEN_TTL_SECONDS * 1000;
 
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(ResetToken.name) private readonly resetTokenModel: Model<ResetToken>,
+    @InjectModel(ResetToken.name)
+    private readonly resetTokenModel: Model<ResetToken>,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
 
@@ -52,15 +51,15 @@ export class AuthService {
     private loginAttemptService: LockLoginService,
     private readonly userEventsService: UserEventsService,
     private mailService: MailService,
-    private readonly redisService: RedisService,
-  ) { }
+    private readonly redisService: RedisService
+  ) {}
   private generateCacheKeyForUser(userId: string): string {
     return `user:details:${userId}`;
-  };
+  }
   private async invalidateUserCache(userId: string): Promise<void> {
     const cacheKey = this.generateCacheKeyForUser(userId);
     await this.cacheManager.del(cacheKey);
-  };
+  }
 
   private getRefreshTokenKey(token: string): string {
     return `auth:refresh:${token}`;
@@ -70,37 +69,36 @@ export class AuthService {
     return `auth:user:${userId}:refresh-tokens`;
   }
 
+  private withPassword(query: any) {
+    if (query && typeof query.select === "function") {
+      return query.select("+password");
+    }
+    return query;
+  }
+
   private isCookieSecure(): boolean {
-    if (process.env.AUTH_COOKIE_SECURE) {
-      return process.env.AUTH_COOKIE_SECURE === "true";
+    const rawValue = envConfig.AUTH_COOKIE_SECURE;
+    if (!rawValue) {
+      return envConfig.NODE_ENV === "production";
     }
 
-    return process.env.NODE_ENV === "production";
+    return String(rawValue).toLowerCase() === "true";
   }
 
   private getCookieSameSite(): "lax" | "strict" | "none" {
-    const rawValue = (process.env.AUTH_COOKIE_SAME_SITE || "strict").toLowerCase();
-
+    const rawValue = String(envConfig.AUTH_COOKIE_SAME_SITE || "lax").toLowerCase();
     if (rawValue === "lax" || rawValue === "strict" || rawValue === "none") {
       return rawValue;
     }
-
-    this.logger.warn(
-      `Invalid AUTH_COOKIE_SAME_SITE value "${rawValue}", falling back to "strict"`
-    );
-    return "strict";
+    return "lax";
   }
 
   private getTokenCookieOptions(maxAge: number): CookieOptions {
     const secure = this.isCookieSecure();
-    let sameSite = this.getCookieSameSite();
-
-    if (sameSite === "none" && !secure) {
-      this.logger.warn(
-        "AUTH_COOKIE_SAME_SITE=none requires secure cookies, falling back to sameSite=strict"
-      );
-      sameSite = "strict";
-    }
+    const sameSite =
+      this.getCookieSameSite() === "none" && !secure
+        ? "lax"
+        : this.getCookieSameSite();
 
     const cookieOptions: CookieOptions = {
       httpOnly: true,
@@ -110,8 +108,8 @@ export class AuthService {
       path: "/",
     };
 
-    if (process.env.AUTH_COOKIE_DOMAIN) {
-      cookieOptions.domain = process.env.AUTH_COOKIE_DOMAIN;
+    if (envConfig.AUTH_COOKIE_DOMAIN) {
+      cookieOptions.domain = envConfig.AUTH_COOKIE_DOMAIN;
     }
 
     return cookieOptions;
@@ -152,8 +150,8 @@ export class AuthService {
     await multi.exec();
   }
 
-  async register(data: RegisterDTO): Promise<User> {
-    const { email, password, confirmPassword, fullName, role = "user" } = data;
+  async register(data: RegisterDTO): Promise<Record<string, unknown>> {
+    const { email, password, confirmPassword, fullName } = data;
     const existingUser = await this.userModel.findOne({ email });
     if (existingUser) {
       throw new ConflictException("Email already exists");
@@ -165,28 +163,39 @@ export class AuthService {
       email,
       password,
       fullName,
-      role: role || "user",
+      role: "user",
     });
     // emit event user registered
-    await user.save();
-    this.userEventsService.emitUserRegistered(user);
-    return user;
+    const createdUser = (await user.save()) || user;
+    this.userEventsService.emitUserRegistered(createdUser);
+
+    if (typeof (createdUser as any).toObject !== "function") {
+      return createdUser as unknown as Record<string, unknown>;
+    }
+
+    const createdUserObject = (createdUser as any).toObject() as Record<
+      string,
+      unknown
+    >;
+    const { password: _password, ...sanitizedUser } = createdUserObject;
+    void _password;
+    return sanitizedUser;
   }
 
   async login(data: LoginDTO, ip: string, res: Response) {
     const { email, password } = data;
-    const user = await this.userModel.findOne({ email });
+    const user = await this.withPassword(this.userModel.findOne({ email }));
 
     if (!user) {
       await this.loginAttemptService.recordFailedAttempt(email, ip);
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException("Invalid credentials");
     }
 
     const isMatch = await user.comparePassword(password);
 
     if (!isMatch) {
       await this.loginAttemptService.recordFailedAttempt(email, ip);
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException("Invalid credentials");
     }
 
     // Login đúng → reset count
@@ -197,7 +206,6 @@ export class AuthService {
     this.setTokenCookies(res, tokens);
     return { message: "Logged in successfully" };
   }
-
 
   async loginWithGoogle(profile: GoogleProfile) {
     const { email, name, picture } = profile;
@@ -219,56 +227,57 @@ export class AuthService {
     return this.generateUserTokens(user._id);
   }
 
-  async handleGoogleLoginCallback(profile: GoogleProfile | undefined, res: Response) {
+  async handleGoogleLoginCallback(
+    profile: GoogleProfile | undefined,
+    res: Response
+  ) {
     if (!profile) {
-      throw new BadRequestException("Invalid Google profile: profile is required");
+      throw new BadRequestException(
+        "Invalid Google profile: profile is required"
+      );
     }
 
     const tokens = await this.loginWithGoogle(profile);
     this.setTokenCookies(res, tokens);
 
-    const frontendBaseUrl = FRONTEND_URL?.replace(/\/+$/, "");
-    const redirectTarget = frontendBaseUrl
-      ? `${frontendBaseUrl}/`
-      : "/";
+    const frontendBaseUrl = envConfig.FRONTEND_URL?.replace(/\/+$/, "");
+    const redirectTarget = frontendBaseUrl ? `${frontendBaseUrl}/` : "/";
 
     res.redirect(redirectTarget);
   }
 
-  async status() {
+  status() {
     return { message: "Logged in successfully" };
   }
 
-  async getCurrentUser(req: any) {
+  getCurrentUser(req: any) {
     return req.currentUser;
   }
 
   async getUserById(id: string) {
     const cacheKey = this.generateCacheKeyForUser(id);
-    let user: User | null = await this.cacheManager.get<User>(cacheKey) ?? null;
+    let user: User | null =
+      (await this.cacheManager.get<User>(cacheKey)) ?? null;
     if (!user) {
-      user = await this.userModel
-        .findById(id)
-        .select('-password')
-        .lean<User>();
+      user = await this.userModel.findById(id).select("-password").lean<User>();
       if (!user) return null;
       await this.cacheManager.set(cacheKey, user, 1800000);
     }
     const avatarUrl = user.avatarPublicId
       ? cloudinary.url(user.avatarPublicId, {
-        type: 'private',
-        sign_url: true,
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-        secure: true,
-      })
+          type: "private",
+          sign_url: true,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          secure: true,
+        })
       : null;
-    const {avatarPublicId,...profile} = user;
+    const { avatarPublicId, ...profile } = user;
+    void avatarPublicId;
     return {
       ...profile,
       avatarUrl,
     };
   }
-
 
   async refreshToken(refreshToken: string, res: Response) {
     if (!refreshToken) {
@@ -294,20 +303,34 @@ export class AuthService {
     return { message: "Token refreshed successfully" };
   }
 
-  async logout(userId: string, res?: Response) {
+  async logout(refreshToken: string | undefined, res: Response) {
+    this.clearTokenCookies(res);
+
+    if (!refreshToken) {
+      return { message: "Logged out successfully" };
+    }
+
+    const userId = await this.redisService.client.get(
+      this.getRefreshTokenKey(refreshToken)
+    );
+
+    if (!userId) {
+      return { message: "Logged out successfully" };
+    }
+
     await this.revokeAllUserRefreshTokens(userId);
     await this.invalidateUserCache(userId);
-
-    if (res) {
-      this.clearTokenCookies(res);
-    }
 
     return { message: "Logged out successfully" };
   }
 
-  // create token
-  async generateUserTokens(userId) {
-    const user = await this.userModel.findById(userId);
+  async generateUserTokens(
+    userId: string | Types.ObjectId
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const normalizedUserId =
+      typeof userId === "string" ? userId : userId.toString();
+
+    const user = await this.userModel.findById(normalizedUserId);
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
@@ -318,10 +341,8 @@ export class AuthService {
       { expiresIn: "1h" }
     );
     const refreshToken = uuidv4();
-
     // Mỗi user chỉ giữ một phiên refresh token để revoke nhanh và rõ ràng.
     await this.revokeAllUserRefreshTokens(userIdString);
-
     // Tạo refresh token mới
     await this.storeRefreshToken(refreshToken, userIdString);
     return { accessToken, refreshToken };
@@ -343,7 +364,7 @@ export class AuthService {
   // changePassword
   async changePassword(userId: string, data: ChangePasswordDTO) {
     const { oldPassword, newPassword } = data;
-    const user = await this.userModel.findById(userId);
+    const user = await this.withPassword(this.userModel.findById(userId));
     if (!user) {
       throw new NotFoundException("User not found");
     }
@@ -362,12 +383,14 @@ export class AuthService {
     const user = await this.userModel.findOne({ email });
     if (!user) {
       return {
-        message: "If that email address is in our system, we have sent a password reset link to it."
+        message:
+          "If that email address is in our system, we have sent a password reset link to it.",
       };
     }
-    await this.resetTokenModel.deleteMany({  // xoá các token cũ
+    await this.resetTokenModel.deleteMany({
+      // xoá các token cũ
       userId: user._id,
-      isUsed: false
+      isUsed: false,
     });
     const resetToken = uuidv4();
     const expiresAt = new Date(Date.now() + 3600000);
@@ -377,10 +400,10 @@ export class AuthService {
       expiresAt,
       isUsed: false,
     });
-    const resetLink = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
+    const resetLink = `${envConfig.FRONTEND_URL}/reset-password?token=${resetToken}`;
     await this.mailService.sendPasswordResetEmail(user.email, resetLink);
     return {
-      message: "Password reset link has been sent to your email."
+      message: "Password reset link has been sent to your email.",
     };
   }
 
@@ -388,7 +411,7 @@ export class AuthService {
     const { resetToken, newPassword } = data;
     const token = await this.resetTokenModel.findOne({
       token: resetToken,
-      isUsed: false
+      isUsed: false,
     });
     if (!token) {
       throw new BadRequestException("Invalid or expired reset token");
@@ -409,6 +432,8 @@ export class AuthService {
     );
     await this.revokeAllUserRefreshTokens(user._id.toString());
     await this.invalidateUserCache(user.id.toString());
-    return { message: "Password has been reset successfully. Please login again." };
+    return {
+      message: "Password has been reset successfully. Please login again.",
+    };
   }
 }

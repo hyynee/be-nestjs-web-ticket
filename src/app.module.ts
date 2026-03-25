@@ -1,54 +1,63 @@
-import { MiddlewareConsumer, Module, NestModule, RequestMethod, ValidationPipe } from "@nestjs/common";
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+  ValidationPipe,
+} from "@nestjs/common";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { ConfigModule } from "@nestjs/config";
-import { MulterModule } from '@nestjs/platform-express';
-import * as multer from 'multer';
+import { MulterModule } from "@nestjs/platform-express";
+import * as multer from "multer";
 import { AuthModule } from "./auth/auth.module";
 import { DatabaseModule } from "./config/database.module";
-import { JwtStrategy } from "./strategy/jwt.strategy";
 import { UserModule } from "./user/user.module";
-import { GoogleStrategy } from "./strategy/google.strategy";
 import { EventModule } from "./event/event.module";
 import { ZoneModule } from "./zone/zone.module";
 import { AreaModule } from "./area/area.module";
-import { BookingModule } from './booking/booking.module';
-import { PaymentModule } from './payment/payment.module';
+import { BookingModule } from "./booking/booking.module";
+import { PaymentModule } from "./payment/payment.module";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { UploadController } from "./upload/uploadImage";
-import { LockLoginModule } from './lock-login/lock-login.module';
-import { TicketModule } from './ticket/ticket.module';
+import { LockLoginModule } from "./lock-login/lock-login.module";
+import { TicketModule } from "./ticket/ticket.module";
 import { ChatModule } from "./chatbot/chat.module";
 import { APP_GUARD } from "@nestjs/core";
-import { APP_PIPE } from '@nestjs/core';
+import { APP_PIPE } from "@nestjs/core";
 import { CustomThrottlerGuard } from "./helper/throtler.helper";
-import { StatisticalModule } from './statistical/statistical.module';
+import { StatisticalModule } from "./statistical/statistical.module";
 import { LoggerModule } from "./logger/logger.module";
 import { CacheModule } from "@nestjs/cache-manager";
 import { EventsModule } from "./events/events.module";
 import { ExportModule } from "./export/export.module";
-import { ScheduleModule } from '@nestjs/schedule';
+import { ScheduleModule } from "@nestjs/schedule";
 import { RedisModule } from "./redis/redis.module";
 import { GeoIpMiddleware } from "./middleware/geoip.middleware";
+import { validateEnvironment } from "./config/env.validation";
+import { QueueModule } from "@src/queue/queue.module";
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validate: validateEnvironment,
+    }),
     DatabaseModule,
     ScheduleModule.forRoot(),
-    ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot({
       throttlers: [
         {
-          name: 'short',
+          name: "short",
           ttl: 5000,
           limit: 20,
         },
         {
-          name: 'medium',
+          name: "medium",
           ttl: 60000,
           limit: 120,
         },
         {
-          name: 'long',
+          name: "long",
           ttl: 86400000,
           limit: 5000,
         },
@@ -78,13 +87,12 @@ import { GeoIpMiddleware } from "./middleware/geoip.middleware";
     StatisticalModule,
     LoggerModule,
     EventsModule,
-    ExportModule
+    ExportModule,
+    QueueModule,
   ],
   controllers: [AppController, UploadController],
   providers: [
     AppService,
-    JwtStrategy,
-    GoogleStrategy,
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
@@ -95,7 +103,7 @@ import { GeoIpMiddleware } from "./middleware/geoip.middleware";
         transform: true,
         whitelist: true,
       }),
-    }
+    },
   ],
 })
 export class AppModule implements NestModule {
@@ -103,8 +111,8 @@ export class AppModule implements NestModule {
     consumer
       .apply(GeoIpMiddleware)
       .forRoutes(
-        { path: 'auth/login', method: RequestMethod.POST },
-        { path: 'ticket/checkin', method: RequestMethod.POST },
+        { path: "auth/login", method: RequestMethod.POST },
+        { path: "ticket/checkin", method: RequestMethod.POST }
       );
   }
 }

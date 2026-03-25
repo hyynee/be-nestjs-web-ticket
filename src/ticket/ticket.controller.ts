@@ -1,93 +1,136 @@
-import { Controller, Get, HttpCode, Param, UseGuards ,Query} from '@nestjs/common';
-import { TicketService } from './ticket.service';
-import { ApiBearerAuth } from '@nestjs/swagger';
-import { Post, Body } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard } from '@src/guards/role.guard';
-import { JwtPayload } from '@src/auth/dto/jwt-payload.dto';
-import { CurrentUser } from '@src/auth/decorator/currentUser.decorator';
-import { QueryTicketDto } from './dto/query.dto';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  Req,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
+import { TicketService } from "./ticket.service";
+import { ApiCookieAuth } from "@nestjs/swagger";
+import { AuthGuard } from "@nestjs/passport";
+import { RolesGuard } from "@src/guards/role.guard";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
+import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
+import { QueryTicketDto } from "./dto/query.dto";
+import type { Request } from "express";
 
-@Controller('ticket')
+const resolveClientIp = (request: Request): string => {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const forwardedIp = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : typeof forwardedFor === "string"
+      ? forwardedFor.split(",")[0]
+      : undefined;
+
+  return (
+    forwardedIp?.trim() ||
+    request.ip ||
+    request.socket?.remoteAddress ||
+    ""
+  );
+};
+
+@Controller("ticket")
 export class TicketController {
-  constructor(private readonly ticketService: TicketService) { }
+  constructor(private readonly ticketService: TicketService) {}
 
-  @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'))
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
   @HttpCode(201)
-  @Post('from-booking')
+  @Post("from-booking")
   async createTicketsFromBooking(
-    @Body('bookingCode') bookingCode: string,
-  ) {
-    return this.ticketService.createTicketsFromBooking(bookingCode);
-  }
-
-  @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'))
-  @HttpCode(200)
-  @Get('validate/:ticketCode')
-  async validateTicket(
-    @Param('ticketCode') ticketCode: string,
-  ) {
-    return this.ticketService.validateTicket(ticketCode);
-  }
-  @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'))
-  @HttpCode(200)
-  @Get(':ticketCode')
-  async getTicketByCode(
     @CurrentUser() user: JwtPayload,
-    @Param('ticketCode') ticketCode: string,
+    @Body("bookingCode") bookingCode: string
   ) {
-    const userId = user.userId;
-    return this.ticketService.getTicketByCode(userId,ticketCode);
+    return this.ticketService.createTicketsFromBooking(
+      bookingCode,
+      undefined,
+      user.userId
+    );
   }
 
-
-  @ApiBearerAuth()
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @HttpCode(200)
-  @Post('checkin')
-  async checkInTicket(
-    @Body('ticketCode') ticketCode: string,
-    @Body('location') location: string,
-    @Body('deviceInfo') deviceInfo: string,
-    @Body('ipAddress') ipAddress: string,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    const adMinId = user.userId;
-    return this.ticketService.checkInTicket(ticketCode, location, deviceInfo, ipAddress, adMinId);
-  }
-
-  @ApiBearerAuth()
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @HttpCode(200)
-  @Post('cancel')
-  async cancelTicket(
-    @Body('ticketCode') ticketCode: string,
+  @Get("validate/:ticketCode")
+  async validateTicket(
     @CurrentUser() user: JwtPayload,
+    @Param("ticketCode") ticketCode: string
+  ) {
+    return this.ticketService.validateTicket(
+      ticketCode,
+      user.userId,
+      user.role
+    );
+  }
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
+  @HttpCode(200)
+  @Get(":ticketCode")
+  async getTicketByCode(
+    @CurrentUser() user: JwtPayload,
+    @Param("ticketCode") ticketCode: string
+  ) {
+    const userId = user.userId;
+    return this.ticketService.getTicketByCode(userId, ticketCode);
+  }
+
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @HttpCode(200)
+  @Post("checkin")
+  async checkInTicket(
+    @Body("ticketCode") ticketCode: string,
+    @Req() req: Request,
+    @CurrentUser() user: JwtPayload,
+    @Body("location") location?: string,
+    @Body("deviceInfo") deviceInfo?: string
+  ) {
+    const adMinId = user.userId;
+    const ipAddress = resolveClientIp(req);
+
+    return this.ticketService.checkInTicket(
+      ticketCode,
+      location ?? "",
+      deviceInfo ?? "",
+      ipAddress,
+      adMinId
+    );
+  }
+
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
+  @HttpCode(200)
+  @Post("cancel")
+  async cancelTicket(
+    @Body("ticketCode") ticketCode: string,
+    @CurrentUser() user: JwtPayload
   ) {
     const userId = user.userId;
     return this.ticketService.cancelTicket(ticketCode, userId);
   }
 
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @HttpCode(200)
-  @Get('checkin-history/:ticketCode')
-  async getCheckInHistory(
-    @Param('ticketCode') ticketCode: string,
-  ) {
+  @Get("checkin-history/:ticketCode")
+  async getCheckInHistory(@Param("ticketCode") ticketCode: string) {
     return this.ticketService.getCheckInHistory(ticketCode);
   }
 
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @HttpCode(200)
-  @Get('admin/all-tickets')
-  async getAllTickets(
-    @Query() query: QueryTicketDto,
-  ) {
+  @Get("admin/all-tickets")
+  async getAllTickets(@Query() query: QueryTicketDto) {
     return this.ticketService.getAllTickets(query);
   }
 }

@@ -1,11 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
-import axios from 'axios';
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+import { Injectable, Logger } from "@nestjs/common";
+import axios from "axios";
+import config from "@src/config/config";
 
 @Injectable()
 export class OllamaService {
   private readonly logger = new Logger(OllamaService.name);
-  private readonly ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-  private readonly model = process.env.OLLAMA_MODEL || 'llama3';
+  private readonly ollamaUrl = config.OLLAMA_URL;
+  private readonly model = config.OLLAMA_MODEL;
 
   async generateResponse(prompt: string): Promise<string> {
     try {
@@ -16,13 +18,13 @@ export class OllamaService {
         options: {
           temperature: 0.7,
           top_p: 0.9,
-          max_tokens: 1000
-        }
+          max_tokens: 1000,
+        },
       });
 
       return response.data.response;
     } catch (error) {
-      this.logger.error('Ollama API error:', error);
+      this.logger.error("Ollama API error:", error);
       throw new Error(`Failed to generate response: ${error.message}`);
     }
   }

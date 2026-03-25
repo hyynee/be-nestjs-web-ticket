@@ -1,16 +1,21 @@
-import { IsMongoId, IsOptional, IsString, IsInt, Min, IsEnum } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsMongoId,
+  IsOptional,
+  IsString,
+  IsInt,
+  Min,
+  IsEnum,
+} from "class-validator";
+import { Type } from "class-transformer";
 
 export enum TicketStatus {
-  VALID = 'valid',
-  USED = 'used',
-  CANCELLED = 'cancelled',
-  EXPIRED = 'expired',
+  VALID = "valid",
+  USED = "used",
+  CANCELLED = "cancelled",
+  EXPIRED = "expired",
 }
 
-
 export class QueryTicketDto {
-
   @IsOptional()
   @IsMongoId()
   eventId?: string;
@@ -31,7 +36,6 @@ export class QueryTicketDto {
   @IsString()
   ticketCode?: string;
 
-
   @IsOptional()
   @IsEnum(TicketStatus)
   status?: TicketStatus;
@@ -49,8 +53,8 @@ export class QueryTicketDto {
   limit: number = 10;
 
   @IsOptional()
-  sortBy: 'createdAt' | 'price' | 'status' = 'createdAt';
+  sortBy: "createdAt" | "price" | "status" = "createdAt";
 
   @IsOptional()
-  sortOrder: 'asc' | 'desc' = 'desc';
+  sortOrder: "asc" | "desc" = "desc";
 }

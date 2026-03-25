@@ -8,8 +8,9 @@ import {
   UseGuards,
   Put,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { ZoneService } from "./zone.service";
-import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiCookieAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { QueryZoneDto } from "./dto/query-zone.dto";
 import { CreateZoneDto } from "./dto/create-zone.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
@@ -21,25 +22,29 @@ import { UpdateZoneDto } from "./dto/update-zone.dto";
 @ApiTags("Zone")
 @Controller("zone")
 export class ZoneController {
-  constructor(private readonly zoneService: ZoneService) { }
+  constructor(private readonly zoneService: ZoneService) {}
 
+  @Throttle({ medium: { limit: 120, ttl: 60000 } })
   @Get()
   async getAllZones(@Query() query: QueryZoneDto) {
     return this.zoneService.getAllActiveZones(query);
   }
 
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id")
   @ApiOperation({ summary: "Lấy thông tin khu vực theo ID" })
   async getZoneActiveById(@Param("id") id: string) {
     return this.zoneService.getZoneById(id);
   }
 
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id/with-areas")
   async getZoneWithAreas(@Param("id") zoneId: string) {
     return this.zoneService.getZoneWithAreas(zoneId);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Post("")
   @ApiOperation({ summary: "Tạo khu vực mới" })
@@ -50,7 +55,8 @@ export class ZoneController {
     return this.zoneService.createZone(currentUser, createZoneDto);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Put("update/:id")
   @ApiOperation({ summary: "Cập nhật thông tin khu vực" })
@@ -61,6 +67,4 @@ export class ZoneController {
   ) {
     return this.zoneService.updateZone(currentUser, id, updateZoneDto);
   }
-
-
 }

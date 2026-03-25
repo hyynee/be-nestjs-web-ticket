@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { Types } from "mongoose";
 
 export interface ChatCompletion {
   prompt: string;
@@ -8,7 +8,7 @@ export interface ChatCompletion {
 
 export interface ChatResponse {
   response: string;
-  eventData: EventData[]; 
+  eventData: EventData[];
   intent: string;
   timestamp: Date;
 }
@@ -22,7 +22,7 @@ export interface EventData {
   location: string;
   thumbnail?: string;
   isActiveNow: boolean;
-  status: 'draft' | 'active' | 'inactive' | 'ended';
+  status: "draft" | "active" | "inactive" | "ended";
 }
 
 export interface FormattedEvent {

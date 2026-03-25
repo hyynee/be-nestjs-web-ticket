@@ -30,7 +30,6 @@ export class QueryZoneDto {
   @IsString()
   search?: string;
 
-
   @IsBoolean()
   @IsOptional()
   @Type(() => Boolean)
@@ -39,9 +38,9 @@ export class QueryZoneDto {
   @IsBoolean()
   @IsOptional()
   @Transform(({ value }) => {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return value;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return Boolean(value);
   })
   hasSeating?: boolean;
 
@@ -60,9 +59,9 @@ export class QueryZoneDto {
 
   @IsOptional()
   @IsString()
-  sortBy?: string = 'createdAt';
+  sortBy?: string = "createdAt";
 
   @IsOptional()
   @IsString()
-  sortOrder?: 'asc' | 'desc' = 'desc';
+  sortOrder?: "asc" | "desc" = "desc";
 }

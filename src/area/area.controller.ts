@@ -1,6 +1,16 @@
-import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AreaService } from "./area.service";
-import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { ApiCookieAuth, ApiTags } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
 import { CreateAreaDTO } from "./dto/create.dto";
@@ -12,43 +22,51 @@ import { SoftDeleteAreaDTO, UpdateAreaDTO } from "./dto/update.dto";
 @ApiTags("Area")
 @Controller("area")
 export class AreaController {
-  constructor(private readonly areaService: AreaService) { }
+  constructor(private readonly areaService: AreaService) {}
 
-  @ApiBearerAuth()
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Post("/create")
-  createArea(@CurrentUser() currentUser: JwtPayload, @Body() createAreaDto: CreateAreaDTO) {
+  createArea(
+    @CurrentUser() currentUser: JwtPayload,
+    @Body() createAreaDto: CreateAreaDTO
+  ) {
     return this.areaService.createArea(currentUser, createAreaDto);
   }
 
+  @Throttle({ medium: { limit: 120, ttl: 60000 } })
   @Get()
   getAllAreas(@Query() query: QueryAreaDto) {
     return this.areaService.getAllAreas(query);
   }
 
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Put("/:id/delete")
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   softDeleteArea(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
-    @Body() dto: SoftDeleteAreaDTO,
+    @Body() dto: SoftDeleteAreaDTO
   ) {
     return this.areaService.softDeleteArea(currentUser, id, dto);
   }
 
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   @Put("/:id")
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   updateArea(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
-    @Body() dto: UpdateAreaDTO,
+    @Body() dto: UpdateAreaDTO
   ) {
     return this.areaService.updateArea(currentUser, id, dto);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Get("/:id")
   getAreaById(@Param("id") id: string) {

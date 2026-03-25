@@ -8,10 +8,11 @@ import {
   Param,
   Query,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { UserService } from "./user.service";
 import { RolesGuard } from "@src/guards/role.guard";
 import { AuthGuard } from "@nestjs/passport";
-import { ApiBearerAuth } from "@nestjs/swagger";
+import { ApiCookieAuth } from "@nestjs/swagger";
 import { QueryUserDTO } from "./dto/query-user.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
@@ -20,17 +21,22 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 
 @Controller("user")
 export class UserController {
-  constructor(private readonly userService: UserService) { }
+  constructor(private readonly userService: UserService) {}
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Patch("/update-profile")
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
-  updateProfileUser(@CurrentUser() user: JwtPayload, @Body() data: UpdateUserDto) {
+  updateProfileUser(
+    @CurrentUser() user: JwtPayload,
+    @Body() data: UpdateUserDto
+  ) {
     return this.userService.updateProfileUser(user.userId, data);
   }
 
+  @Throttle({ medium: { limit: 120, ttl: 60000 } })
   @Get("/spending")
   @UseGuards(AuthGuard("jwt"))
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   getUserSpending(
     @CurrentUser() user: JwtPayload,
     @Query() query: UserSpendingQueryDto
@@ -62,17 +68,19 @@ export class UserController {
     return this.userService.getTotalUserSpending(userId);
   }
 
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("/getAllUser")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @HttpCode(200)
   async getAllUser(@Query() query: QueryUserDTO) {
     return this.userService.getAllUser(query);
   }
 
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("/:id")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @HttpCode(200)
   async getUserById(@Param("id") id: string) {
     return this.userService.getUserById(id);

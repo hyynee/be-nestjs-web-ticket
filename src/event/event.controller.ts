@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { EventService } from "./event.service";
-import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { ApiCookieAuth, ApiTags } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
 import { CreateEventDTO } from "./dto/create-event.dto";
@@ -23,42 +23,40 @@ import { Throttle } from "@nestjs/throttler";
 @ApiTags("Event")
 @Controller("event")
 export class EventController {
-  constructor(private readonly eventService: EventService) { }
+  constructor(private readonly eventService: EventService) {}
 
-  @Throttle({ default: { limit: 20, ttl: 60000 } })
-  @ApiBearerAuth()
+  @Throttle({ medium: { limit: 120, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(OptionalJwtAuthGuard)
   @Get()
-  getEvents(
-    @Query() query: QueryEventDTO,
-    @CurrentUser() user?: JwtPayload,
-  ) {
+  getEvents(@Query() query: QueryEventDTO, @CurrentUser() user?: JwtPayload) {
     return this.eventService.getEvents(query, user);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(OptionalJwtAuthGuard)
   @Get(":id/zones")
-  getEventZones(
-    @Param("id") id: string,
-    @CurrentUser() user?: JwtPayload,
-  ) {
+  getEventZones(@Param("id") id: string, @CurrentUser() user?: JwtPayload) {
     return this.eventService.getEventZones(id, user);
   }
 
-  @Get(":id")
-  async getEventById(@Param("id") id: string) {
-    return this.eventService.getActiveEventById(id);
-  }
-
-  @ApiBearerAuth()
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Get("admin/deleted")
   async getDeletedEvents() {
     return this.eventService.getDeletedEvents();
   }
 
-  @ApiBearerAuth()
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @Get(":id")
+  async getEventById(@Param("id") id: string) {
+    return this.eventService.getActiveEventById(id);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Post("create")
   async createEvent(
@@ -68,7 +66,8 @@ export class EventController {
     return this.eventService.createEvent(currentUser, CreateEventDTO);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Put("update/:id")
   async updateEvent(
@@ -79,19 +78,19 @@ export class EventController {
     return this.eventService.updateEvent(currentUser, id, updateEventDTO);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Put("delete/:id")
   async deleteEvent(@Param("id") id: string) {
     return this.eventService.deleteEvent(id);
   }
 
-  @ApiBearerAuth()
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
   @Put("restore/:id")
   async restoreEvent(@Param("id") id: string) {
     return this.eventService.restoreEvent(id);
   }
-
-
 }

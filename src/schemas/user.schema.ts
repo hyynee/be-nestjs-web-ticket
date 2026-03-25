@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 // user.schema.ts
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document } from "mongoose";
@@ -7,7 +8,7 @@ export class User extends Document {
   @Prop({ required: true, unique: true })
   email: string;
 
-  @Prop()
+  @Prop({ select: false })
   password: string;
 
   @Prop()
@@ -27,7 +28,7 @@ export class User extends Document {
 
   @Prop({ default: "user", enum: ["user", "organizer", "admin"] })
   role: string;
-  async comparePassword(password: string): Promise<boolean> {
+  comparePassword(password: string): boolean {
     return bcrypt.compareSync(password, this.password);
   }
 }

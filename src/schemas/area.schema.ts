@@ -19,18 +19,27 @@ export class Area {
   isDeleted: boolean;
 
   @Prop({ type: String })
-rowLabel?: string; 
+  rowLabel?: string;
 
-@Prop({ type: Number })
-seatCount?: number; 
+  @Prop({ type: Number })
+  seatCount?: number;
 
-@Prop([String])
-seats?: string[];
+  @Prop([String])
+  seats?: string[];
+
+  @Prop({ type: Types.ObjectId, ref: "User" })
+  createdBy?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: "User" })
+  updatedBy?: Types.ObjectId;
 }
 
 export const AreaSchema = SchemaFactory.createForClass(Area);
 
 // Index
 AreaSchema.index({ eventId: 1, zoneId: 1 });
-AreaSchema.index({ zoneId: 1, name: 1 }, { unique: true });
+AreaSchema.index(
+  { zoneId: 1, name: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 AreaSchema.index({ isDeleted: 1 });

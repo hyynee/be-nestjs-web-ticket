@@ -1,25 +1,73 @@
-
 const envConfig = {
-  MONGODB_URI: process.env.MONGODB_URI || "",
-  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || "",
-  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || "",
-  GOOGLE_CALLBACK_URL: process.env.GOOGLE_CALLBACK_URL || "",
-  FRONTEND_URL: process.env.FRONTEND_URL || "",
-  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || "",
-  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || "",
-  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || "",
-  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || "",
-  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || "",
-  PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID || "",
-  PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET || "",
-  SECRET_KEY: process.env.SECRET_KEY || "your-secret-key",
-  SMTP_HOST: process.env.SMTP_HOST || "",
-  SMTP_PORT: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587,
-  SMTP_USER: process.env.SMTP_USER || "",
-  SMTP_PASS: process.env.SMTP_PASS || "",
-  OLLAMA_URL: process.env.OLLAMA_URL || "",
-  OLLAMA_MODEL: process.env.OLLAMA_MODEL || "",
+  get NODE_ENV() {
+    return process.env.NODE_ENV as string;
+  },
+  get MONGODB_URI() {
+    return process.env.MONGODB_URI as string;
+  },
+  get GOOGLE_CLIENT_ID() {
+    return process.env.GOOGLE_CLIENT_ID as string;
+  },
+  get GOOGLE_CLIENT_SECRET() {
+    return process.env.GOOGLE_CLIENT_SECRET as string;
+  },
+  get GOOGLE_CALLBACK_URL() {
+    return process.env.GOOGLE_CALLBACK_URL as string;
+  },
+  get FRONTEND_URL() {
+    return process.env.FRONTEND_URL as string;
+  },
+  get CLOUDINARY_CLOUD_NAME() {
+    return process.env.CLOUDINARY_CLOUD_NAME as string;
+  },
+  get CLOUDINARY_API_KEY() {
+    return process.env.CLOUDINARY_API_KEY as string;
+  },
+  get CLOUDINARY_API_SECRET() {
+    return process.env.CLOUDINARY_API_SECRET as string;
+  },
+  get STRIPE_SECRET_KEY() {
+    return process.env.STRIPE_SECRET_KEY as string;
+  },
+  get STRIPE_WEBHOOK_SECRET() {
+    return process.env.STRIPE_WEBHOOK_SECRET as string;
+  },
+  get PAYPAL_CLIENT_ID() {
+    return process.env.PAYPAL_CLIENT_ID as string;
+  },
+  get PAYPAL_CLIENT_SECRET() {
+    return process.env.PAYPAL_CLIENT_SECRET as string;
+  },
+  get SECRET_KEY() {
+    return process.env.SECRET_KEY as string;
+  },
+  get SMTP_HOST() {
+    return process.env.SMTP_HOST as string;
+  },
+  get SMTP_PORT() {
+    return process.env.SMTP_PORT as string;
+  },
+  get SMTP_USER() {
+    return process.env.SMTP_USER as string;
+  },
+  get SMTP_PASS() {
+    return process.env.SMTP_PASS as string;
+  },
+  get OLLAMA_URL() {
+    return process.env.OLLAMA_URL as string;
+  },
+  get OLLAMA_MODEL() {
+    return process.env.OLLAMA_MODEL as string;
+  },
+  get AUTH_COOKIE_SECURE() {
+    return process.env.AUTH_COOKIE_SECURE as string;
+  },
+  get AUTH_COOKIE_SAME_SITE() {
+    return process.env.AUTH_COOKIE_SAME_SITE as string;
+  },
+  get AUTH_COOKIE_DOMAIN() {
+    return process.env.AUTH_COOKIE_DOMAIN as string;
+  },
 };
 
 export default envConfig;
-

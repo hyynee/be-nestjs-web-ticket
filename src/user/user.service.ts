@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable, NotFoundException, Inject } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
@@ -5,37 +6,31 @@ import { Model, Types } from "mongoose";
 import { QueryUserDTO } from "./dto/query-user.dto";
 import { Payment } from "@src/schemas/payment.schema";
 import { UpdateUserDto } from "./dto/update-user.dto";
-import { v2 as cloudinary } from 'cloudinary';
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
-
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
-  ) { }
+    @Inject(CACHE_MANAGER) private cacheManager: Cache
+  ) {}
   private generateCacheKeyForUser(userId: string): string {
     return `user:details:${userId}`;
-  };
+  }
 
   async updateProfileUser(userId: string, data: UpdateUserDto) {
-    const updatedUser = await this.userModel.findByIdAndUpdate(
-      userId,
-      { $set: data },
-      { new: true },
-    )
-    .select('-password');
+    const updatedUser = await this.userModel
+      .findByIdAndUpdate(userId, { $set: data }, { new: true })
+      .select("-password");
     if (!updatedUser) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException("User not found");
     }
     const cacheKey = this.generateCacheKeyForUser(userId);
     await this.cacheManager.del(cacheKey);
 
     return updatedUser;
   }
-
 
   private async calculateSpending(
     userId: string,
@@ -165,6 +160,7 @@ export class UserService {
     const [users, total] = await Promise.all([
       this.userModel
         .find(filter)
+        .select("-password")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -183,7 +179,7 @@ export class UserService {
   }
 
   async getUserById(id: string) {
-    const user = await this.userModel.findById(id);
+    const user = await this.userModel.findById(id).select("-password");
     if (!user) {
       throw new NotFoundException("User not found");
     }

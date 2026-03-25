@@ -8,9 +8,8 @@ export class SoftDeleteAreaDTO {
 }
 
 export class UpdateAreaDTO {
-  
   @ApiProperty({ description: "ID khu vực", required: false })
-   @IsOptional()
+  @IsOptional()
   @IsString()
   zoneId?: string;
   @ApiProperty({ description: "Tên khu vực" })

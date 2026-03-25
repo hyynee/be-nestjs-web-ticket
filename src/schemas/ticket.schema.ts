@@ -73,7 +73,6 @@ TicketSchema.virtual("isValid").get(function () {
 });
 
 // Indexes
-TicketSchema.index({ ticketCode: 1 }, { unique: true });
 TicketSchema.index({ eventId: 1, status: 1, isDeleted: 1 });
 TicketSchema.index({ userId: 1, isDeleted: 1 });
 TicketSchema.index({ bookingId: 1 });

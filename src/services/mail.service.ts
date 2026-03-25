@@ -1,7 +1,9 @@
 // mail.service.ts
-import { Injectable } from "@nestjs/common";
+import { Injectable, Inject, forwardRef } from "@nestjs/common";
+import { QueueService } from "@src/queue/queue.service";
 import config from "@src/config/config";
 import * as nodemailer from "nodemailer";
+import { Transporter } from "nodemailer";
 
 interface BookingConfirmationData {
   email: string;
@@ -24,12 +26,14 @@ interface BookingConfirmationData {
 
 @Injectable()
 export class MailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: Transporter;
 
-  constructor() {
+  constructor(
+    @Inject(forwardRef(() => QueueService)) private readonly queueService: QueueService
+  ) {
     this.transporter = nodemailer.createTransport({
-      host: config.SMTP_HOST || "smtp.gmail.com",
-      port: config.SMTP_PORT || 587,
+      host: config.SMTP_HOST,
+      port: Number(config.SMTP_PORT),
       secure: false,
       auth: {
         user: config.SMTP_USER,
@@ -56,9 +60,12 @@ export class MailService {
     });
   }
 
-  private buildQrAttachment(ticketCode: string, qrCode: string): {
+  private buildQrAttachment(
+    ticketCode: string,
+    qrCode: string
+  ): {
     cid: string;
-    attachment?: nodemailer.Attachment;
+    attachment?: any;
     src: string;
   } {
     if (!qrCode) {
@@ -94,33 +101,29 @@ export class MailService {
   }
 
   async sendRegisterEmail(to: string, fullName: string) {
-    const mailOptions = {
-      from: 'Auth-backend service',
-      to: to,
-      subject: 'Welcome to Our Service',
-      html: `<p>Dear ${fullName},</p>
-             <p>Your account has been successfully created.</p>
-             <p>Please log in and change your password as soon as possible.</p>
-             <p>Best regards,<br/>Auth-backend Team</p>`,
-    };
-    try { 
-      await this.transporter.sendMail(mailOptions);
-    } catch (error) {
-      console.error('Error sending email:', error);
-    };
+    // Offload to queue
+    await this.queueService.addJob({
+      type: "send-register-email",
+      payload: { to, fullName },
+      requestedAt: new Date().toISOString(),
+    });
+    // Optionally, return immediately
+    return { status: "queued" };
   }
-  async sendPasswordResetEmail(to: string, resetToken: string) {
-    const resetLink = `${config.FRONTEND_URL}/reset-password?token=${resetToken}`;
+  async sendPasswordResetEmail(to: string, resetTokenOrLink: string) {
+    const resetLink = /^https?:\/\//i.test(resetTokenOrLink)
+      ? resetTokenOrLink
+      : `${config.FRONTEND_URL}/reset-password?token=${resetTokenOrLink}`;
     const mailOptions = {
-      from: 'Auth-backend service',
+      from: "Auth-backend service",
       to: to,
-      subject: 'Password Reset Request',
+      subject: "Password Reset Request",
       html: `<p>You requested a password reset. Click the link below to reset your password:</p><p><a href="${resetLink}">Reset Password</a></p>`,
     };
     try {
       await this.transporter.sendMail(mailOptions);
     } catch (error) {
-      console.error('Error sending email:', error);
+      console.error("Error sending email:", error);
     }
   }
 
@@ -142,11 +145,14 @@ export class MailService {
     const formattedDate = this.formatDate(eventDate);
     const formattedPrice = this.formatPrice(totalPrice);
 
-    const attachments: nodemailer.Attachment[] = [];
+    const attachments: any[] = [];
 
     const ticketsHtml = tickets
       .map((ticket, index) => {
-        const qrAsset = this.buildQrAttachment(ticket.ticketCode, ticket.qrCode);
+        const qrAsset = this.buildQrAttachment(
+          ticket.ticketCode,
+          ticket.qrCode
+        );
         if (qrAsset.attachment) {
           attachments.push(qrAsset.attachment);
         }
@@ -161,10 +167,11 @@ export class MailService {
           <div>
             <h3 style="margin: 0 0 10px 0; color: #111827;">Vé ${index + 1}</h3>
             <p><strong>Mã vé:</strong> ${ticket.ticketCode}</p>
-            ${ticket.seatNumber
-            ? `<p><strong>Ghế:</strong> ${ticket.seatNumber}</p>`
-            : ""
-          }
+            ${
+              ticket.seatNumber
+                ? `<p><strong>Ghế:</strong> ${ticket.seatNumber}</p>`
+                : ""
+            }
           </div>
           <div style="text-align: center;">
             ${qrSection}
@@ -172,7 +179,7 @@ export class MailService {
           </div>
         </div>
       </div>
-    `
+    `;
       })
       .join("");
 
@@ -190,10 +197,11 @@ export class MailService {
             <p><strong>Địa điểm:</strong> ${eventLocation}</p>
             <p><strong>Thời gian:</strong> ${formattedDate}</p>
             <p><strong>Khu vực:</strong> ${zoneName}</p>
-            ${seats.length
-        ? `<p><strong>Ghế:</strong> ${seats.join(", ")}</p>`
-        : `<p><strong>Số lượng vé:</strong> ${quantity}</p>`
-      }
+            ${
+              seats.length
+                ? `<p><strong>Ghế:</strong> ${seats.join(", ")}</p>`
+                : `<p><strong>Số lượng vé:</strong> ${quantity}</p>`
+            }
             <p style="font-size:18px;"><strong>Tổng tiền:</strong> ${formattedPrice}</p>
           </div>
 
@@ -262,11 +270,10 @@ export class MailService {
       html: `
         <p>Xin chào ${data.customerName},</p>
         <p>Đặt vé ${data.bookingCode} cho sự kiện ${data.eventTitle} đã được hủy.</p>
-        ${data.refundAmount
-          ? `<p>Số tiền hoàn lại: ${this.formatPrice(
-            data.refundAmount
-          )}</p>`
-          : ""
+        ${
+          data.refundAmount
+            ? `<p>Số tiền hoàn lại: ${this.formatPrice(data.refundAmount)}</p>`
+            : ""
         }
       `,
     });

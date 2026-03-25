@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Injectable, HttpStatus } from "@nestjs/common";
 import {
   ApiResponse,

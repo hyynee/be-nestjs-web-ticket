@@ -15,7 +15,7 @@ import { RegisterDTO } from "./dto/create.dto";
 import { AuthGuard } from "@nestjs/passport";
 import { CurrentUser } from "./decorator/currentUser.decorator";
 import {
-  ApiBearerAuth,
+  ApiCookieAuth,
   ApiTags,
   ApiOperation,
   ApiResponse,
@@ -33,8 +33,7 @@ import type { Request, Response } from "express";
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-
-  @Throttle({ medium: { limit: 10, ttl: 60000 } })
+  @Throttle({ short: { limit: 3, ttl: 60000 } })
   @Post("register")
   @ApiOperation({ summary: "Đăng ký người dùng mới" })
   @ApiResponse({ status: 201, description: "Đăng ký thành công" })
@@ -80,26 +79,28 @@ export class AuthController {
   }
 
   @Get("status")
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @ApiOperation({ summary: "Kiểm tra trạng thái đăng nhập" })
   @ApiResponse({ status: 200, description: "Trạng thái đăng nhập" })
-  async status() {
+  status() {
     return this.authService.status();
   }
 
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   @Post("refresh-token")
+  @ApiCookieAuth("refresh_token")
   @ApiOperation({ summary: "Làm mới JWT token" })
-  refreshToken(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response
-  ) {
-    const refreshToken = req.cookies?.refresh_token;
+  refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const refreshToken =
+      typeof req.cookies?.refresh_token === "string"
+        ? req.cookies.refresh_token
+        : "";
     return this.authService.refreshToken(refreshToken, res);
   }
 
   @Get("me")
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @ApiOperation({ summary: "Lấy thông tin người dùng hiện tại" })
   getCurrentUser(@CurrentUser() currentUser: JwtPayload) {
@@ -108,19 +109,18 @@ export class AuthController {
   }
 
   @Post("logout")
-  @ApiBearerAuth()
-  @UseGuards(AuthGuard("jwt"))
+  @ApiCookieAuth("refresh_token")
   @ApiOperation({ summary: "Đăng xuất người dùng" })
-  logout(
-    @CurrentUser() currentUser: JwtPayload,
-    @Res({ passthrough: true }) res: Response
-  ) {
-    const userId = currentUser.userId;
-    return this.authService.logout(userId, res);
+  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const refreshToken =
+      typeof req.cookies?.refresh_token === "string"
+        ? req.cookies.refresh_token
+        : undefined;
+    return this.authService.logout(refreshToken, res);
   }
 
   @Put("change-password")
-  @ApiBearerAuth()
+  @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @ApiOperation({ summary: "Thay đổi mật khẩu người dùng" })
   changePassword(
@@ -131,20 +131,17 @@ export class AuthController {
     return this.authService.changePassword(userId, data);
   }
 
-
+  @Throttle({ short: { limit: 2, ttl: 60000 } })
   @HttpCode(200)
-  @Post('/forgotPassword')
-  async forgotPassword(
-    @Body() forgotPassword: ForgotPassword
-  ) {
+  @Post("/forgotPassword")
+  async forgotPassword(@Body() forgotPassword: ForgotPassword) {
     return this.authService.forgotPassword(forgotPassword.email);
   }
 
+  @Throttle({ short: { limit: 3, ttl: 60000 } })
   @HttpCode(200)
-  @Put('/resetPassword')
-  async resetPassword(
-    @Body() data: ResetPasswordDto
-  ) {
+  @Put("/resetPassword")
+  async resetPassword(@Body() data: ResetPasswordDto) {
     return this.authService.resetPassword(data);
   }
 }

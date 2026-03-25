@@ -3,7 +3,6 @@ import { IsEmail } from "class-validator";
 import { Matches } from "class-validator";
 import { MinLength } from "class-validator";
 import { IsString } from "class-validator";
-import { IsOptional } from "class-validator";
 
 export class RegisterDTO {
   @ApiProperty()
@@ -31,8 +30,4 @@ export class RegisterDTO {
       "Password must contain at least one uppercase letter, one lowercase letter, and one number",
   })
   confirmPassword: string;
-
-  @IsOptional()
-  @IsString()
-  role?: string;
 }

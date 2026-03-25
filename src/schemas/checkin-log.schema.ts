@@ -1,12 +1,12 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Types } from 'mongoose';
+import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { Types } from "mongoose";
 
 @Schema({ timestamps: true })
 export class CheckInLog {
-  @Prop({ type: Types.ObjectId, ref: 'Ticket', required: true, index: true })
+  @Prop({ type: Types.ObjectId, ref: "Ticket", required: true, index: true })
   ticketId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: "User", required: true })
   adminId: Types.ObjectId;
 
   @Prop()

@@ -9,6 +9,17 @@ export class UpdateZoneDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @ApiProperty({ description: "Mô tả khu vực", required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ description: "Zone có ghế ngồi hay không", required: false })
+  @IsOptional()
+  @IsBoolean()
+  hasSeating?: boolean;
+
   @IsBoolean()
   @IsOptional()
   isDeleted?: boolean;
