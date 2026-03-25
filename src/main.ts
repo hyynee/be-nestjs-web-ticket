@@ -58,7 +58,7 @@ async function bootstrap() {
    app.use(express.static("."));
   app.use(cookieParser());
 
- app.use("/payment/webhook", bodyParser.raw({ type: "application/json" }));
+ app.use("/payment/webhook", bodyParser.raw({ type: "*/*" }));
 
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
