@@ -52,13 +52,17 @@ export function validateEnvironment(env: EnvMap): EnvMap {
     "SMTP_PASS",
     "REDIS_HOST",
     "REDIS_PORT",
-    "REDIS_PASSWORD",
     "OLLAMA_URL",
     "OLLAMA_MODEL",
   ];
 
   for (const key of requiredStringKeys) {
     requireString(env, key);
+  }
+
+  // REDIS_PASSWORD is optional: only check if set
+  if (env.REDIS_PASSWORD !== undefined && env.REDIS_PASSWORD !== "") {
+    requireString(env, "REDIS_PASSWORD");
   }
 
   requireNumber(env, "PORT");

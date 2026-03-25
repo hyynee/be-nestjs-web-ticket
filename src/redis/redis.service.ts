@@ -28,14 +28,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       throw new Error("[Redis] REDIS_DB must be a valid number");
     }
 
-    this.client = createClient({
+    const redisOptions: any = {
       socket: {
         host,
         port,
       },
-      password,
       database,
-    });
+    };
+    if (password) {
+      redisOptions.password = password;
+    }
+    this.client = createClient(redisOptions);
 
     this.client.on("error", (err) => {
       this.logger.error(`[Redis] error: ${err?.message || err}`);
