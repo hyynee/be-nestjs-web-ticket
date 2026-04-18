@@ -33,6 +33,7 @@ import type {
 } from "./types/payment.types";
 import type { QueryPaymentHistoryDto } from "./dto/query-payment-history.dto";
 import { ZoneGateway } from "@src/zone/zone.gateway";
+import { UserEventsService } from "@src/events/user-event.services";
 
 const paypalSdk = paypal as unknown as PaypalSdk;
 
@@ -49,7 +50,8 @@ export class PaymentService {
     private ticketService: TicketService,
     private mailService: MailService,
     private readonly redisService: RedisService,
-    private readonly zoneGateway: ZoneGateway
+    private readonly zoneGateway: ZoneGateway,
+    private readonly userEventsService: UserEventsService
   ) {
     this.stripe = new Stripe(config.STRIPE_SECRET_KEY);
     const isProduction = process.env.NODE_ENV === "production";
@@ -556,7 +558,7 @@ export class PaymentService {
     }));
 
     try {
-      await this.mailService.sendBookingConfirmation({
+      this.userEventsService.emitSendBookingConfirmation({
         email:
           session.customer_details?.email || confirmedBooking.customerEmail,
         customerName:
@@ -802,7 +804,7 @@ export class PaymentService {
     }));
 
     try {
-      await this.mailService.sendBookingConfirmation({
+      this.userEventsService.emitSendBookingConfirmation({
         email: confirmedBooking.customerEmail,
         customerName: confirmedBooking.customerName || "Khách hàng",
         bookingCode: confirmedBooking.bookingCode,

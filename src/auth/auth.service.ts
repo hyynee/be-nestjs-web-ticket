@@ -26,7 +26,7 @@ import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
 import { v2 as cloudinary } from "cloudinary";
 import { RedisService } from "@src/redis/redis.service";
-import { CookieOptions, Response } from "express";
+import { CookieOptions, Response, Request } from "express";
 
 type GoogleProfile = {
   email?: string;
@@ -86,7 +86,9 @@ export class AuthService {
   }
 
   private getCookieSameSite(): "lax" | "strict" | "none" {
-    const rawValue = String(envConfig.AUTH_COOKIE_SAME_SITE || "lax").toLowerCase();
+    const rawValue = String(
+      envConfig.AUTH_COOKIE_SAME_SITE || "lax"
+    ).toLowerCase();
     if (rawValue === "lax" || rawValue === "strict" || rawValue === "none") {
       return rawValue;
     }
@@ -303,8 +305,35 @@ export class AuthService {
     return { message: "Token refreshed successfully" };
   }
 
-  async logout(refreshToken: string | undefined, res: Response) {
+  async logout(refreshToken: string | undefined, res: Response, req: Request) {
     this.clearTokenCookies(res);
+
+    const accessToken = req.cookies?.access_token;
+
+    if (accessToken) {
+      try {
+        const decoded = this.jwtService.decode(accessToken) as {
+          exp?: number;
+        } | null;
+
+        const now = Math.floor(Date.now() / 1000);
+
+        const ttl =
+          decoded?.exp && decoded.exp > now ? decoded.exp - now : 60 * 60;
+
+        await this.redisService.client.set(
+          `blacklist:access:${accessToken}`,
+          "1",
+          { EX: ttl }
+        );
+      } catch {
+        await this.redisService.client.set(
+          `blacklist:access:${accessToken}`,
+          "1",
+          { EX: 60 * 60 }
+        );
+      }
+    }
 
     if (!refreshToken) {
       return { message: "Logged out successfully" };
@@ -314,12 +343,10 @@ export class AuthService {
       this.getRefreshTokenKey(refreshToken)
     );
 
-    if (!userId) {
-      return { message: "Logged out successfully" };
+    if (userId) {
+      await this.revokeAllUserRefreshTokens(userId);
+      await this.invalidateUserCache(userId);
     }
-
-    await this.revokeAllUserRefreshTokens(userId);
-    await this.invalidateUserCache(userId);
 
     return { message: "Logged out successfully" };
   }
@@ -400,8 +427,13 @@ export class AuthService {
       expiresAt,
       isUsed: false,
     });
-    const resetLink = `${envConfig.FRONTEND_URL}/reset-password?token=${resetToken}`;
-    await this.mailService.sendPasswordResetEmail(user.email, resetLink);
+    this.userEventsService.emitPasswordResetRequested(
+      user.email,
+      resetToken,
+      user.fullName
+    );
+    // const resetLink = `${envConfig.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    // await this.mailService.sendPasswordResetEmail(user.email, resetLink);
     return {
       message: "Password reset link has been sent to your email.",
     };

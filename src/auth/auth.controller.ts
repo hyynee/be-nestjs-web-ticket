@@ -116,7 +116,8 @@ export class AuthController {
       typeof req.cookies?.refresh_token === "string"
         ? req.cookies.refresh_token
         : undefined;
-    return this.authService.logout(refreshToken, res);
+
+    return this.authService.logout(refreshToken, res, req);
   }
 
   @Put("change-password")

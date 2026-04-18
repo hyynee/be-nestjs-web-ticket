@@ -14,7 +14,6 @@ import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import * as QRCode from "qrcode";
 import { TicketGateway } from "./ticket.gateway";
 import { CheckInLog } from "@src/schemas/checkin-log.schema";
-import { UploadService } from "@src/upload/upload.service";
 import { QueryTicketDto } from "./dto/query.dto";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
 import type {
@@ -35,7 +34,6 @@ export class TicketService {
     @InjectModel(CheckInLog.name) private checkInLogModel: Model<CheckInLog>,
     private ticketGateway: TicketGateway,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
-    private readonly uploadService: UploadService
   ) {}
 
   private generateListCacheKey(query: QueryTicketDto): string {

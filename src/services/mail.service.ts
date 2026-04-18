@@ -4,32 +4,15 @@ import { QueueService } from "@src/queue/queue.service";
 import config from "@src/config/config";
 import * as nodemailer from "nodemailer";
 import { Transporter } from "nodemailer";
-
-interface BookingConfirmationData {
-  email: string;
-  customerName: string;
-  bookingCode: string;
-  eventTitle: string;
-  eventLocation: string;
-  eventDate: Date;
-  zoneName: string;
-  seats: string[];
-  quantity: number;
-  totalPrice: number;
-  currency: string;
-  tickets?: Array<{
-    ticketCode: string;
-    seatNumber?: string;
-    qrCode: string;
-  }>;
-}
+import { BookingConfirmationData } from "@src/types/booking-modules";
 
 @Injectable()
 export class MailService {
   private transporter: Transporter;
 
   constructor(
-    @Inject(forwardRef(() => QueueService)) private readonly queueService: QueueService
+    @Inject(forwardRef(() => QueueService))
+    private readonly queueService: QueueService
   ) {
     this.transporter = nodemailer.createTransport({
       host: config.SMTP_HOST,
@@ -110,21 +93,17 @@ export class MailService {
     // Optionally, return immediately
     return { status: "queued" };
   }
-  async sendPasswordResetEmail(to: string, resetTokenOrLink: string) {
-    const resetLink = /^https?:\/\//i.test(resetTokenOrLink)
-      ? resetTokenOrLink
-      : `${config.FRONTEND_URL}/reset-password?token=${resetTokenOrLink}`;
-    const mailOptions = {
-      from: "Auth-backend service",
-      to: to,
-      subject: "Password Reset Request",
-      html: `<p>You requested a password reset. Click the link below to reset your password:</p><p><a href="${resetLink}">Reset Password</a></p>`,
-    };
-    try {
-      await this.transporter.sendMail(mailOptions);
-    } catch (error) {
-      console.error("Error sending email:", error);
-    }
+  async sendPasswordResetEmail(
+    email: string,
+    resetToken: string,
+    fullName: string
+  ) {
+    await this.queueService.addJob({
+      type: "send-password-reset",
+      payload: { email, resetToken, fullName },
+      requestedAt: new Date().toISOString(),
+    });
+    return { status: "queued" };
   }
 
   async sendBookingConfirmation(data: BookingConfirmationData) {

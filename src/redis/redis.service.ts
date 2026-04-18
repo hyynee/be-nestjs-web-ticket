@@ -6,6 +6,7 @@ import {
   OnModuleInit,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 import { RedisClientType, createClient } from "redis";
 
 @Injectable()
@@ -41,7 +42,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.client = createClient(redisOptions);
 
     this.client.on("error", (err) => {
-      this.logger.error(`[Redis] error: ${err?.message || err}`);
+      this.logger.error(`[Redis] error: ${getErrorMessage(err)}`);
     });
   }
 
@@ -52,7 +53,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       const isProduction =
         this.configService.get<string>("NODE_ENV") === "production";
-      const message = `[Redis] connect failed: ${err?.message || err}`;
+      const message = `[Redis] connect failed: ${getErrorMessage(err)}`;
       this.logger.error(message);
 
       if (isProduction) {
