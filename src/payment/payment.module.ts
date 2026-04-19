@@ -9,6 +9,7 @@ import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 import { TicketModule } from "@src/ticket/ticket.module";
 import { MailModule } from "@src/services/mail.module";
 import { ZoneModule } from "@src/zone/zone.module";
+import { EventsModule } from "@src/events/events.module";
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -20,6 +21,7 @@ import { ZoneModule } from "@src/zone/zone.module";
     TicketModule,
     MailModule,
     ZoneModule,
+    EventsModule,
   ],
   controllers: [PaymentController],
   providers: [PaymentService],
