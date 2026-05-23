@@ -12,9 +12,10 @@ export class UpdateAreaDTO {
   @IsOptional()
   @IsString()
   zoneId?: string;
-  @ApiProperty({ description: "Tên khu vực" })
+  @ApiProperty({ description: "Tên khu vực", required: false })
   @IsString()
-  name: string;
+  @IsOptional()
+  name?: string;
   @ApiProperty({ description: "Mô tả khu vực", required: false })
   @IsString()
   @IsOptional()

@@ -20,6 +20,9 @@ export class Zone extends Document {
   capacity: number;
 
   @Prop({ type: Number, default: 0, min: 0 })
+  currentTotalSeats: number;
+
+  @Prop({ type: Number, default: 0, min: 0 })
   soldCount: number;
 
   @Prop({ default: 0 })

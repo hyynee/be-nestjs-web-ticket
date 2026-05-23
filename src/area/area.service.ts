@@ -13,95 +13,128 @@ import { RedisService } from "@src/redis/redis.service";
 import { InjectConnection } from "@nestjs/mongoose";
 import { Connection } from "mongoose";
 
+const ALLOWED_SORT_FIELDS = ["createdAt", "name", "seatCount", "updatedAt"] as const;
+type SortField = (typeof ALLOWED_SORT_FIELDS)[number];
+
 @Injectable()
 export class AreaService {
   private readonly CACHE_PREFIX = "areas:list";
-  private readonly CACHE_VERSION_KEY = "areas:cache:version";
-  // ✅ Fix 2: cache version in-process để giảm Redis hit
-  private versionCache: { value: number; expiresAt: number } | null = null;
-  private readonly VERSION_LOCAL_TTL_MS = 2000; 
+  private readonly SINGLE_CACHE_PREFIX = "area:";
 
   constructor(
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly redisService: RedisService,
-    @InjectConnection() private readonly connection: Connection, 
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
-  private async getCacheVersion(): Promise<number> {
-    const now = Date.now();
-    if (this.versionCache && this.versionCache.expiresAt > now) {
-      return this.versionCache.value;
+
+  private async scanKeys(pattern: string): Promise<string[]> {
+    const keys: string[] = [];
+    let cursor = 0;
+    do {
+      const result = await this.redisService.client.scan(cursor, { MATCH: pattern, COUNT: 100 });
+      cursor = result.cursor;
+      keys.push(...result.keys);
+    } while (cursor !== 0);
+    return keys;
+  }
+
+  private async invalidateAreaCache(areaId: string, zoneId?: string): Promise<void> {
+    const toDelete: Promise<any>[] = [
+      this.cacheManager.del(`${this.SINGLE_CACHE_PREFIX}${areaId}`),
+    ];
+
+    const globalKeys = await this.scanKeys(`${this.CACHE_PREFIX}:global:*`);
+    if (globalKeys.length > 0) toDelete.push(this.redisService.client.del(globalKeys));
+
+    if (zoneId) {
+      const zoneKeys = await this.scanKeys(`${this.CACHE_PREFIX}:zone:${zoneId}:*`);
+      if (zoneKeys.length > 0) toDelete.push(this.redisService.client.del(zoneKeys));
     }
-    const version = await this.redisService.client.get(this.CACHE_VERSION_KEY);
-    const parsed = version ? parseInt(version, 10) : 1;
-    this.versionCache = { value: parsed, expiresAt: now + this.VERSION_LOCAL_TTL_MS };
-    return parsed;
+
+    await Promise.all(toDelete);
   }
 
-  private async invalidateAreaCache(): Promise<void> {
-    await this.redisService.client.incr(this.CACHE_VERSION_KEY);
-    this.versionCache = null; 
+  private buildSortedHash(params: Record<string, unknown>): string {
+    const sorted = Object.fromEntries(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+    return Buffer.from(JSON.stringify(sorted)).toString("base64");
   }
 
-  private async generateListCacheKey(query: QueryAreaDto): Promise<string> {
-    const version = await this.getCacheVersion();
+  private generateListCacheKey(query: QueryAreaDto): string {
     const {
       zoneId, name, search, hasSeating, isDeleted,
       page = 1, limit = 10, sortBy = "createdAt", sortOrder = "desc",
     } = query;
-    return `${this.CACHE_PREFIX}:v${version}:zone=${zoneId || "all"}:name=${name || ""}:search=${search || ""}:hasSeating=${hasSeating ?? "all"}:isDeleted=${isDeleted ?? false}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+
+    const hash = this.buildSortedHash({
+      name, search, hasSeating, isDeleted, page, limit, sortBy, sortOrder,
+    });
+
+    return zoneId
+      ? `${this.CACHE_PREFIX}:zone:${zoneId}:${hash}`
+      : `${this.CACHE_PREFIX}:global:${hash}`;
   }
 
-  private getAreaSeatCount(area: {
-    seatCount?: number;
-    seats?: string[];
-  }): number {
-    if (area.seats && area.seats.length > 0) {
-      return area.seats.length;
-    }
+
+  private getAreaSeatCount(area: { seatCount?: number; seats?: string[] }): number {
+    if (area.seats && area.seats.length > 0) return area.seats.length;
     return area.seatCount ?? 0;
   }
 
-  private async validateZoneCapacity(
+  private async atomicCapacityIncrement(
     zoneId: Types.ObjectId,
-    nextAreaSeatCount: number,
-    excludeAreaId?: Types.ObjectId,
+    seatDelta: number,
     session?: ClientSession,
   ): Promise<void> {
-    const zone = await this.zoneModel
-      .findOne({ _id: zoneId, isDeleted: false })
-      .select("capacity")
-      .lean()
-      .session(session ?? null);
+    if (seatDelta === 0) return;
 
-    if (!zone) {
-      throw new BadRequestException("Zone not found or has been deleted");
+    if (seatDelta < 0) {
+      await this.zoneModel.updateOne(
+        { _id: zoneId, isDeleted: false },
+        { $inc: { currentTotalSeats: seatDelta } },
+        { session },
+      );
+      return;
     }
 
-    const activeAreas = await this.areaModel
-      .find({
-        zoneId,
+    const updated = await this.zoneModel.findOneAndUpdate(
+      {
+        _id: zoneId,
         isDeleted: false,
-        ...(excludeAreaId ? { _id: { $ne: excludeAreaId } } : {}),
-      })
-      .select("seatCount seats")
-      .lean()
-      .session(session ?? null);
-
-    const totalExistingSeats = activeAreas.reduce(
-      (sum, area) => sum + this.getAreaSeatCount(area),
-      0,
+        $expr: {
+          $lte: [
+            { $add: [{ $ifNull: ["$currentTotalSeats", 0] }, seatDelta] },
+            "$capacity",
+          ],
+        },
+      },
+      { $inc: { currentTotalSeats: seatDelta } },
+      { new: true, session },
     );
-    const totalSeatsAfterChange = totalExistingSeats + nextAreaSeatCount;
 
-    if (totalSeatsAfterChange > zone.capacity) {
+    if (!updated) {
+      const zone = await this.zoneModel
+        .findOne({ _id: zoneId, isDeleted: false })
+        .select("capacity currentTotalSeats")
+        .lean()
+        .session(session ?? null);
+
+      if (!zone) {
+        throw new BadRequestException("Zone not found or has been deleted");
+      }
+
       throw new BadRequestException(
-        `Total seats in areas (${totalSeatsAfterChange}) exceed zone capacity (${zone.capacity})`,
+        `Total seats (${(zone.currentTotalSeats ?? 0) + seatDelta}) would exceed zone capacity (${zone.capacity})`,
       );
     }
   }
+
 
   async createArea(
     currentUser: { userId: string },
@@ -112,50 +145,52 @@ export class AreaService {
     if (!Types.ObjectId.isValid(zoneId)) {
       throw new BadRequestException("Invalid zone ID");
     }
-
     if (typeof seatCount === "number" && seatCount <= 0) {
       throw new BadRequestException("Seat count must be greater than 0");
     }
-
-    if (typeof seatCount === "number" && seatCount > 0 && !rowLabel && (!seats || seats.length === 0)) {
+    if (
+      typeof seatCount === "number" && seatCount > 0 &&
+      !rowLabel && (!seats || seats.length === 0)
+    ) {
       throw new BadRequestException("rowLabel is required when seatCount is provided");
     }
 
+    const zoneObjectId = new Types.ObjectId(zoneId);
     const session = await this.connection.startSession();
+
     try {
-      let savedArea: Area;
+      let savedArea!: Area & { _id: Types.ObjectId };
 
       await session.withTransaction(async () => {
         const zone = await this.zoneModel
-          .findOne({ _id: new Types.ObjectId(zoneId), isDeleted: false })
+          .findOne({ _id: zoneObjectId, isDeleted: false })
           .select("eventId hasSeating")
           .lean()
           .session(session);
 
         if (!zone) throw new BadRequestException("Zone not found");
-        if (!zone.hasSeating) throw new BadRequestException("This zone does not support seats/areas");
+        if (!zone.hasSeating)
+          throw new BadRequestException("This zone does not support seats/areas");
 
         let finalSeats: string[] = seats ?? [];
-        if (finalSeats.length === 0 && typeof seatCount === "number" && seatCount > 0 && rowLabel) {
+        if (
+          finalSeats.length === 0 &&
+          typeof seatCount === "number" && seatCount > 0 && rowLabel
+        ) {
           finalSeats = Array.from(
             { length: seatCount },
-            (_, index) => `${rowLabel.toUpperCase()}${index + 1}`,
+            (_, i) => `${rowLabel.toUpperCase()}${i + 1}`,
           );
         }
 
         const normalizedSeatCount = this.getAreaSeatCount({ seatCount, seats: finalSeats });
 
-        await this.validateZoneCapacity(
-          new Types.ObjectId(zoneId),
-          normalizedSeatCount,
-          undefined,
-          session,
-        );
+        await this.atomicCapacityIncrement(zoneObjectId, normalizedSeatCount, session);
 
         const [area] = await this.areaModel.create(
           [{
             eventId: zone.eventId,
-            zoneId: new Types.ObjectId(zoneId),
+            zoneId: zoneObjectId,
             name: name.trim().toUpperCase(),
             description,
             rowLabel,
@@ -169,8 +204,8 @@ export class AreaService {
         savedArea = area;
       });
 
-      await this.invalidateAreaCache();
-      return savedArea!;
+      await this.invalidateAreaCache(savedArea._id.toString(), zoneId);
+      return savedArea;
     } catch (err) {
       if (err?.code === 11000) {
         throw new BadRequestException("Area name already exists in this zone");
@@ -183,44 +218,53 @@ export class AreaService {
 
   async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<Area>> {
     const {
-      zoneId, name, search, hasSeating, isDeleted,
-      page = 1, limit = 10, sortBy = "createdAt", sortOrder = "desc",
+      zoneId, name, search, hasSeating, isDeleted = false,
+      page = 1, limit = 10, sortOrder = "desc",
     } = query;
+
+    const sortBy: SortField = ALLOWED_SORT_FIELDS.includes(query.sortBy as SortField)
+      ? (query.sortBy as SortField)
+      : "createdAt";
 
     if (zoneId && !Types.ObjectId.isValid(zoneId)) {
       throw new BadRequestException("Invalid zone ID");
     }
 
-    const cacheKey = await this.generateListCacheKey(query);
+    const cacheKey = this.generateListCacheKey({ ...query, sortBy });
     const cachedData = await this.cacheManager.get<PaginatedResponse<Area>>(cacheKey);
     if (cachedData) return cachedData;
 
     const skip = (page - 1) * limit;
-    const filter: any = { isDeleted: isDeleted ?? false };
+    const match: any = { isDeleted };
+    const sort: any = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
 
-    if (zoneId) filter.zoneId = new Types.ObjectId(zoneId);
-    if (name) {
-      filter.name = { $regex: `^${name.trim().toUpperCase()}`, $options: "i" };
-    }
+    if (zoneId) match.zoneId = new Types.ObjectId(zoneId);
+    if (name) match.name = { $regex: `^${name.trim().toUpperCase()}`, $options: "i" };
     if (search) {
-      filter.$or = [
+      match.$or = [
         { name: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
       ];
     }
-    if (hasSeating === true) filter.seatCount = { $gt: 0 };
-    if (hasSeating === false) filter.seatCount = 0;
+    if (hasSeating === true) match.seatCount = { $gt: 0 };
+    if (hasSeating === false) match.seatCount = 0;
 
-    const sort: any = {};
-    sort[sortBy] = sortOrder === "asc" ? 1 : -1;
-
-    const [data, total] = await Promise.all([
-      this.areaModel.find(filter).select("-__v").sort(sort).skip(skip).limit(limit).lean().exec(),
-      this.areaModel.countDocuments(filter).exec(),
+    const result = await this.areaModel.aggregate([
+      { $match: match },
+      { $sort: sort },
+      {
+        $facet: {
+          data: [{ $skip: skip }, { $limit: limit }, { $project: { __v: 0 } }],
+          count: [{ $count: "total" }],
+        },
+      },
     ]);
 
+    const data = result[0].data;
+    const total = result[0].count[0]?.total ?? 0;
     const totalPages = Math.ceil(total / limit);
-    const result: PaginatedResponse<Area> = {
+
+    const paginatedResult: PaginatedResponse<Area> = {
       items: data,
       meta: {
         currentPage: page,
@@ -232,8 +276,8 @@ export class AreaService {
       },
     };
 
-    await this.cacheManager.set(cacheKey, result, 30000);
-    return result;
+    await this.cacheManager.set(cacheKey, paginatedResult, 30000);
+    return paginatedResult;
   }
 
   async softDeleteArea(
@@ -245,17 +289,36 @@ export class AreaService {
       throw new BadRequestException("Invalid area ID");
     }
 
-    const area = await this.areaModel.findOneAndUpdate(
-      { _id: id, isDeleted: !dto.isDeleted },
-      { isDeleted: dto.isDeleted, updatedBy: currentUser.userId },
-      { new: true },
-    );
+    const session = await this.connection.startSession();
 
-    if (!area) throw new BadRequestException("Area not found");
+    try {
+      let area: Area;
 
-    await this.invalidateAreaCache();
-    await this.cacheManager.del(`area:${id}`);
-    return area;
+      await session.withTransaction(async () => {
+        const found = await this.areaModel.findOneAndUpdate(
+          { _id: id, isDeleted: !dto.isDeleted },
+          { isDeleted: dto.isDeleted, updatedBy: currentUser.userId },
+          { new: true, session },
+        );
+
+        if (!found) throw new BadRequestException("Area not found");
+
+        const seatCount = found.seatCount ?? 0;
+
+        await this.atomicCapacityIncrement(
+          found.zoneId,
+          dto.isDeleted ? -seatCount : seatCount,
+          session,
+        );
+
+        area = found;
+      });
+
+      await this.invalidateAreaCache(id, area!.zoneId?.toString());
+      return area!;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async updateArea(
@@ -263,7 +326,7 @@ export class AreaService {
     id: string,
     dto: UpdateAreaDTO,
   ): Promise<Area> {
-    const { zoneId, name } = dto;
+    const { zoneId, name, description, rowLabel, seatCount, seats } = dto;
 
     if (zoneId && !Types.ObjectId.isValid(zoneId)) {
       throw new BadRequestException("Invalid zone ID");
@@ -271,22 +334,29 @@ export class AreaService {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException("Invalid area ID");
     }
-
-    if (typeof dto.seatCount === "number" && dto.seatCount <= 0) {
+    if (typeof seatCount === "number" && seatCount <= 0) {
       throw new BadRequestException("Seat count must be greater than 0");
     }
 
+    const areaId = new Types.ObjectId(id);
     const session = await this.connection.startSession();
+
     try {
-      let updatedArea: Area;
+      let updatedArea!: Area;
+      let oldZoneId: string | undefined;
 
       await session.withTransaction(async () => {
         const currentArea = await this.areaModel
-          .findOne({ _id: new Types.ObjectId(id), isDeleted: false })
+          .findOne({ _id: areaId, isDeleted: false })
           .session(session);
+
         if (!currentArea) throw new BadRequestException("Area not found or has been deleted");
 
+        oldZoneId = currentArea.zoneId.toString();
+
         const targetZoneId = zoneId ? new Types.ObjectId(zoneId) : currentArea.zoneId;
+        const isMovingZone =
+          zoneId && targetZoneId.toString() !== currentArea.zoneId.toString();
 
         const targetZone = await this.zoneModel
           .findOne({ _id: targetZoneId, isDeleted: false })
@@ -295,51 +365,42 @@ export class AreaService {
           .session(session);
 
         if (!targetZone) throw new BadRequestException("Zone not found or has been deleted");
-        if (!targetZone.hasSeating) throw new BadRequestException("Cannot move/update area in a zone without seating");
+        if (!targetZone.hasSeating)
+          throw new BadRequestException("Cannot move/update area in a zone without seating");
 
-        const nextRowLabel = dto.rowLabel ?? currentArea.rowLabel;
-        let nextSeats = dto.seats ?? currentArea.seats ?? [];
+        const nextRowLabel = rowLabel ?? currentArea.rowLabel;
+        let nextSeats = seats ?? currentArea.seats ?? [];
 
         if (
-          typeof dto.seatCount === "number" && dto.seatCount > 0 &&
-          (!nextRowLabel || nextRowLabel.trim().length === 0) &&
-          nextSeats.length === 0
+          typeof seatCount === "number" && seatCount > 0 &&
+          (!nextRowLabel || nextRowLabel.trim().length === 0) && nextSeats.length === 0
         ) {
           throw new BadRequestException("rowLabel is required when seatCount is provided");
         }
 
-        if (typeof dto.seatCount === "number" && dto.seatCount > 0 && nextSeats.length === 0 && nextRowLabel) {
+        if (
+          typeof seatCount === "number" && seatCount > 0 &&
+          nextSeats.length === 0 && nextRowLabel
+        ) {
           nextSeats = Array.from(
-            { length: dto.seatCount },
-            (_, index) => `${nextRowLabel.toUpperCase()}${index + 1}`,
+            { length: seatCount },
+            (_, i) => `${nextRowLabel.toUpperCase()}${i + 1}`,
           );
         }
 
         const normalizedSeatCount = this.getAreaSeatCount({
-          seatCount: dto.seatCount ?? currentArea.seatCount,
+          seatCount: seatCount ?? currentArea.seatCount,
           seats: nextSeats,
         });
 
-        await this.validateZoneCapacity(
-          targetZoneId,
-          normalizedSeatCount,
-          new Types.ObjectId(id),
-          session,
-        );
-
-        if (name) {
-          const existingArea = await this.areaModel
-            .findOne({
-              _id: { $ne: new Types.ObjectId(id) },
-              zoneId: targetZoneId,
-              name: name.trim().toUpperCase(),
-              isDeleted: false,
-            })
-            .session(session);
-
-          if (existingArea) {
-            throw new BadRequestException(`Area "${name}" already exists in this zone`);
-          }
+        if (isMovingZone) {
+          await this.atomicCapacityIncrement(
+            currentArea.zoneId, -(currentArea.seatCount ?? 0), session,
+          );
+          await this.atomicCapacityIncrement(targetZoneId, normalizedSeatCount, session);
+        } else {
+          const seatDelta = normalizedSeatCount - (currentArea.seatCount ?? 0);
+          await this.atomicCapacityIncrement(targetZoneId, seatDelta, session);
         }
 
         const updatePayload: Record<string, unknown> = {
@@ -349,23 +410,35 @@ export class AreaService {
           seats: nextSeats,
           updatedBy: currentUser.userId,
         };
-        if (name) updatePayload.name = name.trim().toUpperCase();
-        if (dto.description !== undefined) updatePayload.description = dto.description;
+
+        if (name !== undefined) updatePayload.name = name.trim().toUpperCase();
+        if (description !== undefined) updatePayload.description = description;
         if (zoneId) updatePayload.zoneId = new Types.ObjectId(zoneId);
 
-        const area = await this.areaModel.findOneAndUpdate(
-          { _id: new Types.ObjectId(id), isDeleted: false },
+        updatedArea = (await this.areaModel.findOneAndUpdate(
+          { _id: areaId, isDeleted: false },
           updatePayload,
           { new: true, session },
-        );
-        if (!area) throw new BadRequestException("Area not found or has been deleted");
+        )) as Area;
 
-        updatedArea = area;
+        if (!updatedArea) throw new BadRequestException("Area not found or has been deleted");
       });
 
-      await this.invalidateAreaCache();
-      await this.cacheManager.del(`area:${id}`);
+      const newZoneId = zoneId ?? updatedArea!.zoneId?.toString();
+      await this.invalidateAreaCache(id, newZoneId);
+
+      if (zoneId && oldZoneId && zoneId !== oldZoneId) {
+        const oldZoneKeys = await this.scanKeys(`${this.CACHE_PREFIX}:zone:${oldZoneId}:*`);
+        if (oldZoneKeys.length > 0) await this.redisService.client.del(oldZoneKeys);
+      }
+
       return updatedArea!;
+    } catch (err) {
+      if (err?.code === 11000) {
+        const label = name ? `"${name.trim().toUpperCase()}"` : "with this name";
+        throw new BadRequestException(`Area ${label} already exists in this zone`);
+      }
+      throw err;
     } finally {
       await session.endSession();
     }
@@ -376,7 +449,7 @@ export class AreaService {
       throw new BadRequestException("Invalid area ID");
     }
 
-    const cacheKey = `area:${id}`;
+    const cacheKey = `${this.SINGLE_CACHE_PREFIX}${id}`;
     const cachedArea = await this.cacheManager.get<Area>(cacheKey);
     if (cachedArea) return cachedArea;
 
@@ -384,6 +457,7 @@ export class AreaService {
       .findOne({ _id: new Types.ObjectId(id), isDeleted: false })
       .lean()
       .exec();
+
     if (!area) throw new BadRequestException("Area not found or has been deleted");
 
     await this.cacheManager.set(cacheKey, area, 30000);

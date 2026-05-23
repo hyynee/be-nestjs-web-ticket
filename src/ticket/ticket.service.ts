@@ -226,7 +226,6 @@ export class TicketService {
 
     return createdTickets;
   }
-
   async getTicketByCode(userId: string, ticketCode: string) {
     if (!userId) {
       throw new BadRequestException(
