@@ -20,3 +20,10 @@ export class LoginAttempt extends Document {
 }
 
 export const LoginAttemptSchema = SchemaFactory.createForClass(LoginAttempt);
+
+LoginAttemptSchema.index({ identifier: 1, ipAddress: 1 }, { unique: true });
+LoginAttemptSchema.index({ lockedUntil: 1 }, { sparse: true });
+LoginAttemptSchema.index(
+  { updatedAt: 1 },
+  { expireAfterSeconds: 7 * 24 * 3600, name: "idx_ttl_cleanup" }
+);

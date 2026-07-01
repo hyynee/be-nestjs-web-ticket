@@ -65,6 +65,15 @@ export function validateEnvironment(env: EnvMap): EnvMap {
     requireString(env, "REDIS_PASSWORD");
   }
 
+  if (env.VND_TO_USD_RATE !== undefined && env.VND_TO_USD_RATE !== "") {
+    const rate = Number(env.VND_TO_USD_RATE);
+    if (!Number.isInteger(rate) || rate < 10_000 || rate > 100_000) {
+      throw new Error(
+        "[ENV] VND_TO_USD_RATE must be an integer between 10,000 and 100,000 (VND per 1 USD)"
+      );
+    }
+  }
+
   requireNumber(env, "PORT");
   requireNumber(env, "SMTP_PORT");
   requireNumber(env, "REDIS_PORT");
@@ -73,10 +82,34 @@ export function validateEnvironment(env: EnvMap): EnvMap {
     requireNumber(env, "REDIS_DB");
   }
 
+  if (env.REDIS_QUEUE_HOST !== undefined && env.REDIS_QUEUE_HOST !== "") {
+    requireString(env, "REDIS_QUEUE_HOST");
+  }
+
+  if (env.REDIS_QUEUE_PORT !== undefined && env.REDIS_QUEUE_PORT !== "") {
+    requireNumber(env, "REDIS_QUEUE_PORT");
+  }
+
+  if (
+    env.REDIS_QUEUE_PASSWORD !== undefined &&
+    env.REDIS_QUEUE_PASSWORD !== ""
+  ) {
+    requireString(env, "REDIS_QUEUE_PASSWORD");
+  }
+
+  if (env.REDIS_QUEUE_DB !== undefined && env.REDIS_QUEUE_DB !== "") {
+    requireNumber(env, "REDIS_QUEUE_DB");
+  }
+
   const secretKey = requireString(env, "SECRET_KEY");
   if (secretKey === "your-secret-key") {
     throw new Error(
       "[ENV] SECRET_KEY must not use the default insecure value 'your-secret-key'"
+    );
+  }
+  if (secretKey.length < 32) {
+    throw new Error(
+      "[ENV] SECRET_KEY must be at least 32 characters long for HS256 security"
     );
   }
 
@@ -110,10 +143,27 @@ export function validateEnvironment(env: EnvMap): EnvMap {
     );
   }
 
+  // ALERT_EMAIL is required in production — missing it means refund failure alerts
+  // are silently dropped and manual refunds go unnoticed.
+  const alertEmail = env.ALERT_EMAIL;
+  const alertEmailStr =
+    alertEmail !== undefined ? String(alertEmail).trim() : "";
+  if (alertEmailStr) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(alertEmailStr)) {
+      throw new Error("[ENV] ALERT_EMAIL must be a valid email address");
+    }
+  } else if (nodeEnv === "production") {
+    throw new Error(
+      "[ENV] ALERT_EMAIL is required in production — set it to receive refund failure alerts (e.g. ops@yourdomain.com)"
+    );
+  }
+
   return {
     ...env,
     NODE_ENV: nodeEnv,
     AUTH_COOKIE_SECURE: secureValue,
     AUTH_COOKIE_SAME_SITE: sameSite,
+    ALERT_EMAIL: alertEmailStr || undefined,
   };
 }

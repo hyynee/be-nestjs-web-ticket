@@ -5,6 +5,7 @@ import { Ticket, TicketSchema } from "@src/schemas/ticket.schema";
 import { MongooseModule } from "@nestjs/mongoose";
 import { Booking, BookingSchema } from "@src/schemas/booking.schema";
 import { Event, EventSchema } from "@src/schemas/event.schema";
+import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 import { TicketGateway } from "./ticket.gateway";
 import { CheckInLog, CheckInLogSchema } from "@src/schemas/checkin-log.schema";
 import { UploadService } from "@src/upload/upload.service";
@@ -15,6 +16,7 @@ import { UploadService } from "@src/upload/upload.service";
       { name: Ticket.name, schema: TicketSchema },
       { name: Booking.name, schema: BookingSchema },
       { name: Event.name, schema: EventSchema },
+      { name: Zone.name, schema: ZoneSchema },
       { name: CheckInLog.name, schema: CheckInLogSchema },
     ]),
   ],

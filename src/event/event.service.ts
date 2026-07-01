@@ -1,36 +1,70 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  Inject
+  Inject,
+  Logger,
 } from "@nestjs/common";
 import { Model, Types } from "mongoose";
-import { InjectModel} from "@nestjs/mongoose";
-import { Event } from "@src/schemas/event.schema";
+import { InjectModel } from "@nestjs/mongoose";
+import { Event, EventStatus } from "@src/schemas/event.schema";
 import { CreateEventDTO } from "./dto/create-event.dto";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
 import { QueryEventDTO } from "./dto/query-event.dto";
 import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
+import { Booking, BookingStatus } from "@src/schemas/booking.schema";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
+import { escapeRegex } from "@src/common/utils/regex.utils";
+import { BookingService } from "@src/booking/booking.service";
+import { RedisService } from "@src/redis/redis.service";
+
+const CANCEL_BATCH_SIZE = 50;
+
 @Injectable()
 export class EventService {
+  private readonly logger = new Logger(EventService.name);
+
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache
+    @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly bookingService: BookingService,
+    private readonly redisService: RedisService
   ) {}
 
   // Example: cache event list
   async getCachedEvents(query: QueryEventDTO) {
-    const cacheKey = `event:list:${JSON.stringify(query)}`;
+    // Sort keys alphabetically before stringifying — JSON.stringify property order varies
+    // by insertion order so the same query with different parameter order would miss cache.
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+      status,
+    } = query;
+    const normalized = Object.fromEntries(
+      Object.entries({ page, limit, search, sortBy, sortOrder, status })
+        .filter(([, v]) => v !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b))
+    );
+    const cacheKey = `event:list:${Buffer.from(JSON.stringify(normalized)).toString("base64")}`;
     const cached = await this.cacheManager.get<any>(cacheKey);
     if (cached) return cached;
     const events = await this.getEvents(query);
-    await this.cacheManager.set(cacheKey, events, 30);
+    await this.cacheManager.set(cacheKey, events, 30_000);
+    // Track list cache key for later invalidation
+    await this.redisService.client
+      .sAdd("events:list:index", cacheKey)
+      .catch(() => {});
+    await this.redisService.client
+      .expire("events:list:index", 60)
+      .catch(() => {});
     return events;
   }
 
@@ -40,19 +74,12 @@ export class EventService {
     const cached = await this.cacheManager.get<any>(cacheKey);
     if (cached) return cached;
     const event = await this.eventModel.findById(eventId);
-    if (!event) throw new NotFoundException('Event not found');
-    await this.cacheManager.set(cacheKey, event, 60);
+    if (!event) throw new NotFoundException("Event not found");
+    await this.cacheManager.set(cacheKey, event, 60_000);
     return event;
   }
 
-  private escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  async getEvents(
-    query: QueryEventDTO,
-    user?: JwtPayload
-  ) {
+  async getEvents(query: QueryEventDTO, user?: JwtPayload) {
     const {
       page = 1,
       limit = 10,
@@ -76,7 +103,7 @@ export class EventService {
     }
 
     if (search?.trim()) {
-      const escaped = this.escapeRegex(search.trim());
+      const escaped = escapeRegex(search.trim());
       filter.$or = [
         { title: { $regex: escaped, $options: "i" } },
         { description: { $regex: escaped, $options: "i" } },
@@ -201,15 +228,62 @@ export class EventService {
     return this.eventModel.find({ isDeleted: true }).exec();
   }
 
+  private async invalidateEventCache(eventId: string): Promise<void> {
+    try {
+      await this.cacheManager.del(`event:details:${eventId}`);
+
+      const listKeys =
+        await this.redisService.client.sMembers("events:list:index");
+      if (listKeys.length > 0) {
+        await Promise.all(listKeys.map((k) => this.cacheManager.del(k)));
+        await this.redisService.client.del("events:list:index");
+      }
+    } catch {
+      /* Non-fatal */
+    }
+  }
+
+  private validateTimeSlots(
+    timeSlots: CreateEventDTO["timeSlots"],
+    startDate: Date,
+    endDate: Date
+  ): void {
+    if (!timeSlots || timeSlots.length === 0) return;
+    for (const slot of timeSlots) {
+      if (slot.startTime >= slot.endTime) {
+        throw new BadRequestException(
+          `Slot "${slot.label}": startTime phải trước endTime`
+        );
+      }
+      if (slot.startTime < startDate) {
+        throw new BadRequestException(
+          `Slot "${slot.label}": startTime không được trước startDate của sự kiện`
+        );
+      }
+      if (slot.endTime > endDate) {
+        throw new BadRequestException(
+          `Slot "${slot.label}": endTime không được sau endDate của sự kiện`
+        );
+      }
+    }
+  }
+
   async createEvent(
     currentUser: JwtPayload,
     eventData: CreateEventDTO
   ): Promise<Event> {
+    this.validateTimeSlots(
+      eventData.timeSlots,
+      eventData.startDate,
+      eventData.endDate
+    );
     const newEvent = new this.eventModel({
       createdBy: new Types.ObjectId(currentUser.userId),
       ...eventData,
     });
-    return newEvent.save();
+    const saved = await newEvent.save();
+    await this.invalidateEventCache(saved._id.toString());
+    return saved;
   }
 
   async updateEvent(
@@ -226,6 +300,48 @@ export class EventService {
       );
     }
 
+    if (eventData.timeSlots !== undefined) {
+      const effectiveStart = eventData.startDate ?? existingEvent.startDate;
+      const effectiveEnd = eventData.endDate ?? existingEvent.endDate;
+      this.validateTimeSlots(eventData.timeSlots, effectiveStart, effectiveEnd);
+
+      // Guard: ngăn xóa slot đang có booking active
+      const removedSlotIds = existingEvent.timeSlots
+        .filter(
+          (existing) =>
+            !eventData.timeSlots!.some(
+              (incoming) =>
+                incoming._id && incoming._id === existing._id.toString()
+            )
+        )
+        .map((s) => s._id);
+
+      if (removedSlotIds.length > 0) {
+        const checks = await Promise.all(
+          removedSlotIds.map(async (slotId) => {
+            const slot = existingEvent.timeSlots.find((s) =>
+              s._id.equals(slotId)
+            );
+            const count = await this.bookingModel.countDocuments({
+              timeSlotId: slotId,
+              status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+              isDeleted: false,
+            });
+            return { label: slot?.label ?? slotId.toString(), count };
+          })
+        );
+        const blocked = checks.filter((c) => c.count > 0);
+        if (blocked.length > 0) {
+          const details = blocked
+            .map((b) => `"${b.label}" (${b.count} vé)`)
+            .join(", ");
+          throw new BadRequestException(
+            `Không thể xóa khung giờ đang có vé đặt: ${details}`
+          );
+        }
+      }
+    }
+
     const updatedEvent = await this.eventModel
       .findByIdAndUpdate(
         id,
@@ -237,10 +353,27 @@ export class EventService {
     if (!updatedEvent) {
       throw new NotFoundException(`Event with ID ${id} not found`);
     }
+    await this.invalidateEventCache(id);
     return updatedEvent;
   }
 
   async deleteEvent(id: string): Promise<Event> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+
+    const activeBookings = await this.bookingModel.countDocuments({
+      eventId: new Types.ObjectId(id),
+      status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+      isDeleted: false,
+    });
+
+    if (activeBookings > 0) {
+      throw new BadRequestException(
+        "Cancel all active bookings before deleting this event"
+      );
+    }
+
     const session = await this.eventModel.db.startSession();
 
     try {
@@ -279,6 +412,7 @@ export class EventService {
         );
       }
 
+      await this.invalidateEventCache(id);
       return deletedEvent;
     } finally {
       await session.endSession();
@@ -320,9 +454,107 @@ export class EventService {
         throw new NotFoundException(`Deleted event with ID ${id} not found`);
       }
 
+      await this.invalidateEventCache(id);
       return restoredEvent;
     } finally {
       await session.endSession();
     }
+  }
+
+  /**
+   * Cancel an entire event and issue refunds for all confirmed+paid bookings.
+   *
+   * Strategy: set event status → CANCELLED first (atomic), then process bookings
+   * in batches. Each batch cancels bookings via BookingService.adminCancelBooking
+   * which handles Stripe/PayPal refunds. Partial failures are collected and returned
+   * so the caller can retry or escalate specific bookings.
+   */
+  async cancelEventWithRefund(
+    eventId: string,
+    adminId: string,
+    reason?: string
+  ): Promise<{
+    event: Event;
+    totalBookings: number;
+    cancelled: number;
+    failed: Array<{ bookingId: string; error: string }>;
+  }> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+
+    const event = await this.eventModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: false,
+        status: { $nin: [EventStatus.CANCELLED] },
+      },
+      { $set: { status: EventStatus.CANCELLED } },
+      { new: true }
+    );
+
+    if (!event) {
+      throw new NotFoundException(
+        "Event not found, already cancelled, or has been deleted"
+      );
+    }
+
+    this.logger.log(
+      `cancelEventWithRefund: eventId=${eventId} adminId=${adminId} reason="${reason ?? ""}"`
+    );
+
+    const cancellationReason = reason ?? `Event cancelled by admin`;
+    const failed: Array<{ bookingId: string; error: string }> = [];
+    let cancelled = 0;
+    let lastId: Types.ObjectId | null = null;
+
+    // Cursor-based batching — avoids loading all booking IDs into memory
+    for (;;) {
+      const filter: any = {
+        eventId: new Types.ObjectId(eventId),
+        status: { $nin: [BookingStatus.CANCELLED, BookingStatus.EXPIRED] },
+        isDeleted: false,
+      };
+      if (lastId) {
+        filter._id = { $gt: lastId };
+      }
+
+      const batch = await this.bookingModel
+        .find(filter)
+        .select("_id")
+        .sort({ _id: 1 })
+        .limit(CANCEL_BATCH_SIZE)
+        .lean();
+
+      if (!batch.length) break;
+
+      for (const booking of batch) {
+        const bookingId = (booking._id as Types.ObjectId).toString();
+        try {
+          await this.bookingService.adminCancelBooking(
+            bookingId,
+            adminId,
+            cancellationReason
+          );
+          cancelled++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "unknown error";
+          this.logger.error(
+            `cancelEventWithRefund: failed booking=${bookingId} error="${msg}"`
+          );
+          failed.push({ bookingId, error: msg });
+        }
+      }
+
+      lastId = batch[batch.length - 1]._id as Types.ObjectId;
+      if (batch.length < CANCEL_BATCH_SIZE) break;
+    }
+
+    const totalBookings = cancelled + failed.length;
+    this.logger.log(
+      `cancelEventWithRefund: done eventId=${eventId} total=${totalBookings} cancelled=${cancelled} failed=${failed.length}`
+    );
+
+    return { event, totalBookings, cancelled, failed };
   }
 }

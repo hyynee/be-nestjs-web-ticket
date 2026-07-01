@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import {
   Injectable,
   Logger,
@@ -33,7 +32,22 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       socket: {
         host,
         port,
+        reconnectStrategy: (retries: number) => {
+          if (retries > 20) {
+            this.logger.error(
+              "[Redis] Max reconnection attempts reached — giving up"
+            );
+            return new Error("Max Redis reconnection attempts reached");
+          }
+          const delay = Math.min(retries * 100, 2000);
+          this.logger.warn(
+            `[Redis] reconnecting in ${delay}ms (attempt ${retries})`
+          );
+          return delay;
+        },
+        connectTimeout: 5000,
       },
+      commandsQueueMaxLength: 5000,
       database,
     };
     if (password) {
@@ -72,5 +86,19 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (this.client.isOpen) {
       await this.client.quit();
     }
+  }
+
+  async scanKeys(pattern: string): Promise<string[]> {
+    const keys: string[] = [];
+    let cursor = 0;
+    do {
+      const result = await this.client.scan(cursor, {
+        MATCH: pattern,
+        COUNT: 100,
+      });
+      cursor = result.cursor;
+      keys.push(...result.keys);
+    } while (cursor !== 0);
+    return keys;
   }
 }

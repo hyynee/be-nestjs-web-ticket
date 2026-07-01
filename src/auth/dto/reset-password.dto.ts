@@ -1,8 +1,12 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsNotEmpty, IsString, Matches, MinLength } from "class-validator";
+import { UUID_V4_REGEX } from "@src/common/utils/regex.utils";
 
 export class ResetPasswordDto {
+  @ApiProperty({ example: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" })
+  @IsNotEmpty()
   @IsString()
+  @Matches(UUID_V4_REGEX, { message: "Invalid reset token format" })
   resetToken: string;
 
   @ApiProperty()

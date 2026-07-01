@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { StatisticalService } from "./statistical.service";
 import { StatisticalController } from "./statistical.controller";
+import { StatisticalScheduler } from "./statistical.scheduler";
 import { Booking, BookingSchema } from "@src/schemas/booking.schema";
 import { Payment, PaymentSchema } from "@src/schemas/payment.schema";
 import { Ticket, TicketSchema } from "@src/schemas/ticket.schema";
@@ -17,6 +18,6 @@ import { EventSchema, Event } from "@src/schemas/event.schema";
     ]),
   ],
   controllers: [StatisticalController],
-  providers: [StatisticalService],
+  providers: [StatisticalService, StatisticalScheduler],
 })
 export class StatisticalModule {}

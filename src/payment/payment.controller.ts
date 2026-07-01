@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Headers,
@@ -11,7 +12,7 @@ import {
   Logger,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { PaymentService } from "./payment.service";
+import { PaymentService, WebhookIdempotencyStatus } from "./payment.service";
 import { AuthGuard } from "@nestjs/passport";
 import { UseGuards, Post } from "@nestjs/common";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
@@ -19,6 +20,7 @@ import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { ApiCookieAuth } from "@nestjs/swagger";
 import { CreateCheckoutSessionDto } from "./dto/create-checkout.dto";
 import { QueryPaymentHistoryDto } from "./dto/query-payment-history.dto";
+import { CancelPaymentDto } from "./dto/cancel-payment.dto";
 import Stripe from "stripe";
 import type { Request, Response } from "express";
 
@@ -77,32 +79,75 @@ export class PaymentController {
       return res.status(400).send(`Webhook Error: ${message}`);
     }
 
-    let isFirstProcessing: boolean;
+    let idempotencyStatus: WebhookIdempotencyStatus;
     try {
-      isFirstProcessing = await this.paymentService.acquireWebhookIdempotency(
+      idempotencyStatus = await this.paymentService.acquireWebhookIdempotency(
         event.id
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "unknown error";
-      this.logger.error(
-        `Stripe webhook handler failed for event ${event.type}: ${message}`
+      this.logger.warn(
+        `Redis unavailable for webhook ${event.id} (${event.type}): ${message} — attempting DB fallback`
+      );
+      try {
+        idempotencyStatus =
+          await this.paymentService.checkWebhookIdempotencyFromDB(event);
+      } catch (dbErr: unknown) {
+        const dbMsg = dbErr instanceof Error ? dbErr.message : "unknown";
+        this.logger.error(
+          `DB fallback also failed for webhook ${event.id}: ${dbMsg} — returning 503`
+        );
+        return res
+          .status(503)
+          .send("Service temporarily unavailable. Stripe will retry.");
+      }
+    }
+
+    if (idempotencyStatus === "succeeded") {
+      return res.status(200).json({ received: true, deduplicated: true });
+    }
+
+    if (idempotencyStatus === "processing") {
+      this.logger.warn(
+        `Stripe event ${event.id} is already being processed by another instance`
       );
       return res
         .status(503)
-        .send("Temporary payment processing issue. Please retry webhook.");
-    }
-
-    if (!isFirstProcessing) {
-      return res.status(200).json({ received: true, deduplicated: true });
+        .json({ message: "Event is currently being processed, retry later" });
     }
 
     try {
       switch (event.type) {
         case "payment_intent.succeeded":
-          this.paymentService.handlePaymentIntentSucceeded(event.data.object);
+          await this.paymentService.handlePaymentIntentSucceeded(
+            event.data.object
+          );
           break;
         case "checkout.session.completed":
           await this.paymentService.handleCheckoutSessionCompleted(
+            event.data.object
+          );
+          break;
+        case "charge.refunded":
+          await this.paymentService.handleChargeRefunded(event.data.object);
+          break;
+        case "payment_intent.payment_failed":
+          await this.paymentService.handlePaymentIntentFailed(
+            event.data.object
+          );
+          break;
+        case "charge.dispute.created":
+          await this.paymentService.handleChargeDisputeCreated(
+            event.data.object
+          );
+          break;
+        case "payment_intent.canceled":
+          await this.paymentService.handlePaymentIntentCanceled(
+            event.data.object
+          );
+          break;
+        case "checkout.session.expired":
+          await this.paymentService.handleCheckoutSessionExpired(
             event.data.object
           );
           break;
@@ -111,23 +156,44 @@ export class PaymentController {
             `Unhandled Stripe webhook event type: ${event.type}`
           );
       }
-
-      return res.status(200).json({ received: true });
     } catch (err) {
       this.logger.error(
         `Webhook handler error for event ${event.id}: ${err instanceof Error ? err.message : "unknown error"}`
       );
-      return res
-        .status(500)
-        .send(
-          `Handler Error: ${err instanceof Error ? err.message : "Unknown error"}`
+
+      let lockReleased = false;
+      try {
+        await this.paymentService.releaseWebhookProcessing(event.id);
+        lockReleased = true;
+      } catch (releaseErr) {
+        this.logger.error(
+          `Failed to release idempotency key for event ${event.id}: ${releaseErr instanceof Error ? releaseErr.message : "unknown"}`
         );
+      }
+
+      if (lockReleased) {
+        this.logger.warn(
+          `[WEBHOOK_FAILED_WILL_RETRY] Event ${event.id} (${event.type}) failed processing. Returning 500 for Stripe retry.`
+        );
+        return res
+          .status(500)
+          .json({ received: false, error: "processing_failed" });
+      }
+
+      return res
+        .status(503)
+        .send("Service temporarily unavailable. Retry will be attempted.");
     }
+
+    await this.paymentService.markWebhookSucceeded(event.id);
+
+    return res.status(200).json({ received: true });
   }
 
   // check out paypal
   @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   @HttpCode(200)
   @Post("create-paypal-transaction")
   async createPaypalTransaction(
@@ -141,6 +207,7 @@ export class PaymentController {
     );
   }
 
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @HttpCode(200)
@@ -149,6 +216,10 @@ export class PaymentController {
     @Param("id") id: string,
     @CurrentUser() user: JwtPayload
   ) {
+    // PayPal order IDs are 17-character uppercase alphanumeric strings.
+    if (!/^[A-Z0-9]{5,22}$/.test(id)) {
+      throw new BadRequestException("Invalid PayPal order ID format");
+    }
     return this.paymentService.finalizePaypalTransaction(id, user.userId);
   }
 
@@ -164,11 +235,12 @@ export class PaymentController {
     return this.paymentService.getPaymentHistory(userId, query);
   }
 
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @Post("cancel")
   async cancelPayment(
-    @Body() dto: { bookingCode: string },
+    @Body() dto: CancelPaymentDto,
     @CurrentUser() user: JwtPayload
   ) {
     return this.paymentService.handlePaymentCancelled(

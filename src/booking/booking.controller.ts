@@ -13,18 +13,20 @@ import { Throttle } from "@nestjs/throttler";
 import { BookingService } from "./booking.service";
 import { ApiCookieAuth } from "@nestjs/swagger";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { AuthGuard } from "@nestjs/passport";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { QueryBookingDto } from "./dto/query-booking.dto";
-import { CancleBookingDto } from "./dto/cancle-booking.dto";
+import { CancelBookingDto } from "./dto/cancel-booking.dto";
+import { AdminCancelBookingDto } from "./dto/admin-cancel-booking.dto";
 
 @Controller("booking")
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
 
-  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @Throttle({ short: { limit: 3, ttl: 10000 } })
   @ApiCookieAuth("access_token")
   @UseGuards(AuthGuard("jwt"))
   @Post("")
@@ -77,18 +79,37 @@ export class BookingController {
   @HttpCode(200)
   cancelBooking(
     @CurrentUser() currentUser: JwtPayload,
-    @Body() bookingCode: CancleBookingDto
+    @Body() dto: CancelBookingDto
   ) {
     const userId = currentUser.userId;
-    return this.bookingService.cancelBooking(userId, bookingCode);
+    return this.bookingService.cancelBooking(userId, dto);
   }
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("/admin/all-bookings")
   @HttpCode(200)
   getAllBookings(@Query() query: QueryBookingDto) {
     return this.bookingService.getAllBookings(query);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Patch("/admin/cancel/:bookingId")
+  @HttpCode(200)
+  adminCancelBooking(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("bookingId") bookingId: string,
+    @Body() dto: AdminCancelBookingDto
+  ) {
+    return this.bookingService.adminCancelBooking(
+      bookingId,
+      currentUser.userId,
+      dto.reason
+    );
   }
 }

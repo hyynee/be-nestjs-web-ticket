@@ -3,9 +3,11 @@ import {
   IsString,
   IsNumber,
   IsArray,
+  ArrayMaxSize,
   IsEmail,
   IsOptional,
   Min,
+  Max,
   IsMongoId,
 } from "class-validator";
 import { Type } from "class-transformer";
@@ -34,6 +36,7 @@ export class CreateBookingDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(500)
   @IsString({ each: true })
   seats?: string[];
 
@@ -41,6 +44,7 @@ export class CreateBookingDto {
   @IsNotEmpty()
   @IsNumber()
   @Min(1)
+  @Max(10)
   @Type(() => Number)
   quantity: number;
 
@@ -63,4 +67,11 @@ export class CreateBookingDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: "ID khung giờ (bắt buộc nếu sự kiện có định nghĩa time slots)",
+  })
+  @IsOptional()
+  @IsMongoId()
+  timeSlotId?: string;
 }

@@ -13,6 +13,7 @@ import { AreaService } from "./area.service";
 import { ApiCookieAuth, ApiTags } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { CreateAreaDTO } from "./dto/create.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
@@ -26,7 +27,8 @@ export class AreaController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("/create")
   createArea(
     @CurrentUser() currentUser: JwtPayload,
@@ -44,7 +46,8 @@ export class AreaController {
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Put("/:id/delete")
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   softDeleteArea(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
@@ -56,7 +59,8 @@ export class AreaController {
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @Put("/:id")
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   updateArea(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
@@ -67,7 +71,8 @@ export class AreaController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("/:id")
   getAreaById(@Param("id") id: string) {
     return this.areaService.getAreaById(id);

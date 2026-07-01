@@ -21,3 +21,10 @@ export type TicketEventWindow = {
 export type TicketEventTitle = {
   title?: string;
 };
+
+export type TimeSlotWindow = {
+  _id: Types.ObjectId;
+  label: string;
+  startTime: Date;
+  endTime: Date;
+};

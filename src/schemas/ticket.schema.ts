@@ -1,4 +1,3 @@
-// ticket.schema.ts
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Types } from "mongoose";
 
@@ -22,6 +21,9 @@ export class Ticket {
 
   @Prop({ type: Types.ObjectId, ref: "Area" })
   areaId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId })
+  timeSlotId?: Types.ObjectId;
 
   @Prop({ type: String })
   seatNumber?: string;
@@ -63,6 +65,9 @@ export class Ticket {
 
   @Prop({ default: false })
   isDeleted: boolean;
+
+  @Prop({ type: Date })
+  deletedAt?: Date;
 }
 
 export const TicketSchema = SchemaFactory.createForClass(Ticket);
@@ -78,9 +83,32 @@ TicketSchema.index({ userId: 1, isDeleted: 1 });
 TicketSchema.index({ bookingId: 1 });
 TicketSchema.index({ status: 1, isDeleted: 1 });
 TicketSchema.index({ createdAt: -1 });
+// Compound indexes for statistical aggregations
+TicketSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
+TicketSchema.index({ eventId: 1, status: 1, isDeleted: 1, createdAt: -1 });
 
-// chăn double check-in
-// TicketSchema.index(
-//   { ticketCode: 1, status: 1 },
-//   { unique: true, partialFilterExpression: { status: 'valid' } }
-// );
+// Ngăn duplicate ticket cho seated events (seatNumber tồn tại).
+// sparse: true → chỉ index documents có seatNumber, non-seated tickets (seatNumber undefined)
+// không bị ràng buộc — chúng được bảo vệ bởi Redis distributed lock ở service layer.
+TicketSchema.index(
+  { bookingId: 1, seatNumber: 1 },
+  {
+    unique: true,
+    sparse: true,
+    name: "idx_unique_booking_seat",
+  }
+);
+
+TicketSchema.index(
+  { ticketCode: 1 },
+  { unique: true, name: "idx_ticketcode_unique" }
+);
+
+TicketSchema.index(
+  { eventId: 1, zoneId: 1, status: 1, isDeleted: 1 },
+  { name: "idx_event_zone_status_deleted" }
+);
+TicketSchema.index(
+  { timeSlotId: 1, status: 1, isDeleted: 1 },
+  { sparse: true, name: "idx_timeslot_status_deleted" }
+);

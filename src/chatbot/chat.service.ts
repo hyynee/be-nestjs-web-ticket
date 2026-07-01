@@ -1,13 +1,20 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-enum-comparison */
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { ChatResponse, EventData } from "./chat.interface";
 import { Event } from "@src/schemas/event.schema";
+import { escapeRegex } from "@src/common/utils/regex.utils";
 
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
+
+  private sanitizeUserInput(input: string): string {
+    return input
+      .substring(0, 500)
+      .replace(/["\\]/g, "\\$&")
+      .replace(/\n/g, " ");
+  }
 
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<Event>
@@ -114,7 +121,7 @@ export class ChatService {
         const keywords = this.getKeywords(query);
         if (keywords.length > 0) {
           const regexKeywords = keywords.map(
-            (keyword) => new RegExp(keyword, "i")
+            (keyword) => new RegExp(escapeRegex(keyword), "i")
           );
           filter.$or = [
             { title: { $in: regexKeywords } },
@@ -165,7 +172,7 @@ export class ChatService {
       }
       // Thêm hướng dẫn cho AI
       prompt += `\nHãy trả lời câu hỏi sau bằng tiếng Việt, thân thiện:\n`;
-      prompt += `Câu hỏi: "${query}"\n\n`;
+      prompt += `Câu hỏi: "${this.sanitizeUserInput(query)}"\n\n`;
       // Thêm gợi ý tùy loại câu hỏi
       if (intent === "view_events") {
         prompt += `Gợi ý: Liệt kê các sự kiện, nêu thông tin cơ bản.`;

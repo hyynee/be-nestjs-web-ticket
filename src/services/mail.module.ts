@@ -9,5 +9,4 @@ import { QueueModule } from "@src/queue/queue.module";
   providers: [MailService],
   exports: [MailService],
 })
-
 export class MailModule {}

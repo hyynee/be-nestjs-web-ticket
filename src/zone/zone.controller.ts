@@ -17,6 +17,7 @@ import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { UpdateZoneDto } from "./dto/update-zone.dto";
 
 @ApiTags("Zone")
@@ -45,7 +46,8 @@ export class ZoneController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("")
   @ApiOperation({ summary: "Tạo khu vực mới" })
   async createZone(
@@ -57,7 +59,8 @@ export class ZoneController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("update/:id")
   @ApiOperation({ summary: "Cập nhật thông tin khu vực" })
   async updateZone(

@@ -11,6 +11,7 @@ import {
 import { Throttle } from "@nestjs/throttler";
 import { UserService } from "./user.service";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { AuthGuard } from "@nestjs/passport";
 import { ApiCookieAuth } from "@nestjs/swagger";
 import { QueryUserDTO } from "./dto/query-user.dto";
@@ -70,7 +71,8 @@ export class UserController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("/getAllUser")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiCookieAuth("access_token")
   @HttpCode(200)
   async getAllUser(@Query() query: QueryUserDTO) {
@@ -79,7 +81,8 @@ export class UserController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("/:id")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiCookieAuth("access_token")
   @HttpCode(200)
   async getUserById(@Param("id") id: string) {

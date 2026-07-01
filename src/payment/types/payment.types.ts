@@ -62,6 +62,13 @@ export type PaymentRecord = {
   metadata?: Record<string, unknown>;
 };
 
+export interface PaypalCapturesRefundRequest {
+  requestBody(body: {
+    note_to_payer?: string;
+    amount?: { value: string; currency_code: string };
+  }): void;
+}
+
 export interface PaypalSdk {
   core: {
     LiveEnvironment: new (clientId: string, clientSecret: string) => unknown;
@@ -71,6 +78,12 @@ export interface PaypalSdk {
   orders: {
     OrdersCreateRequest: new () => PaypalOrdersCreateRequest;
     OrdersCaptureRequest: new (orderId: string) => PaypalOrdersCaptureRequest;
+    OrdersGetRequest: new (orderId: string) => unknown;
+  };
+  payments: {
+    CapturesRefundRequest: new (
+      captureId: string
+    ) => PaypalCapturesRefundRequest;
   };
 }
 

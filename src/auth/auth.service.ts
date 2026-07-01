@@ -1,10 +1,11 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   ConflictException,
   Injectable,
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
+  ServiceUnavailableException,
   Inject,
 } from "@nestjs/common";
 import { LoginDTO } from "./dto/login.dto";
@@ -22,11 +23,18 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ResetToken } from "@src/schemas/reset-token.schema";
 import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { Logger } from "winston";
-import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { UserEventsService } from "@src/events/user-event.services";
 import { v2 as cloudinary } from "cloudinary";
 import { RedisService } from "@src/redis/redis.service";
 import { CookieOptions, Response, Request } from "express";
+import {
+  ACCESS_TOKEN_TTL_MS,
+  ACCESS_TOKEN_TTL_SECONDS,
+  REFRESH_TOKEN_TTL_MS,
+  REFRESH_TOKEN_TTL_SECONDS,
+  SHADOW_TTL_SECONDS,
+} from "./auth.constants";
+import { UUID_V4_REGEX } from "@src/common/utils/regex.utils";
 
 type GoogleProfile = {
   email?: string;
@@ -36,16 +44,11 @@ type GoogleProfile = {
 
 @Injectable()
 export class AuthService {
-  private readonly REFRESH_TOKEN_TTL_SECONDS = 3 * 24 * 60 * 60;
-  private readonly ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
-  private readonly REFRESH_TOKEN_TTL_MS = this.REFRESH_TOKEN_TTL_SECONDS * 1000;
-
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(ResetToken.name)
     private readonly resetTokenModel: Model<ResetToken>,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
 
     private jwtService: JwtService,
     private loginAttemptService: LockLoginService,
@@ -58,7 +61,10 @@ export class AuthService {
   }
   private async invalidateUserCache(userId: string): Promise<void> {
     const cacheKey = this.generateCacheKeyForUser(userId);
-    await this.cacheManager.del(cacheKey);
+    await Promise.all([
+      this.redisService.client.del(cacheKey).catch(() => {}),
+      this.redisService.client.del(`auth:user-state:${userId}`).catch(() => {}),
+    ]);
   }
 
   private getRefreshTokenKey(token: string): string {
@@ -124,12 +130,12 @@ export class AuthService {
     res.cookie(
       "access_token",
       tokens.accessToken,
-      this.getTokenCookieOptions(this.ACCESS_TOKEN_TTL_MS)
+      this.getTokenCookieOptions(ACCESS_TOKEN_TTL_MS)
     );
     res.cookie(
       "refresh_token",
       tokens.refreshToken,
-      this.getTokenCookieOptions(this.REFRESH_TOKEN_TTL_MS)
+      this.getTokenCookieOptions(REFRESH_TOKEN_TTL_MS)
     );
   }
 
@@ -152,12 +158,14 @@ export class AuthService {
     await multi.exec();
   }
 
+  private static isDuplicateKeyError(err: unknown): boolean {
+    if (typeof err !== "object" || err === null) return false;
+    const code = (err as Record<string, unknown>).code;
+    return code === 11000 || code === 11001;
+  }
+
   async register(data: RegisterDTO): Promise<Record<string, unknown>> {
     const { email, password, confirmPassword, fullName } = data;
-    const existingUser = await this.userModel.findOne({ email });
-    if (existingUser) {
-      throw new ConflictException("Email already exists");
-    }
     if (password !== confirmPassword) {
       throw new BadRequestException("Passwords do not match");
     }
@@ -167,8 +175,15 @@ export class AuthService {
       fullName,
       role: "user",
     });
-    // emit event user registered
-    const createdUser = (await user.save()) || user;
+    let createdUser: typeof user;
+    try {
+      createdUser = (await user.save()) || user;
+    } catch (err: unknown) {
+      if (AuthService.isDuplicateKeyError(err)) {
+        throw new ConflictException("Email already exists");
+      }
+      throw err;
+    }
     this.userEventsService.emitUserRegistered(createdUser);
 
     if (typeof (createdUser as any).toObject !== "function") {
@@ -210,23 +225,24 @@ export class AuthService {
   }
 
   async loginWithGoogle(profile: GoogleProfile) {
-    const { email, name, picture } = profile;
+    const { email, name } = profile;
     if (!email) {
       throw new BadRequestException(
         "Invalid Google profile: email is required"
       );
     }
-    let user = await this.userModel.findOne({ email });
-    if (!user) {
-      user = new this.userModel({
-        email,
-        fullName: name || email.split("@")[0],
-        avatar: picture,
-        role: "user",
-      });
-      await user.save();
-    }
-    return this.generateUserTokens(user._id);
+    const user = await this.userModel.findOneAndUpdate(
+      { email },
+      {
+        $setOnInsert: {
+          email,
+          fullName: name || email.split("@")[0],
+          role: "user",
+        },
+      },
+      { upsert: true, new: true }
+    );
+    return this.generateUserTokens(user!._id);
   }
 
   async handleGoogleLoginCallback(
@@ -256,14 +272,18 @@ export class AuthService {
     return req.currentUser;
   }
 
+  private readonly USER_CACHE_TTL_SEC = 300;
+
   async getUserById(id: string) {
     const cacheKey = this.generateCacheKeyForUser(id);
-    let user: User | null =
-      (await this.cacheManager.get<User>(cacheKey)) ?? null;
+    const raw = await this.redisService.client.get(cacheKey).catch(() => null);
+    let user: User | null = raw ? (JSON.parse(raw) as User) : null;
     if (!user) {
       user = await this.userModel.findById(id).select("-password").lean<User>();
       if (!user) return null;
-      await this.cacheManager.set(cacheKey, user, 1800000);
+      await this.redisService.client
+        .set(cacheKey, JSON.stringify(user), { EX: this.USER_CACHE_TTL_SEC })
+        .catch(() => {});
     }
     const avatarUrl = user.avatarPublicId
       ? cloudinary.url(user.avatarPublicId, {
@@ -286,19 +306,26 @@ export class AuthService {
       throw new BadRequestException("Refresh token is required");
     }
 
+    if (!UUID_V4_REGEX.test(refreshToken)) {
+      throw new UnauthorizedException("Invalid refresh token");
+    }
+
     const refreshTokenKey = this.getRefreshTokenKey(refreshToken);
     const userId = await this.redisService.client.get(refreshTokenKey);
 
     if (!userId) {
+      // Check shadow: token was consumed recently → possible token theft
+      const shadowKey = `auth:shadow:${refreshToken}`;
+      const shadowUserId = await this.redisService.client.get(shadowKey);
+      if (shadowUserId) {
+        this.logger.warn(
+          `SECURITY: Refresh token reuse detected for userId=${shadowUserId}. Revoking all sessions.`
+        );
+        await this.revokeAllUserRefreshTokens(shadowUserId);
+        await this.redisService.client.del(shadowKey);
+      }
       throw new UnauthorizedException("Invalid refresh token");
     }
-
-    // Rotate refresh token: consume token cũ trước khi phát token mới.
-    await this.redisService.client
-      .multi()
-      .del(refreshTokenKey)
-      .sRem(this.getUserRefreshTokenSetKey(userId), refreshToken)
-      .exec();
 
     const tokens = await this.generateUserTokens(userId);
     this.setTokenCookies(res, tokens);
@@ -311,31 +338,43 @@ export class AuthService {
     const accessToken = req.cookies?.access_token;
 
     if (accessToken) {
+      let decoded: { exp?: number } | null = null;
       try {
-        const decoded = this.jwtService.decode(accessToken) as {
+        decoded = this.jwtService.verify(accessToken) as {
           exp?: number;
         } | null;
-
-        const now = Math.floor(Date.now() / 1000);
-
-        const ttl =
-          decoded?.exp && decoded.exp > now ? decoded.exp - now : 60 * 60;
-
-        await this.redisService.client.set(
-          `blacklist:access:${accessToken}`,
-          "1",
-          { EX: ttl }
-        );
       } catch {
-        await this.redisService.client.set(
-          `blacklist:access:${accessToken}`,
-          "1",
-          { EX: 60 * 60 }
+        this.logger.warn(
+          "logout: access token verification failed, skipping blacklist"
         );
+      }
+
+      if (decoded) {
+        const now = Math.floor(Date.now() / 1000);
+        const remaining =
+          decoded.exp && decoded.exp > now ? decoded.exp - now : 0;
+        const ttl = Math.min(remaining, ACCESS_TOKEN_TTL_SECONDS);
+
+        if (ttl > 0) {
+          try {
+            await this.redisService.client.set(
+              `blacklist:access:${accessToken}`,
+              "1",
+              { EX: ttl }
+            );
+          } catch (redisErr) {
+            this.logger.error(
+              `logout: Redis unavailable, cannot blacklist token — ${(redisErr as Error)?.message ?? "unknown"}`
+            );
+            throw new ServiceUnavailableException(
+              "Logout failed: unable to invalidate session. Please try again or wait for the token to expire."
+            );
+          }
+        }
       }
     }
 
-    if (!refreshToken) {
+    if (!refreshToken || !UUID_V4_REGEX.test(refreshToken)) {
       return { message: "Logged out successfully" };
     }
 
@@ -362,30 +401,61 @@ export class AuthService {
       throw new UnauthorizedException("User not found");
     }
 
+    if (!user.isActive) {
+      throw new ForbiddenException("Account has been disabled");
+    }
+
     const userIdString = user._id.toString();
     const accessToken = this.jwtService.sign(
       { userId: userIdString, role: user.role },
-      { expiresIn: "1h" }
+      { expiresIn: ACCESS_TOKEN_TTL_SECONDS }
     );
     const refreshToken = uuidv4();
-    // Mỗi user chỉ giữ một phiên refresh token để revoke nhanh và rõ ràng.
-    await this.revokeAllUserRefreshTokens(userIdString);
-    // Tạo refresh token mới
-    await this.storeRefreshToken(refreshToken, userIdString);
+    await this.rotateRefreshTokenAtomic(refreshToken, userIdString);
     return { accessToken, refreshToken };
   }
 
-  //  refresh token
-  async storeRefreshToken(token: string, userId: string) {
-    const refreshTokenKey = this.getRefreshTokenKey(token);
-    const userTokenSetKey = this.getUserRefreshTokenSetKey(userId);
+  private async rotateRefreshTokenAtomic(
+    newToken: string,
+    userId: string
+  ): Promise<void> {
+    const newTokenKey = this.getRefreshTokenKey(newToken);
+    const setKey = this.getUserRefreshTokenSetKey(userId);
+    const ttl = REFRESH_TOKEN_TTL_SECONDS;
+    const shadowTtl = SHADOW_TTL_SECONDS;
 
-    await this.redisService.client
-      .multi()
-      .set(refreshTokenKey, userId, { EX: this.REFRESH_TOKEN_TTL_SECONDS })
-      .sAdd(userTokenSetKey, token)
-      .expire(userTokenSetKey, this.REFRESH_TOKEN_TTL_SECONDS)
-      .exec();
+    const lua = `
+      local setKey     = KEYS[1]
+      local newTokKey  = KEYS[2]
+      local userId     = ARGV[1]
+      local newTok     = ARGV[2]
+      local ttl        = tonumber(ARGV[3])
+      local prefix     = ARGV[4]
+      local shadowPfx  = ARGV[5]
+      local shadowTtl  = tonumber(ARGV[6])
+      local stale      = redis.call('SMEMBERS', setKey)
+      redis.call('SET', newTokKey, userId, 'EX', ttl)
+      for _, t in ipairs(stale) do
+        redis.call('DEL', prefix .. t)
+        redis.call('SET', shadowPfx .. t, userId, 'EX', shadowTtl)
+      end
+      redis.call('DEL', setKey)
+      redis.call('SADD', setKey, newTok)
+      redis.call('EXPIRE', setKey, ttl)
+      return 1
+    `;
+
+    await this.redisService.client.eval(lua, {
+      keys: [setKey, newTokenKey],
+      arguments: [
+        userId,
+        newToken,
+        String(ttl),
+        "auth:refresh:",
+        "auth:shadow:",
+        String(shadowTtl),
+      ],
+    });
   }
 
   // changePassword
@@ -401,11 +471,13 @@ export class AuthService {
     }
     user.password = newPassword;
     await user.save();
-    await this.invalidateUserCache(userId);
+    await Promise.all([
+      this.revokeAllUserRefreshTokens(userId),
+      this.invalidateUserCache(userId),
+    ]);
     return { message: "Password changed successfully" };
   }
 
-  // forgotPassword
   async forgotPassword(email: string): Promise<{ message: string }> {
     const user = await this.userModel.findOne({ email });
     if (!user) {
@@ -414,42 +486,65 @@ export class AuthService {
           "If that email address is in our system, we have sent a password reset link to it.",
       };
     }
-    await this.resetTokenModel.deleteMany({
-      // xoá các token cũ
-      userId: user._id,
-      isUsed: false,
-    });
+
     const resetToken = uuidv4();
-    const expiresAt = new Date(Date.now() + 3600000);
-    await this.resetTokenModel.create({
-      userId: user._id,
-      token: resetToken,
-      expiresAt,
-      isUsed: false,
-    });
+    const expiresAt = new Date(Date.now() + 3600000); // 1 hour
+
+    const session = await this.resetTokenModel.db.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await this.resetTokenModel.deleteMany(
+          { userId: user._id, isUsed: false },
+          { session }
+        );
+        await this.resetTokenModel.create(
+          [{ userId: user._id, token: resetToken, expiresAt, isUsed: false }],
+          { session }
+        );
+      });
+    } finally {
+      session.endSession();
+    }
+
     this.userEventsService.emitPasswordResetRequested(
       user.email,
       resetToken,
       user.fullName
     );
-    // const resetLink = `${envConfig.FRONTEND_URL}/reset-password?token=${resetToken}`;
-    // await this.mailService.sendPasswordResetEmail(user.email, resetLink);
     return {
       message: "Password reset link has been sent to your email.",
     };
   }
 
   async resetPassword(data: ResetPasswordDto) {
-    const { resetToken, newPassword } = data;
-    const token = await this.resetTokenModel.findOne({
-      token: resetToken,
-      isUsed: false,
-    });
-    if (!token) {
+    const { resetToken, newPassword, confirmPassword } = data;
+
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException("Passwords do not match");
+    }
+
+    if (!UUID_V4_REGEX.test(resetToken)) {
       throw new BadRequestException("Invalid or expired reset token");
     }
-    if (token.expiresAt < new Date()) {
-      await this.resetTokenModel.deleteOne({ token: resetToken });
+
+    const token = await this.resetTokenModel.findOneAndUpdate(
+      {
+        token: resetToken,
+        isUsed: false,
+        expiresAt: { $gt: new Date() },
+      },
+      { isUsed: true }
+    );
+    if (!token) {
+      const existing = await this.resetTokenModel.findOne({
+        token: resetToken,
+      });
+      if (!existing) {
+        throw new BadRequestException("Invalid or expired reset token");
+      }
+      if (existing.isUsed) {
+        throw new BadRequestException("Reset token has already been used");
+      }
       throw new BadRequestException("Reset token has expired");
     }
     const user = await this.userModel.findById(token.userId);
@@ -458,10 +553,6 @@ export class AuthService {
     }
     user.password = newPassword;
     await user.save();
-    await this.resetTokenModel.updateOne(
-      { token: resetToken },
-      { isUsed: true }
-    );
     await this.revokeAllUserRefreshTokens(user._id.toString());
     await this.invalidateUserCache(user.id.toString());
     return {

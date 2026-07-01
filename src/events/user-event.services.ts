@@ -9,11 +9,15 @@ export class UserEventsService {
   emitUserRegistered(user: User): void {
     this.eventEmitter.emit("user.registered", user); // event name, event data
   }
-  emitPasswordResetRequested(email: string, resetToken: string, fullName: string): void {
+  emitPasswordResetRequested(
+    email: string,
+    resetToken: string,
+    fullName: string
+  ): void {
     this.eventEmitter.emit("password.reset.requested", {
       email,
       resetToken,
-      fullName
+      fullName,
     });
   }
 
@@ -24,5 +28,4 @@ export class UserEventsService {
   emitSendBookingConfirmation(data: BookingConfirmationData): void {
     this.eventEmitter.emit("booking.confirmation", data);
   }
-
 }

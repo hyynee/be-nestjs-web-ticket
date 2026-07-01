@@ -3,7 +3,7 @@ import { Server } from "socket.io";
 import { Logger } from "@nestjs/common";
 import { Types } from "mongoose";
 
-function getAllowedWsOrigins(): string[] {
+export function getAllowedWsOrigins(): string[] {
   const rawOrigins = process.env.CORS_ORIGINS || "";
   const parsedOrigins = rawOrigins
     .split(",")

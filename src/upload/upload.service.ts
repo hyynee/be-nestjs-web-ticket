@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable } from "@nestjs/common";
 import { v2 as cloudinary } from "cloudinary";
 import config from "@src/config/config";
@@ -51,6 +50,19 @@ export class UploadService {
       }
     );
 
+    return result.secure_url;
+  }
+
+  async uploadQRCodeBuffer(
+    buffer: Buffer,
+    ticketCode: string
+  ): Promise<string> {
+    const result: any = await this.uploadBuffer(buffer, {
+      resource_type: "image",
+      folder: "qrcodes",
+      public_id: ticketCode,
+      overwrite: false,
+    });
     return result.secure_url;
   }
 

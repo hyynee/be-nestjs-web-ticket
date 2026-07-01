@@ -31,6 +31,9 @@ export class Zone extends Document {
   @Prop({ default: false })
   isDeleted: boolean;
 
+  @Prop({ type: Date })
+  deletedAt?: Date;
+
   @Prop({ type: Boolean, default: false })
   hasSeating: boolean; // Zone có ghế ngồi hay không
 
@@ -55,5 +58,5 @@ ZoneSchema.index(
 );
 
 ZoneSchema.index({ eventId: 1 });
-
 ZoneSchema.index({ isDeleted: 1 });
+ZoneSchema.index({ eventId: 1, isDeleted: 1 }, { name: "idx_event_deleted" });

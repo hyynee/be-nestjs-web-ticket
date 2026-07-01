@@ -186,30 +186,42 @@ export class ExportService {
     return data;
   }
 
-  async exportCheckInZones(dto: ExportCheckInDto, res: Response) {
-    // Offload export to queue
+  async getTicketExportData(dto: ExportTicketDto): Promise<ExportRow[]> {
+    return this.getTicketData(dto);
+  }
+
+  async getCheckInZoneExportData(dto: ExportCheckInDto): Promise<ExportRow[]> {
+    return this.getCheckInZoneData(dto);
+  }
+
+  async exportCheckInZones(
+    dto: ExportCheckInDto,
+    requestedByUserId: string,
+    res: Response
+  ) {
     await this.queueService.addJob({
       type: "export-checkin-zones",
-      payload: dto,
+      payload: { dto, requestedByUserId },
       requestedAt: new Date().toISOString(),
     });
-    // Optionally, return immediate response or polling token
-    return res.json({
-      message: "Export is being processed. You will receive a download link or email when ready.",
+    return res.status(202).json({
+      message: "Export đang được xử lý. Bạn sẽ nhận được file qua email.",
       status: "queued",
     });
   }
 
-  async exportTickets(dto: ExportTicketDto, res: Response) {
-    // Offload export to queue
+  async exportTickets(
+    dto: ExportTicketDto,
+    requestedByUserId: string,
+    res: Response
+  ) {
     await this.queueService.addJob({
       type: "export-tickets",
-      payload: dto,
+      payload: { dto, requestedByUserId },
       requestedAt: new Date().toISOString(),
     });
-    // Optionally, return immediate response or polling token
-    return res.json({
-      message: "Export is being processed. You will receive a download link or email when ready.",
+    return res.status(202).json({
+      message: "Export đang được xử lý. Bạn sẽ nhận được file qua email.",
       status: "queued",
     });
   }

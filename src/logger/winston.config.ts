@@ -20,43 +20,25 @@ const customLevels = {
 };
 winston.addColors(customLevels.colors);
 
+const defaultLevel = process.env.NODE_ENV === "production" ? "info" : "debug";
+const logLevel = process.env.LOG_LEVEL ?? defaultLevel;
+
 export const winstonConfig = {
   levels: customLevels.levels,
   transports: [
-    // Console logs app
-    new transports.File({
-      filename: "logs/combined.log",
-      level: "info",
-      maxsize: 20 * 1024 * 1024, // 20MB
-      maxFiles: 7,
-      format: format.combine(
-        format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-        format.json()
-      ),
-    }),
-
-    // Error logs
-    new transports.File({
-      filename: "logs/error.log",
-      level: "error",
-      format: format.combine(
-        format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-        format.errors({ stack: true }),
-        format.json()
-      ),
-    }),
-
-    // Security logs (login failures, locks)
-    new transports.File({
-      filename: "logs/security.log",
-      level: "warn",
-      maxsize: 10 * 1024 * 1024,
-      maxFiles: 30,
-      format: format.combine(
-        format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-        format((info) => (info.context === "security" ? info : false))(),
-        format.json()
-      ),
+    new transports.Console({
+      level: logLevel,
+      format:
+        process.env.NODE_ENV === "production"
+          ? format.combine(
+              format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+              format.json()
+            )
+          : format.combine(
+              format.colorize(),
+              format.timestamp({ format: "HH:mm:ss" }),
+              format.simple()
+            ),
     }),
   ],
 };

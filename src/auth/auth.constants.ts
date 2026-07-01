@@ -1,0 +1,7 @@
+export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
+export const ACCESS_TOKEN_TTL_MS = ACCESS_TOKEN_TTL_SECONDS * 1000;
+
+export const REFRESH_TOKEN_TTL_SECONDS = 3 * 24 * 60 * 60; // 3 days
+export const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_SECONDS * 1000;
+
+export const SHADOW_TTL_SECONDS = 30;

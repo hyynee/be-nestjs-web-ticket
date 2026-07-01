@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   Post,
   Put,
@@ -12,11 +13,13 @@ import { EventService } from "./event.service";
 import { ApiCookieAuth, ApiTags } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { CreateEventDTO } from "./dto/create-event.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
 import { QueryEventDTO } from "./dto/query-event.dto";
+import { CancelEventDto } from "./dto/cancel-event.dto";
 import { OptionalJwtAuthGuard } from "@src/guards/optional.guard";
 import { Throttle } from "@nestjs/throttler";
 
@@ -43,7 +46,8 @@ export class EventController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("admin/deleted")
   async getDeletedEvents() {
     return this.eventService.getDeletedEvents();
@@ -57,7 +61,8 @@ export class EventController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("create")
   async createEvent(
     @CurrentUser() currentUser: JwtPayload,
@@ -68,7 +73,8 @@ export class EventController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("update/:id")
   async updateEvent(
     @CurrentUser() currentUser: JwtPayload,
@@ -80,7 +86,8 @@ export class EventController {
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("delete/:id")
   async deleteEvent(@Param("id") id: string) {
     return this.eventService.deleteEvent(id);
@@ -88,9 +95,28 @@ export class EventController {
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("restore/:id")
   async restoreEvent(@Param("id") id: string) {
     return this.eventService.restoreEvent(id);
+  }
+
+  @Throttle({ short: { limit: 3, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @HttpCode(200)
+  @Post(":id/cancel")
+  async cancelEvent(
+    @Param("id") id: string,
+    @CurrentUser() admin: JwtPayload,
+    @Body() dto: CancelEventDto
+  ) {
+    return this.eventService.cancelEventWithRefund(
+      id,
+      admin.userId,
+      dto.reason
+    );
   }
 }

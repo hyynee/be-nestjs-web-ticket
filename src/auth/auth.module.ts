@@ -26,7 +26,8 @@ import { ConfigService } from "@nestjs/config";
       useFactory: (configService: ConfigService) => ({
         global: true,
         secret: configService.getOrThrow<string>("SECRET_KEY"),
-        signOptions: { expiresIn: "1d" },
+        signOptions: { expiresIn: "1h", algorithm: "HS256" },
+        verifyOptions: { algorithms: ["HS256"] },
       }),
     }),
 

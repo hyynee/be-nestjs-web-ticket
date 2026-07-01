@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 // user.schema.ts
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document } from "mongoose";
@@ -28,12 +27,14 @@ export class User extends Document {
 
   @Prop({ default: "user", enum: ["user", "organizer", "admin"] })
   role: string;
-  comparePassword(password: string): boolean {
-    return bcrypt.compareSync(password, this.password);
-  }
+  declare comparePassword: (password: string) => Promise<boolean>;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+UserSchema.index({ role: 1 });
+UserSchema.index({ isActive: 1 });
+UserSchema.index({ isActive: 1, role: 1 });
 
 // Hash password trước khi lưu
 UserSchema.pre<User>("save", async function (next) {

@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return */
 import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -10,7 +10,14 @@ import { RedisService } from "@src/redis/redis.service";
 import { Request } from "express";
 
 @Injectable()
+/**
+ * @deprecated This guard is intentionally not registered for API authentication.
+ * Use Passport JwtStrategy via AuthGuard("jwt"), which performs token revocation
+ * checks and fails closed when Redis is unavailable.
+ */
 export class AuthGuard implements CanActivate {
+  private readonly logger = new Logger(AuthGuard.name);
+
   constructor(
     private jwtService: JwtService,
     private readonly redisService: RedisService
@@ -24,9 +31,17 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException("Token not provided");
     }
 
-    const isBlacklisted = await this.redisService.client.get(
-      `blacklist:access:${token}`
-    );
+    let isBlacklisted: string | null = null;
+    try {
+      isBlacklisted = await this.redisService.client.get(
+        `blacklist:access:${token}`
+      );
+    } catch (err) {
+      this.logger.error(
+        `AuthGuard: Redis unavailable, failing closed for blacklist check — ${(err as Error)?.message ?? "unknown"}`
+      );
+      throw new UnauthorizedException("Auth service temporarily unavailable");
+    }
 
     if (isBlacklisted) {
       throw new UnauthorizedException("Token has been revoked");
@@ -41,6 +56,7 @@ export class AuthGuard implements CanActivate {
 
     return true;
   }
+
   private extractTokenFromCookie(request: Request): string | undefined {
     return request.cookies?.access_token;
   }

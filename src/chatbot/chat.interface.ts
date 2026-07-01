@@ -22,7 +22,7 @@ export interface EventData {
   location: string;
   thumbnail?: string;
   isActiveNow: boolean;
-  status: "draft" | "active" | "inactive" | "ended";
+  status: "draft" | "active" | "inactive" | "ended" | "cancelled";
 }
 
 export interface FormattedEvent {

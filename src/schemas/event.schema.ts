@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
 import { User } from "./user.schema";
@@ -8,7 +7,27 @@ export enum EventStatus {
   ACTIVE = "active",
   INACTIVE = "inactive",
   ENDED = "ended",
+  CANCELLED = "cancelled",
 }
+
+@Schema({ _id: true })
+export class TimeSlot {
+  _id: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  label: string;
+
+  @Prop({ type: Date, required: true })
+  startTime: Date;
+
+  @Prop({ type: Date, required: true })
+  endTime: Date;
+
+  @Prop({ type: Number, min: 1 })
+  capacity?: number;
+}
+
+export const TimeSlotSchema = SchemaFactory.createForClass(TimeSlot);
 
 @Schema({ timestamps: true })
 export class Event extends Document {
@@ -37,6 +56,9 @@ export class Event extends Document {
   })
   status: EventStatus;
 
+  @Prop({ type: [TimeSlotSchema], default: [] })
+  timeSlots: TimeSlot[];
+
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
   createdBy: User;
 
@@ -45,6 +67,9 @@ export class Event extends Document {
 
   @Prop({ default: false })
   isDeleted: boolean;
+
+  @Prop({ type: Date })
+  deletedAt?: Date;
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);
@@ -60,3 +85,13 @@ EventSchema.index({ createdBy: 1 });
 EventSchema.index({ status: 1 });
 EventSchema.index({ startDate: 1 });
 EventSchema.index({ isDeleted: 1 });
+EventSchema.index({ createdAt: -1 });
+EventSchema.index({ status: 1, isDeleted: 1 }, { name: "idx_status_deleted" });
+EventSchema.index(
+  { status: 1, isDeleted: 1, createdAt: -1 },
+  { name: "idx_status_deleted_created" }
+);
+EventSchema.index(
+  { title: "text", description: "text", location: "text" },
+  { name: "idx_text_search" }
+);

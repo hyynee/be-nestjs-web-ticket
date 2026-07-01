@@ -18,6 +18,9 @@ export class Area {
   @Prop({ default: false })
   isDeleted: boolean;
 
+  @Prop({ type: Date })
+  deletedAt?: Date;
+
   @Prop({ type: String })
   rowLabel?: string;
 

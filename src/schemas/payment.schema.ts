@@ -43,6 +43,7 @@ export class Payment extends Document {
       "failed",
       "canceled",
       "refunded",
+      "partially_refunded",
     ],
     default: "pending",
   })
@@ -51,8 +52,39 @@ export class Payment extends Document {
   @Prop({ type: String })
   errorMessage?: string;
 
-  @Prop({ type: Object })
-  metadata?: Record<string, any>;
+  @Prop({
+    type: {
+      sessionId: String,
+      customerEmail: String,
+      customerName: String,
+      customerPhone: String,
+      orderId: String,
+      orderStatus: String,
+      authorizationId: String,
+      captureStatus: String,
+      captureId: String,
+      capturedAt: String,
+      bookingCode: String,
+      eventTitle: String,
+      amountUSD: String,
+    },
+    _id: false,
+  })
+  metadata?: {
+    sessionId?: string;
+    customerEmail?: string;
+    customerName?: string;
+    customerPhone?: string;
+    orderId?: string;
+    orderStatus?: string;
+    authorizationId?: string;
+    captureStatus?: string;
+    captureId?: string;
+    capturedAt?: string;
+    bookingCode?: string;
+    eventTitle?: string;
+    amountUSD?: string;
+  };
 
   @Prop({ type: Date })
   paidAt?: Date;
@@ -79,3 +111,20 @@ PaymentSchema.index({ stripePaymentIntentId: 1 });
 PaymentSchema.index({ paypalOrderId: 1 });
 PaymentSchema.index({ status: 1 });
 PaymentSchema.index({ isDeleted: 1 });
+PaymentSchema.index({ eventId: 1, status: 1, isDeleted: 1 });
+PaymentSchema.index({ createdAt: -1 });
+PaymentSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
+PaymentSchema.index({ eventId: 1, status: 1, isDeleted: 1, createdAt: -1 });
+// Revenue date-range queries in queryRevenueStatistics() filter on { eventId, createdAt }
+PaymentSchema.index(
+  { eventId: 1, createdAt: -1 },
+  { name: "idx_event_created" }
+);
+PaymentSchema.index(
+  { userId: 1, isDeleted: 1, createdAt: -1 },
+  { name: "idx_user_deleted_created" }
+);
+PaymentSchema.index(
+  { userId: 1, isDeleted: 1, status: 1, createdAt: -1 },
+  { name: "idx_user_deleted_status_created" }
+);

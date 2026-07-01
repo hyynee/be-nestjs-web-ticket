@@ -15,7 +15,7 @@ export class QueryBookingDto {
 
   @IsOptional()
   @IsString()
-  paymentStatus?: "unpaid" | "paid" | "refunded";
+  paymentStatus?: "unpaid" | "paid" | "refund_pending" | "refunded";
 
   @IsOptional()
   @IsNumber()

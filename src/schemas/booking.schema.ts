@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
 
@@ -12,14 +11,35 @@ export enum BookingStatus {
 export enum PaymentStatus {
   UNPAID = "unpaid",
   PAID = "paid",
+  REFUND_PENDING = "refund_pending",
   REFUNDED = "refunded",
 }
 
 @Schema({ timestamps: true })
+export class SeatLock extends Document {
+  @Prop({ type: Types.ObjectId, required: true })
+  eventId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, required: true })
+  areaId: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  seat: string;
+
+  @Prop({ type: Types.ObjectId, ref: "Booking", required: true })
+  bookingId: Types.ObjectId;
+
+  @Prop({ type: Date, required: true, expires: 0 })
+  expiresAt: Date;
+}
+
+export const SeatLockSchema = SchemaFactory.createForClass(SeatLock);
+SeatLockSchema.index({ eventId: 1, areaId: 1, seat: 1 }, { unique: true });
+
+@Schema({ timestamps: true })
 export class Booking extends Document {
-  // Mã booking unique để tracking
   @Prop({ required: true, unique: true })
-  bookingCode: string; // VD: BK20240101001
+  bookingCode: string;
 
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
   userId: Types.ObjectId;
@@ -33,6 +53,9 @@ export class Booking extends Document {
   @Prop({ type: Types.ObjectId, ref: "Area" })
   areaId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId })
+  timeSlotId?: Types.ObjectId;
+
   @Prop({ type: [String], default: [] })
   seats: string[];
 
@@ -45,7 +68,6 @@ export class Booking extends Document {
   @Prop({ type: Number, required: true, min: 0 })
   totalPrice: number;
 
-  // Trạng thái booking
   @Prop({
     type: String,
     enum: BookingStatus,
@@ -63,7 +85,6 @@ export class Booking extends Document {
   @Prop({ type: String })
   stripePaymentIntentId?: string;
 
-  // Thời gian hết hạn giữ vé (30 phút từ lúc tạo)
   @Prop({ type: Date, required: true })
   expiresAt: Date;
 
@@ -93,30 +114,61 @@ export class Booking extends Document {
 
   @Prop({ default: false })
   isDeleted: boolean;
+
+  @Prop({ type: Date })
+  deletedAt?: Date;
+
+  @Prop({ type: Number, default: 0 })
+  totalRefunded: number;
+
+  @Prop({ type: [{ amount: Number, refundedAt: Date }], default: [] })
+  refundHistory: Array<{ amount: number; refundedAt: Date }>;
+
+  @Prop({ type: String })
+  disputeId?: string;
+
+  @Prop({ type: String })
+  disputeReason?: string;
+
+  @Prop({ type: String, enum: ["open", "under_review", "won", "lost"] })
+  disputeStatus?: string;
 }
 
 export const BookingSchema = SchemaFactory.createForClass(Booking);
 
-// check booking còn hợp lệ không
 BookingSchema.virtual("isExpired").get(function () {
   return new Date() > this.expiresAt && this.status === "pending";
 });
 
-// check có thể hủy không (chưa thanh toán hoặc còn thời gian)
-BookingSchema.virtual("canCancel").get(function () {
-  return this.status === "confirmed" && this.paymentStatus === "paid";
-});
-
 BookingSchema.index({ userId: 1, createdAt: -1 });
+BookingSchema.index({ userId: 1, status: 1, isDeleted: 1, createdAt: -1 });
 BookingSchema.index({ eventId: 1 });
+BookingSchema.index({ eventId: 1, zoneId: 1, status: 1 });
 BookingSchema.index({ status: 1, expiresAt: 1 });
 BookingSchema.index({ stripePaymentIntentId: 1 });
 BookingSchema.index({ isDeleted: 1 });
-
-// Pre-save: Tự động tính expiresAt (30 phút)
-BookingSchema.pre<Booking>("save", function (next) {
-  if (this.isNew && !this.expiresAt) {
-    this.expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 phút
+BookingSchema.index({ paymentStatus: 1, isDeleted: 1 });
+BookingSchema.index(
+  { status: 1, expiresAt: 1, isDeleted: 1 },
+  { name: "idx_expiry_cleanup" }
+);
+BookingSchema.index(
+  { userId: 1, isDeleted: 1, createdAt: -1 },
+  { name: "idx_user_deleted_created" }
+);
+BookingSchema.index(
+  { userId: 1, eventId: 1, status: 1, isDeleted: 1 },
+  { name: "idx_user_event_status_deleted" }
+);
+BookingSchema.index(
+  { eventId: 1, zoneId: 1, areaId: 1, isDeleted: 1 },
+  {
+    partialFilterExpression: { status: { $eq: BookingStatus.PENDING } },
+    name: "idx_pending_seats_lookup",
   }
-  next();
-});
+);
+// sparse: true — chỉ index documents có timeSlotId (events không dùng slots không bị ảnh hưởng)
+BookingSchema.index(
+  { timeSlotId: 1, status: 1 },
+  { sparse: true, name: "idx_timeslot_status" }
+);

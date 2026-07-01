@@ -68,6 +68,9 @@ const envConfig = {
   get AUTH_COOKIE_DOMAIN() {
     return process.env.AUTH_COOKIE_DOMAIN as string;
   },
+  get APP_TIMEZONE() {
+    return process.env.APP_TIMEZONE ?? "+07:00";
+  },
 };
 
 export default envConfig;

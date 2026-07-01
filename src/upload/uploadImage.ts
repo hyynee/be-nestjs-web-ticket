@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import {
   Controller,
   Post,
@@ -16,6 +15,7 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiCookieAuth } from "@nestjs/swagger";
 import config from "@src/config/config";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { v2 as cloudinary } from "cloudinary";
 import * as multer from "multer";
 import { UserService } from "@src/user/user.service";
@@ -37,7 +37,8 @@ export class UploadController {
   // ==================== ADMIN ENDPOINTS ====================
 
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("private")
   @UseInterceptors(FileInterceptor("image", { storage }))
   async uploadPrivateImage(@UploadedFile() file: Express.Multer.File) {
@@ -103,14 +104,15 @@ export class UploadController {
     } catch (error) {
       console.error("Cloudinary upload error:", error);
       throw new HttpException(
-        `Upload failed: ${error.message}`,
+        "File upload failed. Please try again.",
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
 
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("refresh-url")
   refreshSignedUrl(@Query("publicId") publicId: string) {
     if (!publicId) {
@@ -239,7 +241,7 @@ export class UploadController {
     } catch (error) {
       console.error("Avatar upload error:", error);
       throw new HttpException(
-        `Upload failed: ${error.message}`,
+        "Avatar upload failed. Please try again.",
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }

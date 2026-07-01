@@ -1,0 +1,79 @@
+name: MongoDB Backup
+
+on:
+  # Run daily at 02:00 UTC
+  schedule:
+    - cron: "0 2 * * *"
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  backup:
+    name: Dump & upload to S3
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install mongodump
+        run: |
+          wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
+          echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+          sudo apt-get update -q
+          sudo apt-get install -y mongodb-database-tools
+
+      - name: Run mongodump
+        env:
+          MONGODB_URI: ${{ secrets.BACKUP_MONGODB_URI }}
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          DUMP_DIR="/tmp/mongodump_${TIMESTAMP}"
+          mongodump --uri="${MONGODB_URI}" --out="${DUMP_DIR}"
+          tar -czf "/tmp/backup_${TIMESTAMP}.tar.gz" -C /tmp "mongodump_${TIMESTAMP}"
+          echo "BACKUP_FILE=/tmp/backup_${TIMESTAMP}.tar.gz" >> $GITHUB_ENV
+          echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
+
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BACKUP_AWS_REGION }}
+          S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+        run: |
+          aws s3 cp "${BACKUP_FILE}" "s3://${S3_BUCKET}/mongodb/backup_${TIMESTAMP}.tar.gz"
+          echo "Backup uploaded: s3://${S3_BUCKET}/mongodb/backup_${TIMESTAMP}.tar.gz"
+
+      - name: Verify backup integrity
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BACKUP_AWS_REGION }}
+          S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+        run: |
+          aws s3 cp "s3://${S3_BUCKET}/mongodb/backup_${TIMESTAMP}.tar.gz" /tmp/verify.tar.gz
+          tar -tzf /tmp/verify.tar.gz > /dev/null && echo "Backup tarball is valid" || { echo "BACKUP CORRUPT — tar integrity check failed"; exit 1; }
+          echo "Backup verified successfully"
+
+      - name: Prune old backups (keep last 30 days)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BACKUP_AWS_REGION }}
+          S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+        run: |
+          CUTOFF=$(date -d '30 days ago' +%Y%m%d 2>/dev/null || date -v-30d +%Y%m%d)
+          aws s3 ls "s3://${S3_BUCKET}/mongodb/" | while read -r line; do
+            FILE_DATE=$(echo "$line" | awk '{print $4}' | grep -oP '\d{8}' | head -1)
+            FILE_NAME=$(echo "$line" | awk '{print $4}')
+            if [[ -n "${FILE_DATE}" && "${FILE_DATE}" < "${CUTOFF}" ]]; then
+              aws s3 rm "s3://${S3_BUCKET}/mongodb/${FILE_NAME}"
+              echo "Deleted old backup: ${FILE_NAME}"
+            fi
+          done
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          if [ -n "${{ secrets.SLACK_ALERT_WEBHOOK }}" ]; then
+            curl -fsS -X POST "${{ secrets.SLACK_ALERT_WEBHOOK }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\":\"BACKUP FAILED on ${{ github.repository }} — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+          fi

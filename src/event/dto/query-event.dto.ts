@@ -22,7 +22,7 @@ export class QueryEventDTO {
   search?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(["createdAt", "startDate", "endDate", "title", "status"])
   sortBy?: string = "createdAt";
 
   @IsOptional()

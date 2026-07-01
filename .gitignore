@@ -16,3 +16,6 @@ coverage/
 backup/
 # Ignore all test spec files
 *.spec.ts
+*.md 
+*.txt
+*.js

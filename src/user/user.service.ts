@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable, NotFoundException, Inject } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
@@ -7,6 +6,7 @@ import { QueryUserDTO } from "./dto/query-user.dto";
 import { Payment } from "@src/schemas/payment.schema";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
+import { escapeRegex } from "@src/common/utils/regex.utils";
 
 @Injectable()
 export class UserService {
@@ -148,7 +148,9 @@ export class UserService {
     const filter: any = {};
 
     if (search) {
-      filter.$or = [{ email: { $regex: search, $options: "i" } }];
+      filter.$or = [
+        { email: { $regex: escapeRegex(search.trim()), $options: "i" } },
+      ];
     }
     if (query.isActive !== undefined) {
       filter.isActive = query.isActive;

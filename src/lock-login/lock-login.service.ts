@@ -23,6 +23,14 @@ export class LockLoginService {
 
   // Check tài khoản có bị khóa không
   async isLocked(identifier: string, ipAddress: string): Promise<boolean> {
+    // Check global per-email lockout first
+    const safeIdentifier = identifier.replace(/[^a-zA-Z0-9@._-]/g, "");
+    const emailKey = `auth:fail:email:${safeIdentifier}`;
+    const globalFailures = await this.redisService.client.get(emailKey);
+    if (globalFailures && parseInt(globalFailures, 10) >= 10) {
+      return true;
+    }
+
     const key = this.buildLockKey(identifier, ipAddress);
     const failedCount = Number((await this.redisService.client.get(key)) || 0);
 
@@ -45,15 +53,18 @@ export class LockLoginService {
   ): Promise<void> {
     const key = this.buildLockKey(identifier, ipAddress);
     const failedCount = await this.redisService.client.incr(key);
-    // Lần fail đầu tiên thì gắn TTL cho toàn bộ cửa sổ lock.
-    if (failedCount === 1) {
-      await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
-    }
-    let ttl = await this.redisService.client.ttl(key);
-    if (ttl < 0) {
-      await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS);
-      ttl = this.LOCK_TIME_SECONDS;
-    }
+    await this.redisService.client.expire(key, this.LOCK_TIME_SECONDS, "NX");
+
+    const safeIdentifier = identifier.replace(/[^a-zA-Z0-9@._-]/g, "");
+    const emailKey = `auth:fail:email:${safeIdentifier}`;
+    await this.redisService.client.incr(emailKey);
+    await this.redisService.client.expire(
+      emailKey,
+      this.LOCK_TIME_SECONDS,
+      "NX"
+    );
+
+    const ttl = await this.redisService.client.ttl(key);
     if (failedCount >= this.MAX_FAILED_ATTEMPTS) {
       this.logger.error({
         message: "Account LOCKED due to too many failed attempts",
@@ -84,6 +95,10 @@ export class LockLoginService {
   async resetLocked(identifier: string, ipAddress: string): Promise<void> {
     const key = this.buildLockKey(identifier, ipAddress);
     const deletedCount = await this.redisService.client.del(key);
+
+    const safeIdentifier = identifier.replace(/[^a-zA-Z0-9@._-]/g, "");
+    const emailKey = `auth:fail:email:${safeIdentifier}`;
+    await this.redisService.client.del(emailKey).catch(() => {});
 
     if (deletedCount > 0) {
       this.logger.info({

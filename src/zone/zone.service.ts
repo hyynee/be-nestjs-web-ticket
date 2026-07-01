@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
-  Inject,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose/dist/common/mongoose.decorators";
 import { Zone } from "@src/schemas/zone.schema";
@@ -12,19 +12,25 @@ import { QueryZoneDto } from "./dto/query-zone.dto";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { CreateZoneDto } from "./dto/create-zone.dto";
 import { UpdateZoneDto } from "./dto/update-zone.dto";
-import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
-import { Event } from "@src/schemas/event.schema";
+import { escapeRegex } from "@src/common/utils/regex.utils";
+import { Event, EventStatus } from "@src/schemas/event.schema";
 import { Area } from "@src/schemas/area.schema";
+import { RedisService } from "@src/redis/redis.service";
 
 @Injectable()
 export class ZoneService {
-  private readonly ZONE_CACHE_LIST_KEY: Set<string> = new Set();
+  private readonly logger = new Logger(ZoneService.name);
+  private readonly CACHE_LIST_PREFIX = "zones:list";
+  private readonly ZONE_LIST_INDEX = "zones:list:index";
+  private readonly ZONE_CACHE_TTL_SEC = 30;
+  private readonly ZONE_DETAIL_PREFIX = "zone:detail:";
+
   constructor(
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache
+    private readonly redisService: RedisService
   ) {}
 
   private async ensureActiveEvent(eventId: string | Types.ObjectId) {
@@ -32,11 +38,17 @@ export class ZoneService {
       typeof eventId === "string" ? new Types.ObjectId(eventId) : eventId;
     const event = await this.eventModel
       .findOne({ _id: normalizedEventId, isDeleted: false })
-      .select("_id")
+      .select("_id status")
       .lean();
 
     if (!event) {
       throw new BadRequestException("Event not found or has been deleted");
+    }
+
+    if (event.status === EventStatus.ENDED) {
+      throw new BadRequestException(
+        "Cannot modify zones for an event that has already ended"
+      );
     }
   }
 
@@ -50,13 +62,19 @@ export class ZoneService {
       sortBy = "createdAt",
       sortOrder = "desc",
     } = query;
-    return `zones:list:event=${eventId || "all"}:search=${search || ""}:hasSeating=${hasSeating ?? "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+    return `${this.CACHE_LIST_PREFIX}:event=${eventId || "all"}:search=${search || ""}:hasSeating=${hasSeating ?? "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
   }
+
   private async invalidateZoneCache(): Promise<void> {
-    for (const key of this.ZONE_CACHE_LIST_KEY) {
-      await this.cacheManager.del(key);
+    try {
+      const keys = await this.redisService.client.sMembers(
+        this.ZONE_LIST_INDEX
+      );
+      const toDelete = [...keys, this.ZONE_LIST_INDEX];
+      await this.redisService.client.del(toDelete);
+    } catch {
+      /* Non-fatal */
     }
-    this.ZONE_CACHE_LIST_KEY.clear();
   }
   async getAllActiveZones(
     query: QueryZoneDto
@@ -75,20 +93,20 @@ export class ZoneService {
       throw new BadRequestException("Invalid event ID");
     }
     const cacheKey = this.generateListCacheKey(query);
-    const cachedData =
-      await this.cacheManager.get<PaginatedResponse<Zone>>(cacheKey);
-    if (cachedData) {
-      return cachedData;
-    }
+    const cachedRaw = await this.redisService.client
+      .get(cacheKey)
+      .catch(() => null);
+    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Zone>;
     const skip = (page - 1) * limit;
     const filter: any = { isDeleted: false };
     if (eventId) {
       filter.eventId = new Types.ObjectId(eventId);
     }
     if (search) {
+      const escapedSearch = escapeRegex(search.trim());
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { name: { $regex: escapedSearch, $options: "i" } },
+        { description: { $regex: escapedSearch, $options: "i" } },
       ];
     }
     if (hasSeating !== undefined) {
@@ -118,8 +136,16 @@ export class ZoneService {
         hasNextPage: page < totalPages,
       },
     };
-    await this.cacheManager.set(cacheKey, result, 30000);
-    this.ZONE_CACHE_LIST_KEY.add(cacheKey);
+    await Promise.all([
+      this.redisService.client.set(cacheKey, JSON.stringify(result), {
+        EX: this.ZONE_CACHE_TTL_SEC,
+      }),
+      this.redisService.client.sAdd(this.ZONE_LIST_INDEX, cacheKey),
+      this.redisService.client.expire(
+        this.ZONE_LIST_INDEX,
+        this.ZONE_CACHE_TTL_SEC * 2
+      ),
+    ]).catch(() => {});
     return result;
   }
 
@@ -178,11 +204,11 @@ export class ZoneService {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException("Invalid zone ID");
     }
-    const cacheKey = `zone:${id}`;
-    const cachedData = await this.cacheManager.get<Zone>(cacheKey);
-    if (cachedData) {
-      return cachedData;
-    }
+    const cacheKey = `${this.ZONE_DETAIL_PREFIX}${id}`;
+    const cachedRaw = await this.redisService.client
+      .get(cacheKey)
+      .catch(() => null);
+    if (cachedRaw) return JSON.parse(cachedRaw) as Zone;
     const zone = await this.zoneModel.findOne({
       _id: new Types.ObjectId(id),
       isDeleted: false,
@@ -190,7 +216,9 @@ export class ZoneService {
     if (!zone) {
       throw new BadRequestException("Zone not found or has been deleted");
     }
-    await this.cacheManager.set(cacheKey, zone, 30000);
+    await this.redisService.client
+      .set(cacheKey, JSON.stringify(zone), { EX: this.ZONE_CACHE_TTL_SEC })
+      .catch(() => {});
     return zone;
   }
 
@@ -221,9 +249,7 @@ export class ZoneService {
       createdBy: currentUser.userId,
     });
     try {
-      await this.invalidateZoneCache();
       await zone.save();
-      return zone;
     } catch (err: any) {
       if (err.code === 11000) {
         throw new BadRequestException(
@@ -232,6 +258,12 @@ export class ZoneService {
       }
       throw err;
     }
+    await this.invalidateZoneCache().catch((err: Error) =>
+      this.logger.warn(
+        `Failed to invalidate zone list cache after create: ${err.message}`
+      )
+    );
+    return zone;
   }
 
   async updateZone(
@@ -275,6 +307,15 @@ export class ZoneService {
       }
     }
 
+    if (
+      updateZoneDto.capacity !== undefined &&
+      updateZoneDto.capacity < currentZone.soldCount
+    ) {
+      throw new BadRequestException(
+        `Không thể giảm capacity (${updateZoneDto.capacity}) xuống dưới số vé đã bán (${currentZone.soldCount})`
+      );
+    }
+
     if (updateZoneDto.hasSeating === false && currentZone.hasSeating) {
       const activeAreas = await this.areaModel.countDocuments({
         zoneId: new Types.ObjectId(id),
@@ -295,17 +336,42 @@ export class ZoneService {
     if (name) {
       updatedData.name = name.trim().toUpperCase();
     }
-    const zone = await this.zoneModel.findOneAndUpdate(
-      { _id: new Types.ObjectId(id), isDeleted: false },
-      updatedData,
-      { new: true }
-    );
+    const updateFilter: Record<string, unknown> = {
+      _id: new Types.ObjectId(id),
+      isDeleted: false,
+    };
 
+    if (updateZoneDto.capacity !== undefined) {
+      updateFilter.soldCount = { $lte: updateZoneDto.capacity };
+    }
+
+    let zone;
+    try {
+      zone = await this.zoneModel.findOneAndUpdate(updateFilter, updatedData, {
+        new: true,
+      });
+    } catch (err: any) {
+      if (err.code === 11000 || err.code === 11001) {
+        throw new BadRequestException(
+          `Zone "${updatedData.name || name || "with that name"}" already exists in this event`
+        );
+      }
+      throw err;
+    }
     if (!zone) {
+      if (updateZoneDto.capacity !== undefined) {
+        throw new ConflictException("Capacity below current sold count");
+      }
       throw new BadRequestException("Zone not found or has been deleted");
     }
-    await this.invalidateZoneCache();
-    await this.cacheManager.del(`zone:${id}`);
+    await this.invalidateZoneCache().catch((err: Error) =>
+      this.logger.warn(
+        `Failed to invalidate zone list cache after update: ${err.message}`
+      )
+    );
+    await this.redisService.client
+      .del(`${this.ZONE_DETAIL_PREFIX}${id}`)
+      .catch(() => {});
     return zone;
   }
 }

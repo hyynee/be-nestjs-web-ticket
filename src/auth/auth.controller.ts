@@ -8,6 +8,7 @@ import {
   Res,
   UseGuards,
   HttpCode,
+  HttpStatus,
 } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { LoginDTO } from "./dto/login.dto";
@@ -44,6 +45,7 @@ export class AuthController {
 
   @Throttle({ short: { limit: 5, ttl: 5000 } })
   @Post("login")
+  @HttpCode(200)
   @UseGuards(LockLoginGuard)
   @ApiOperation({ summary: "Đăng nhập bằng email và mật khẩu" })
   @ApiResponse({ status: 200, description: "Đăng nhập thành công" })
@@ -109,7 +111,9 @@ export class AuthController {
   }
 
   @Post("logout")
-  @ApiCookieAuth("refresh_token")
+  @HttpCode(204)
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
   @ApiOperation({ summary: "Đăng xuất người dùng" })
   logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const refreshToken =
@@ -140,8 +144,8 @@ export class AuthController {
   }
 
   @Throttle({ short: { limit: 3, ttl: 60000 } })
-  @HttpCode(200)
-  @Put("/resetPassword")
+  @HttpCode(HttpStatus.OK)
+  @Post("/resetPassword")
   async resetPassword(@Body() data: ResetPasswordDto) {
     return this.authService.resetPassword(data);
   }

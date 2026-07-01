@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { RedisService } from "@src/redis/redis.service";
 import { NextFunction, Request, Response } from "express";

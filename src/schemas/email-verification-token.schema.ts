@@ -17,3 +17,6 @@ export class EmailVerificationToken extends Document {
 export const EmailVerificationTokenSchema = SchemaFactory.createForClass(
   EmailVerificationToken
 );
+
+EmailVerificationTokenSchema.index({ userId: 1 });
+EmailVerificationTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

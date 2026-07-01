@@ -1,39 +1,84 @@
 import {
   Injectable,
-  Inject,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  Logger,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Booking, BookingStatus } from "@src/schemas/booking.schema";
+import {
+  Booking,
+  BookingStatus,
+  PaymentStatus,
+} from "@src/schemas/booking.schema";
 import { Ticket } from "@src/schemas/ticket.schema";
 import { ClientSession, FilterQuery, Model, Types } from "mongoose";
 import { Event } from "@src/schemas/event.schema";
+import { Zone } from "@src/schemas/zone.schema";
 import * as crypto from "crypto";
-import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import * as QRCode from "qrcode";
+import { escapeRegex } from "@src/common/utils/regex.utils";
+import { isDuplicateKeyError } from "@src/common/utils/mongo.utils";
 import { TicketGateway } from "./ticket.gateway";
 import { CheckInLog } from "@src/schemas/checkin-log.schema";
 import { QueryTicketDto } from "./dto/query.dto";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
+import { RedisService } from "@src/redis/redis.service";
+import { UploadService } from "@src/upload/upload.service";
+import { AuditService } from "@src/audit/audit.service";
+import { AuditAction } from "@src/schemas/audit-log.schema";
 import type {
   TicketBroadcastItem,
   TicketEventTitle,
   TicketEventWindow,
+  TimeSlotWindow,
   ZoneSeatMode,
 } from "./types/ticket.types";
 
+const RELEASE_LOCK_SCRIPT = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+  else
+    return 0
+  end
+`;
+
+const CHECKIN_GRACE_MS = 30 * 60 * 1000; // 30 minutes before slot start
+
+export function validateTimeSlotWindow(
+  slot: TimeSlotWindow,
+  now: Date
+): { valid: boolean; message?: string } {
+  const earliest = new Date(slot.startTime.getTime() - CHECKIN_GRACE_MS);
+  if (now < earliest) {
+    return {
+      valid: false,
+      message: `Chưa tới giờ check-in cho khung giờ "${slot.label}" (từ ${earliest.toISOString()})`,
+    };
+  }
+  if (now > slot.endTime) {
+    return {
+      valid: false,
+      message: `Khung giờ "${slot.label}" đã kết thúc lúc ${slot.endTime.toISOString()}`,
+    };
+  }
+  return { valid: true };
+}
+
 @Injectable()
 export class TicketService {
-  private readonly TICKETS_CACHE_LIST_KEY = new Set<string>(); // cache list admin
-  private readonly USER_TICKETS_CACHE_KEY = new Set<string>(); // cache list user
+  private readonly logger = new Logger(TicketService.name);
+
   constructor(
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectModel(Event.name) private eventModel: Model<Event>,
     @InjectModel(CheckInLog.name) private checkInLogModel: Model<CheckInLog>,
+    @InjectModel(Zone.name) private zoneModel: Model<Zone>,
     private ticketGateway: TicketGateway,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly redisService: RedisService,
+    private readonly uploadService: UploadService,
+    private readonly auditService: AuditService
   ) {}
 
   private generateListCacheKey(query: QueryTicketDto): string {
@@ -52,23 +97,29 @@ export class TicketService {
     return `tickets:list:event=${eventId || "all"}:zone=${zoneId || "all"}:area=${areaId || "all"}:status=${status || "all"}:ticketCode=${ticketCode || ""}:userId=${userId || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
   }
 
+  private readonly TICKET_LIST_INDEX = "tickets:list:index";
+  private readonly TICKET_CACHE_TTL_SEC = 30;
+
   private async invalidateTicketCache(): Promise<void> {
-    for (const key of this.TICKETS_CACHE_LIST_KEY) {
-      await this.cacheManager.del(key);
+    try {
+      const keys = await this.redisService.client.sMembers(
+        this.TICKET_LIST_INDEX
+      );
+      const toDelete = [...keys, this.TICKET_LIST_INDEX];
+      await this.redisService.client.del(toDelete);
+    } catch {
+      /* Non-fatal */
     }
-    this.TICKETS_CACHE_LIST_KEY.clear();
   }
 
   private async invalidateUserTicketCache(userId: string): Promise<void> {
-    const keysToDelete: string[] = [];
-    for (const key of this.USER_TICKETS_CACHE_KEY) {
-      if (key.includes(`tickets:user:${userId}:`)) {
-        keysToDelete.push(key);
-      }
-    }
-    for (const key of keysToDelete) {
-      await this.cacheManager.del(key);
-      this.USER_TICKETS_CACHE_KEY.delete(key);
+    try {
+      const indexKey = `tickets:user:${userId}:index`;
+      const keys = await this.redisService.client.sMembers(indexKey);
+      const toDelete = [...keys, indexKey];
+      await this.redisService.client.del(toDelete);
+    } catch {
+      /* Non-fatal */
     }
   }
 
@@ -101,21 +152,24 @@ export class TicketService {
     const random = crypto.randomBytes(6).toString("hex").toUpperCase();
     return `TK${timestamp}${random}`;
   }
-  // tạo qr code từ ticket code
+  // tạo qr code từ ticket code và upload lên Cloudinary, trả về URL
   private async generateQRCode(ticketCode: string): Promise<string> {
     try {
-      // Tạo data URL (base64) cho QR code
-      const qrCodeDataURL = await QRCode.toDataURL(ticketCode, {
+      const buffer = await QRCode.toBuffer(ticketCode, {
         errorCorrectionLevel: "H",
-        type: "image/png",
+        type: "png",
         width: 300,
         margin: 1,
       });
-      //  const url = await this.uploadService.uploadQRCode(qrCodeDataURL, ticketCode);
-      // return url;
-      return qrCodeDataURL;
+      const url = await this.uploadService.uploadQRCodeBuffer(
+        buffer,
+        ticketCode
+      );
+      return url;
     } catch (error) {
-      console.error("Error generating QR code:", error);
+      this.logger.error(
+        `Error generating QR code: ${(error as Error)?.message}`
+      );
       throw new BadRequestException("Failed to generate QR code");
     }
   }
@@ -124,8 +178,9 @@ export class TicketService {
     session?: ClientSession,
     requesterUserId?: string
   ) {
+    const normalizedCode = bookingCode.trim().toUpperCase();
     const booking = await this.bookingModel
-      .findOne({ bookingCode })
+      .findOne({ bookingCode: normalizedCode, isDeleted: false })
       .populate("zoneId", "hasSeating")
       .session(session ?? null)
       .exec();
@@ -143,88 +198,185 @@ export class TicketService {
     if (booking.status !== BookingStatus.CONFIRMED) {
       throw new BadRequestException("Booking is not confirmed");
     }
-    const existed = await this.ticketModel
-      .exists({
-        bookingId: booking._id,
-        isDeleted: false,
-      })
-      .session(session ?? null);
 
-    if (existed) {
-      return this.ticketModel
-        .find({
-          bookingId: booking._id,
-          isDeleted: false,
-        })
+    const bookingId = (booking._id as Types.ObjectId).toString();
+
+    const shouldUseLock = !session;
+    const lockKey = `ticket:create:lock:${bookingId}`;
+    const lockValue = crypto.randomBytes(8).toString("hex");
+    let lockAcquired = false;
+
+    if (shouldUseLock) {
+      const acquired = await this.redisService.client.set(lockKey, lockValue, {
+        NX: true,
+        EX: 300,
+      });
+
+      if (!acquired) {
+        const existing = await this.ticketModel
+          .find({ bookingId: booking._id, isDeleted: false })
+          .session(session ?? null)
+          .exec();
+        if (existing.length > 0) return existing;
+        throw new ConflictException(
+          "Ticket creation is already in progress for this booking. Please retry in a moment."
+        );
+      }
+      lockAcquired = true;
+    }
+
+    try {
+      const existingTickets = await this.ticketModel
+        .find({ bookingId: booking._id, isDeleted: false })
         .session(session ?? null)
         .exec();
-    }
-    const ticketsData: any[] = [];
-    const zone = booking.zoneId as unknown as ZoneSeatMode;
 
-    if (Boolean(zone.hasSeating) && booking.seats?.length) {
-      for (const seat of booking.seats) {
-        const ticketCode = this.generateTicketCode();
-        ticketsData.push({
-          bookingId: booking._id,
-          eventId: new Types.ObjectId(booking.eventId),
-          zoneId: new Types.ObjectId(booking.zoneId),
-          areaId: booking.areaId
-            ? new Types.ObjectId(booking.areaId)
-            : undefined,
-          seatNumber: seat,
-          status: "valid",
-          price: booking.pricePerTicket,
-          userId: new Types.ObjectId(booking.userId),
-          ticketCode,
-        });
+      if (existingTickets.length > 0) return existingTickets;
+
+      const ticketsData: any[] = [];
+      const zone = booking.zoneId as unknown as ZoneSeatMode;
+
+      const timeSlotId = booking.timeSlotId
+        ? new Types.ObjectId(booking.timeSlotId)
+        : undefined;
+
+      if (Boolean(zone.hasSeating) && booking.seats?.length) {
+        for (const seat of booking.seats) {
+          ticketsData.push({
+            bookingId: booking._id,
+            eventId: new Types.ObjectId(booking.eventId),
+            zoneId: new Types.ObjectId(booking.zoneId),
+            areaId: booking.areaId
+              ? new Types.ObjectId(booking.areaId)
+              : undefined,
+            timeSlotId,
+            seatNumber: seat,
+            status: "valid",
+            price: booking.pricePerTicket,
+            userId: new Types.ObjectId(booking.userId),
+            ticketCode: this.generateTicketCode(),
+          });
+        }
+      } else {
+        for (let i = 0; i < booking.quantity; i++) {
+          ticketsData.push({
+            bookingId: booking._id,
+            eventId: new Types.ObjectId(booking.eventId),
+            zoneId: new Types.ObjectId(booking.zoneId),
+            areaId: booking.areaId
+              ? new Types.ObjectId(booking.areaId)
+              : undefined,
+            timeSlotId,
+            userId: new Types.ObjectId(booking.userId),
+            ticketCode: this.generateTicketCode(),
+            price: booking.pricePerTicket,
+            status: "valid",
+          });
+        }
       }
-    } else {
-      for (let i = 0; i < booking.quantity; i++) {
-        const ticketCode = this.generateTicketCode();
-        ticketsData.push({
-          bookingId: booking._id,
-          eventId: new Types.ObjectId(booking.eventId),
-          zoneId: new Types.ObjectId(booking.zoneId),
-          areaId: booking.areaId
-            ? new Types.ObjectId(booking.areaId)
-            : undefined,
-          userId: new Types.ObjectId(booking.userId),
-          ticketCode,
-          price: booking.pricePerTicket,
-          status: "valid",
+
+      const documentsToInsert = session
+        ? ticketsData
+        : await Promise.all(
+            ticketsData.map(async (data) => ({
+              ...data,
+              qrCode: await this.generateQRCode(data.ticketCode),
+            }))
+          );
+
+      let createdTickets: any[];
+      try {
+        createdTickets = await this.ticketModel.insertMany(documentsToInsert, {
+          session,
         });
+      } catch (err) {
+        if (isDuplicateKeyError(err)) {
+          const existing = await this.ticketModel
+            .find({ bookingId: booking._id, isDeleted: false })
+            .session(session ?? null)
+            .exec();
+          if (existing.length > 0) return existing;
+        }
+        throw err;
+      }
+
+      if (!session) {
+        await this.publishTicketCreation(
+          booking.bookingCode,
+          createdTickets,
+          booking.userId?.toString()
+        );
+      }
+
+      return createdTickets;
+    } finally {
+      if (lockAcquired) {
+        await this.redisService.client
+          .eval(RELEASE_LOCK_SCRIPT, {
+            keys: [lockKey],
+            arguments: [lockValue],
+          })
+          .catch(() => {});
       }
     }
-    const createdTickets = await this.ticketModel.insertMany(ticketsData, {
-      session,
-    });
-    const qrCodes = await Promise.all(
-      createdTickets.map((t) => this.generateQRCode(t.ticketCode))
-    );
-    await this.ticketModel.bulkWrite(
-      createdTickets.map((ticket, i) => ({
+  }
+
+  async generateMissingQRCodesForBooking(
+    bookingCode: string
+  ): Promise<Ticket[]> {
+    const normalizedCode = bookingCode.trim().toUpperCase();
+    const booking = await this.bookingModel
+      .findOne({ bookingCode: normalizedCode, isDeleted: false })
+      .select("_id bookingCode userId")
+      .lean();
+
+    if (!booking) {
+      throw new BadRequestException("Invalid booking code");
+    }
+
+    const tickets = await this.ticketModel
+      .find({ bookingId: booking._id, isDeleted: false })
+      .exec();
+
+    if (!tickets.length) {
+      throw new BadRequestException("No tickets found for booking");
+    }
+
+    const missingQrTickets = tickets.filter((ticket) => !ticket.qrCode);
+    if (!missingQrTickets.length) {
+      return tickets;
+    }
+
+    const updates = await Promise.all(
+      missingQrTickets.map(async (ticket) => ({
         updateOne: {
-          filter: { _id: ticket._id },
-          update: { $set: { qrCode: qrCodes[i] } },
+          filter: {
+            _id: ticket._id,
+            isDeleted: false,
+            qrCode: { $exists: false },
+          },
+          update: {
+            $set: {
+              qrCode: await this.generateQRCode(ticket.ticketCode),
+            },
+          },
         },
-      })),
-      { session }
+      }))
     );
 
-    createdTickets.forEach((ticket, i) => {
-      ticket.qrCode = qrCodes[i];
-    });
+    await this.ticketModel.bulkWrite(updates);
 
-    if (!session) {
-      await this.publishTicketCreation(
-        booking.bookingCode,
-        createdTickets,
-        booking.userId?.toString()
-      );
-    }
+    const refreshedTickets = await this.ticketModel
+      .find({ bookingId: booking._id, isDeleted: false })
+      .exec();
 
-    return createdTickets;
+    await this.publishTicketCreation(
+      normalizedCode,
+      refreshedTickets,
+      booking.userId?.toString()
+    );
+
+    return refreshedTickets;
   }
   async getTicketByCode(userId: string, ticketCode: string) {
     if (!userId) {
@@ -255,7 +407,7 @@ export class TicketService {
   ) {
     const ticket = await this.ticketModel
       .findOne({ ticketCode, isDeleted: false })
-      .populate("eventId", "startDate endDate")
+      .populate("eventId", "startDate endDate timeSlots")
       .exec();
     if (!ticket) {
       throw new BadRequestException("Ticket not found");
@@ -289,7 +441,9 @@ export class TicketService {
         message: "Vé đã hết hạn",
       };
     }
-    const event = ticket.eventId as unknown as TicketEventWindow;
+    const event = ticket.eventId as unknown as TicketEventWindow & {
+      timeSlots?: TimeSlotWindow[];
+    };
     if (!event) {
       throw new BadRequestException("Event not found for this ticket");
     }
@@ -307,6 +461,22 @@ export class TicketService {
       };
     }
 
+    if (ticket.timeSlotId) {
+      const slot = event.timeSlots?.find(
+        (s) => s._id.toString() === ticket.timeSlotId!.toString()
+      );
+      if (!slot) {
+        return {
+          valid: false,
+          message: "Khung giờ của vé này không còn tồn tại trong sự kiện",
+        };
+      }
+      const check = validateTimeSlotWindow(slot, now);
+      if (!check.valid) {
+        return { valid: false, message: check.message };
+      }
+    }
+
     return {
       valid: true,
       message: "Vé hợp lệ, có thể sử dụng",
@@ -321,61 +491,198 @@ export class TicketService {
     ipAddress: string,
     adminId: string
   ) {
-    const now = new Date();
-    const ticket = await this.ticketModel
-      .findOne({ ticketCode, status: "valid", isDeleted: false })
-      .populate("eventId", "startDate endDate")
-      .exec();
+    const dbSession = await this.ticketModel.db.startSession();
+    let updatedTicket: any = null;
+    let ticketId: Types.ObjectId | null = null;
 
-    if (!ticket) {
+    try {
+      await dbSession.withTransaction(async () => {
+        const ticket = await this.ticketModel
+          .findOne({ ticketCode, isDeleted: false })
+          .populate("eventId", "startDate endDate timeSlots")
+          .session(dbSession)
+          .exec();
+
+        if (!ticket) {
+          throw new BadRequestException(
+            "Ticket không hợp lệ hoặc đã được check-in"
+          );
+        }
+
+        ticketId = ticket._id as Types.ObjectId;
+
+        if (ticket.status !== "valid") {
+          const reason =
+            ticket.status === "used"
+              ? "Vé đã được check-in bởi thiết bị khác"
+              : ticket.status === "expired"
+                ? "Vé đã hết hạn"
+                : "Vé không hợp lệ vì đã bị hủy hoặc hoàn tiền";
+
+          await this.checkInLogModel.create(
+            [
+              {
+                ticketId: ticket._id,
+                adminId,
+                location,
+                deviceInfo,
+                ipAddress,
+                success: false,
+                message: `Failed: ticket is ${ticket.status}`,
+              },
+            ],
+            { session: dbSession }
+          );
+          throw new BadRequestException(reason);
+        }
+
+        if (!ticket.eventId) {
+          throw new BadRequestException("Event not found");
+        }
+        const event = ticket.eventId as unknown as TicketEventWindow & {
+          timeSlots?: TimeSlotWindow[];
+        };
+        const now = new Date();
+
+        if (now < event.startDate) {
+          throw new BadRequestException(
+            "Sự kiện chưa bắt đầu, không thể check-in"
+          );
+        }
+
+        if (now > event.endDate) {
+          await this.ticketModel.updateOne(
+            { _id: ticket._id, status: "valid", isDeleted: false },
+            { $set: { status: "expired" } },
+            { session: dbSession }
+          );
+          throw new BadRequestException("Sự kiện đã kết thúc, vé đã hết hạn");
+        }
+
+        if (ticket.timeSlotId) {
+          const slot = event.timeSlots?.find(
+            (s) => s._id.toString() === ticket.timeSlotId!.toString()
+          );
+          if (!slot) {
+            await this.checkInLogModel.create(
+              [
+                {
+                  ticketId: ticket._id,
+                  adminId,
+                  location,
+                  deviceInfo,
+                  ipAddress,
+                  success: false,
+                  message: "Failed: time slot no longer exists on event",
+                },
+              ],
+              { session: dbSession }
+            );
+            throw new BadRequestException(
+              "Khung giờ của vé này không còn tồn tại trong sự kiện"
+            );
+          }
+          const check = validateTimeSlotWindow(slot, now);
+          if (!check.valid) {
+            await this.checkInLogModel.create(
+              [
+                {
+                  ticketId: ticket._id,
+                  adminId,
+                  location,
+                  deviceInfo,
+                  ipAddress,
+                  success: false,
+                  message: `Failed: outside time slot window — ${check.message}`,
+                },
+              ],
+              { session: dbSession }
+            );
+            throw new BadRequestException(check.message);
+          }
+        }
+
+        updatedTicket = await this.ticketModel.findOneAndUpdate(
+          { _id: ticket._id, status: "valid", isDeleted: false },
+          {
+            $set: {
+              status: "used",
+              checkedInAt: now,
+              checkInLocation: location,
+              checkedInBy: new Types.ObjectId(adminId),
+              metadata: { deviceInfo, ipAddress },
+            },
+          },
+          { new: true, session: dbSession }
+        );
+
+        if (!updatedTicket) {
+          // Lost the race to another concurrent check-in
+          const current = await this.ticketModel
+            .findOne({ _id: ticket._id, isDeleted: false })
+            .select("status")
+            .session(dbSession)
+            .lean()
+            .exec();
+
+          const isExpired = current?.status === "expired";
+          const isCancelled = current?.status === "cancelled";
+          await this.checkInLogModel.create(
+            [
+              {
+                ticketId: ticket._id,
+                adminId,
+                location,
+                deviceInfo,
+                ipAddress,
+                success: false,
+                message: isExpired
+                  ? "Failed: ticket expired concurrently"
+                  : isCancelled
+                    ? "Failed: ticket was cancelled"
+                    : "Failed: already used by another device",
+              },
+            ],
+            { session: dbSession }
+          );
+          throw new BadRequestException(
+            isExpired
+              ? "Vé đã hết hạn"
+              : isCancelled
+                ? "Vé không hợp lệ vì đã bị hủy hoặc hoàn tiền"
+                : "Vé đã được check-in bởi thiết bị khác"
+          );
+        }
+
+        await this.checkInLogModel.create(
+          [
+            {
+              ticketId: ticket._id,
+              adminId,
+              location,
+              deviceInfo,
+              ipAddress,
+              success: true,
+              message: "Check-in success",
+            },
+          ],
+          { session: dbSession }
+        );
+      });
+    } finally {
+      await dbSession.endSession();
+    }
+
+    if (!updatedTicket) {
       throw new BadRequestException(
         "Ticket không hợp lệ hoặc đã được check-in"
       );
     }
 
-    if (!ticket.eventId) {
-      throw new BadRequestException("Event not found");
-    }
-    const event = ticket.eventId as unknown as TicketEventWindow;
-
-    if (now < event.startDate) {
-      throw new BadRequestException("Sự kiện chưa bắt đầu, không thể check-in");
-    }
-
-    if (now > event.endDate) {
-      await this.ticketModel.updateOne(
-        { _id: ticket._id },
-        { $set: { status: "expired" } }
-      );
-
-      throw new BadRequestException("Sự kiện đã kết thúc, vé đã hết hạn");
-    }
-    const updatedTicket = await this.ticketModel.findOneAndUpdate(
-      { _id: ticket._id, status: "valid" },
-      {
-        $set: {
-          status: "used",
-          checkedInAt: now,
-          checkInLocation: location,
-          checkedInBy: new Types.ObjectId(adminId),
-          metadata: { deviceInfo, ipAddress },
-        },
-      },
-      { new: true }
-    );
-    await this.checkInLogModel.create({
-      ticketId: ticket._id,
-      adminId,
-      location,
-      deviceInfo,
-      ipAddress,
-      success: !!updatedTicket,
-      message: updatedTicket ? "Check-in success" : "Already used",
-    });
-
-    if (!updatedTicket) {
-      throw new BadRequestException("Vé đã được check-in bởi thiết bị khác");
-    }
+    await Promise.all([
+      this.invalidateTicketCache(),
+      this.invalidateUserTicketCache(updatedTicket.userId?.toString() ?? ""),
+    ]).catch(() => {});
 
     this.ticketGateway.emitTicketCheckedIn({
       ticketCode: updatedTicket.ticketCode,
@@ -384,6 +691,28 @@ export class TicketService {
       seatNumber: updatedTicket.seatNumber || null,
       checkedInAt: updatedTicket.checkedInAt as Date,
     });
+
+    try {
+      await this.auditService.record({
+        action: AuditAction.TICKET_CHECKIN,
+        actorId: adminId,
+        actorRole: "admin",
+        ticketId: ticketId
+          ? (ticketId as Types.ObjectId).toString()
+          : undefined,
+        ipAddress,
+        metadata: {
+          location,
+          deviceInfo,
+          ticketCode: updatedTicket.ticketCode,
+        },
+      });
+    } catch (auditErr) {
+      this.logger.error(
+        `checkInTicket: audit record FAILED for ticketCode=${updatedTicket.ticketCode} — ${(auditErr as Error)?.message}. MANUAL AUDIT REQUIRED.`
+      );
+    }
+
     return {
       success: true,
       message: "Ticket checked in successfully",
@@ -392,44 +721,157 @@ export class TicketService {
   }
 
   async cancelTicket(ticketCode: string, userId: string) {
-    const ticket = await this.ticketModel.findOneAndUpdate(
-      {
-        ticketCode,
-        userId: new Types.ObjectId(userId),
-        status: { $in: ["valid"] },
-        isDeleted: false,
-      },
-      {
-        $set: {
-          status: "cancelled",
-          cancelledAt: new Date(),
-          cancelledBy: new Types.ObjectId(userId),
-        },
-      },
-      { new: true }
-    );
+    const dbSession = await this.ticketModel.db.startSession();
+    let cancelledTicket: any = null;
 
-    if (!ticket) {
-      throw new BadRequestException(
-        "Vé đã được sử dụng, đã bị hủy hoặc không tồn tại"
-      );
+    try {
+      await dbSession.withTransaction(async () => {
+        // Check booking status BEFORE cancelling the ticket.
+        // If the booking is CONFIRMED+PAID, block individual ticket cancellation —
+        // the user must request a full booking cancellation via admin.
+        const ticketForCheck = await this.ticketModel
+          .findOne({
+            ticketCode,
+            userId: new Types.ObjectId(userId),
+            status: { $in: ["valid"] },
+            isDeleted: false,
+          })
+          .select("bookingId")
+          .session(dbSession)
+          .lean();
+
+        if (!ticketForCheck) {
+          throw new BadRequestException(
+            "Vé đã được sử dụng, đã bị hủy hoặc không tồn tại"
+          );
+        }
+
+        const bookingCheck = await this.bookingModel
+          .findById(ticketForCheck.bookingId)
+          .select("status paymentStatus")
+          .session(dbSession)
+          .lean();
+
+        if (
+          bookingCheck?.status === BookingStatus.CONFIRMED &&
+          bookingCheck?.paymentStatus === PaymentStatus.PAID
+        ) {
+          throw new BadRequestException(
+            "Không thể hủy vé riêng lẻ cho booking đã thanh toán. Vui lòng liên hệ admin để hủy toàn bộ booking và nhận hoàn tiền."
+          );
+        }
+
+        const ticket = await this.ticketModel.findOneAndUpdate(
+          {
+            ticketCode,
+            userId: new Types.ObjectId(userId),
+            status: { $in: ["valid"] },
+            isDeleted: false,
+          },
+          {
+            $set: {
+              status: "cancelled",
+              cancelledAt: new Date(),
+              cancelledBy: new Types.ObjectId(userId),
+            },
+          },
+          { new: true, session: dbSession }
+        );
+
+        if (!ticket) {
+          throw new BadRequestException(
+            "Vé đã được sử dụng, đã bị hủy hoặc không tồn tại"
+          );
+        }
+
+        cancelledTicket = ticket;
+
+        // Restore zone inventory. Look up the booking to determine whether the
+        // booking was confirmed+paid so we can also decrement confirmedSoldCount.
+        const booking = await this.bookingModel
+          .findById(ticket.bookingId)
+          .select("status paymentStatus")
+          .session(dbSession)
+          .lean();
+
+        const isConfirmedAndPaid =
+          booking?.status === BookingStatus.CONFIRMED &&
+          booking?.paymentStatus === PaymentStatus.PAID;
+
+        await this.zoneModel.updateOne(
+          { _id: ticket.zoneId },
+          [
+            {
+              $set: {
+                soldCount: { $max: [{ $subtract: ["$soldCount", 1] }, 0] },
+              },
+            },
+          ],
+          { session: dbSession }
+        );
+
+        if (isConfirmedAndPaid) {
+          await this.zoneModel.updateOne(
+            { _id: ticket.zoneId },
+            [
+              {
+                $set: {
+                  confirmedSoldCount: {
+                    $max: [{ $subtract: ["$confirmedSoldCount", 1] }, 0],
+                  },
+                },
+              },
+            ],
+            { session: dbSession }
+          );
+        }
+
+        const remainingValid = await this.ticketModel.countDocuments(
+          { bookingId: ticket.bookingId, status: "valid", isDeleted: false },
+          { session: dbSession }
+        );
+        if (remainingValid === 0) {
+          await this.bookingModel.updateOne(
+            {
+              _id: ticket.bookingId,
+              status: {
+                $nin: [BookingStatus.CANCELLED, BookingStatus.EXPIRED],
+              },
+            },
+            {
+              $set: {
+                status: BookingStatus.CANCELLED,
+                cancelledAt: new Date(),
+                cancellationReason: "All tickets cancelled by user",
+              },
+            },
+            { session: dbSession }
+          );
+        }
+
+        this.uploadService.deleteQRCode(ticketCode).catch((err: unknown) => {
+          this.logger.warn(
+            `cancelTicket: failed to delete QR for ${ticketCode}: ${(err as Error)?.message}`
+          );
+        });
+      });
+    } finally {
+      await dbSession.endSession();
     }
-    //  await this.uploadService.deleteQRCode(ticketCode).catch(() => {
-    //     // không throw nếu xóa fail, ticket vẫn cancelled
-    //     console.error('Failed to delete QR code for ticket:', ticketCode);
-    //   });
+
     await Promise.all([
       this.invalidateTicketCache(),
       this.invalidateUserTicketCache(userId),
     ]);
+
     return {
       success: true,
       message: "Ticket with code " + ticketCode + " cancelled successfully",
       ticket: {
-        ticketCode: ticket.ticketCode,
-        seatNumber: ticket.seatNumber,
-        zoneId: ticket.zoneId,
-        areaId: ticket.areaId || null,
+        ticketCode: cancelledTicket.ticketCode,
+        seatNumber: cancelledTicket.seatNumber,
+        zoneId: cancelledTicket.zoneId,
+        areaId: cancelledTicket.areaId || null,
       },
     };
   }
@@ -439,12 +881,10 @@ export class TicketService {
     query: QueryTicketDto
   ): Promise<PaginatedResponse<Ticket>> {
     const cacheKey = this.generateListCacheKey(query);
-    const cachedData =
-      await this.cacheManager.get<PaginatedResponse<Ticket>>(cacheKey);
-
-    if (cachedData) {
-      return cachedData;
-    }
+    const cachedRaw = await this.redisService.client
+      .get(cacheKey)
+      .catch(() => null);
+    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Ticket>;
 
     const {
       eventId,
@@ -471,7 +911,7 @@ export class TicketService {
 
     if (ticketCode) {
       filter.ticketCode = {
-        $regex: ticketCode.trim(),
+        $regex: escapeRegex(ticketCode.trim()),
         $options: "i",
       };
     }
@@ -485,21 +925,98 @@ export class TicketService {
       [finalSortBy]: sortOrder === "asc" ? 1 : -1,
     };
 
-    const [tickets, total] = await Promise.all([
-      this.ticketModel
-        .find(filter)
-        .populate("eventId", "title startDate")
-        .populate("bookingId", "bookingCode")
-        .populate("zoneId", "name")
-        .populate("areaId", "name")
-        .populate("userId", "email name")
-        .populate("checkedInBy", "email name")
-        .populate("cancelledBy", "email name")
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+    const lookupStages = [
+      // Exclude qrCode from list responses — it's a Cloudinary URL (was base64 ~50KB).
+      // qrCode is returned only on the single-ticket GET endpoint.
+      { $project: { qrCode: 0 } },
+      {
+        $lookup: {
+          from: "events",
+          localField: "eventId",
+          foreignField: "_id",
+          as: "eventId",
+          pipeline: [{ $project: { title: 1, startDate: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "bookings",
+          localField: "bookingId",
+          foreignField: "_id",
+          as: "bookingId",
+          pipeline: [{ $project: { bookingCode: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "zones",
+          localField: "zoneId",
+          foreignField: "_id",
+          as: "zoneId",
+          pipeline: [{ $project: { name: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "areas",
+          localField: "areaId",
+          foreignField: "_id",
+          as: "areaId",
+          pipeline: [{ $project: { name: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "userId",
+          pipeline: [{ $project: { email: 1, name: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "checkedInBy",
+          foreignField: "_id",
+          as: "checkedInBy",
+          pipeline: [{ $project: { email: 1, name: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "cancelledBy",
+          foreignField: "_id",
+          as: "cancelledBy",
+          pipeline: [{ $project: { email: 1, name: 1 } }],
+        },
+      },
+      {
+        $addFields: {
+          eventId: { $ifNull: [{ $arrayElemAt: ["$eventId", 0] }, null] },
+          bookingId: { $ifNull: [{ $arrayElemAt: ["$bookingId", 0] }, null] },
+          zoneId: { $ifNull: [{ $arrayElemAt: ["$zoneId", 0] }, null] },
+          areaId: { $ifNull: [{ $arrayElemAt: ["$areaId", 0] }, null] },
+          userId: { $ifNull: [{ $arrayElemAt: ["$userId", 0] }, null] },
+          checkedInBy: {
+            $ifNull: [{ $arrayElemAt: ["$checkedInBy", 0] }, null],
+          },
+          cancelledBy: {
+            $ifNull: [{ $arrayElemAt: ["$cancelledBy", 0] }, null],
+          },
+        },
+      },
+    ];
 
+    const [tickets, total] = await Promise.all([
+      this.ticketModel.aggregate([
+        { $match: filter },
+        { $sort: sort },
+        { $skip: skip },
+        { $limit: limit },
+        ...lookupStages,
+      ]),
       this.ticketModel.countDocuments(filter),
     ]);
 
@@ -517,8 +1034,16 @@ export class TicketService {
       },
     };
 
-    await this.cacheManager.set(cacheKey, result, 30);
-    this.TICKETS_CACHE_LIST_KEY.add(cacheKey);
+    await Promise.all([
+      this.redisService.client.set(cacheKey, JSON.stringify(result), {
+        EX: this.TICKET_CACHE_TTL_SEC,
+      }),
+      this.redisService.client.sAdd(this.TICKET_LIST_INDEX, cacheKey),
+      this.redisService.client.expire(
+        this.TICKET_LIST_INDEX,
+        this.TICKET_CACHE_TTL_SEC * 2
+      ),
+    ]).catch(() => {});
 
     return result;
   }
@@ -526,27 +1051,59 @@ export class TicketService {
   // lấy lịch sử checkin của vé
   async getCheckInHistory(ticketCode: string) {
     const ticket = await this.ticketModel
-      .findOne({
-        ticketCode,
-        isDeleted: false,
-      })
-      .populate("eventId", "title");
+      .findOne({ ticketCode, isDeleted: false })
+      .select("_id eventId")
+      .lean()
+      .exec();
 
     if (!ticket) {
       throw new BadRequestException("Ticket not found");
     }
 
-    const logs = await this.checkInLogModel
-      .find({ ticketId: ticket._id })
-      .populate("adminId", "name")
-      .sort({ createdAt: -1 })
-      .limit(50);
-
-    const event = ticket.eventId as unknown as TicketEventTitle;
+    const [eventResult, logs] = await Promise.all([
+      this.ticketModel.aggregate([
+        { $match: { _id: ticket._id } },
+        {
+          $lookup: {
+            from: "events",
+            localField: "eventId",
+            foreignField: "_id",
+            as: "event",
+            pipeline: [{ $project: { title: 1 } }],
+          },
+        },
+        {
+          $project: {
+            eventTitle: {
+              $ifNull: [{ $arrayElemAt: ["$event.title", 0] }, ""],
+            },
+          },
+        },
+      ]),
+      this.checkInLogModel.aggregate([
+        { $match: { ticketId: ticket._id } },
+        { $sort: { createdAt: -1 } },
+        { $limit: 50 },
+        {
+          $lookup: {
+            from: "users",
+            localField: "adminId",
+            foreignField: "_id",
+            as: "adminId",
+            pipeline: [{ $project: { name: 1 } }],
+          },
+        },
+        {
+          $addFields: {
+            adminId: { $ifNull: [{ $arrayElemAt: ["$adminId", 0] }, null] },
+          },
+        },
+      ]),
+    ]);
 
     return {
       ticketCode,
-      eventTitle: event.title ?? "",
+      eventTitle: (eventResult[0]?.eventTitle as string) ?? "",
       history: logs,
     };
   }

@@ -1,6 +1,15 @@
-import { ApiProperty } from "@nestjs/swagger";
-import { IsString, IsDate, IsEnum, IsOptional, IsUrl } from "class-validator";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import {
+  IsString,
+  IsDate,
+  IsEnum,
+  IsOptional,
+  IsUrl,
+  IsArray,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
+import { TimeSlotDto } from "./create-event.dto";
 
 export class UpdateEventDTO {
   @ApiProperty({ description: "Tiêu đề sự kiện", required: false })
@@ -43,4 +52,14 @@ export class UpdateEventDTO {
   @IsEnum(["draft", "active", "inactive", "ended"])
   @IsOptional()
   status?: "draft" | "active" | "inactive" | "ended";
+
+  @ApiPropertyOptional({
+    description: "Danh sách khung giờ của sự kiện (ghi đè toàn bộ)",
+    type: [TimeSlotDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TimeSlotDto)
+  timeSlots?: TimeSlotDto[];
 }

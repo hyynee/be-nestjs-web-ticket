@@ -16,3 +16,7 @@ export class RefreshToken extends Document {
 export const RefreshTokenSchema = SchemaFactory.createForClass(RefreshToken);
 
 RefreshTokenSchema.index({ expiryDate: 1 }, { expireAfterSeconds: 0 }); // tự động xóa sau khi hết hạn
+RefreshTokenSchema.index(
+  { token: 1 },
+  { unique: true, name: "idx_token_unique" }
+);

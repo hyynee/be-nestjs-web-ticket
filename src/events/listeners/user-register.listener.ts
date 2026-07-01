@@ -20,10 +20,14 @@ export class UserRegisterListener {
   }
 
   @OnEvent("password.reset.requested")
-  async handlePasswordResetEvent(payload: { email: string; resetToken: string; fullName: string }) {
+  async handlePasswordResetEvent(payload: {
+    email: string;
+    resetToken: string;
+    fullName: string;
+  }) {
     try {
       await this.mail.sendPasswordResetEmail(
-        payload.email, 
+        payload.email,
         payload.resetToken,
         payload.fullName
       );

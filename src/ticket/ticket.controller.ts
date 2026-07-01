@@ -14,6 +14,7 @@ import { TicketService } from "./ticket.service";
 import { ApiCookieAuth } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
+import { Roles } from "@src/common/decorators/roles.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { QueryTicketDto } from "./dto/query.dto";
@@ -28,10 +29,7 @@ const resolveClientIp = (request: Request): string => {
       : undefined;
 
   return (
-    forwardedIp?.trim() ||
-    request.ip ||
-    request.socket?.remoteAddress ||
-    ""
+    forwardedIp?.trim() || request.ip || request.socket?.remoteAddress || ""
   );
 };
 
@@ -39,9 +37,8 @@ const resolveClientIp = (request: Request): string => {
 export class TicketController {
   constructor(private readonly ticketService: TicketService) {}
 
-  @Throttle({ short: { limit: 5, ttl: 60000 } })
-  @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(201)
   @Post("from-booking")
   async createTicketsFromBooking(
@@ -84,7 +81,8 @@ export class TicketController {
   }
 
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(200)
   @Post("checkin")
   async checkInTicket(
@@ -119,7 +117,8 @@ export class TicketController {
   }
 
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(200)
   @Get("checkin-history/:ticketCode")
   async getCheckInHistory(@Param("ticketCode") ticketCode: string) {
@@ -127,7 +126,8 @@ export class TicketController {
   }
 
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"), new RolesGuard(["admin"]))
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(200)
   @Get("admin/all-tickets")
   async getAllTickets(@Query() query: QueryTicketDto) {

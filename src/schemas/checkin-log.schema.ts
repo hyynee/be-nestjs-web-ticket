@@ -26,3 +26,8 @@ export class CheckInLog {
 }
 
 export const CheckInLogSchema = SchemaFactory.createForClass(CheckInLog);
+
+CheckInLogSchema.index(
+  { ticketId: 1, createdAt: -1 },
+  { name: "idx_ticket_created" }
+);
