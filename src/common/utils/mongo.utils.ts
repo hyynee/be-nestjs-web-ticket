@@ -6,8 +6,7 @@ export function isDuplicateKeyError(error: unknown): boolean {
   const writeErrors =
     (e["writeErrors"] as Array<Record<string, unknown>> | undefined) ??
     ((e["result"] as Record<string, unknown> | undefined)?.["writeErrors"] as
-      | Array<Record<string, unknown>>
-      | undefined);
+      Array<Record<string, unknown>> | undefined);
 
   if (Array.isArray(writeErrors) && writeErrors.length > 0) {
     return writeErrors.some(

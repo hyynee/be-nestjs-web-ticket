@@ -33,8 +33,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleConnection(client: Socket) {
     const token =
       ((client.handshake.auth as Record<string, unknown>)?.token as
-        | string
-        | undefined) ??
+        string | undefined) ??
       (client.handshake.headers?.authorization as string | undefined)?.replace(
         /^Bearer\s+/i,
         ""

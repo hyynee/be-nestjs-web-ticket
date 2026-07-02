@@ -1,8 +1,7 @@
 {
   "compilerOptions": {
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "resolvePackageJsonExports": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "isolatedModules": true,
     "declaration": true,
@@ -26,5 +25,6 @@
       "@src/*": ["src/*"],
       "@app-config/*": ["app-config/*"]
     }
-  }
+  },
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
 }

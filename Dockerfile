@@ -26,7 +26,8 @@ FROM cgr.dev/chainguard/node:latest@sha256:b73c955ff6449b039c260fdd819b290c127dc
 
 WORKDIR /app
 
-ENV NODE_ENV=production
+ARG NODE_ENV=production
+ENV NODE_ENV=$NODE_ENV
 
 COPY --from=builder /app/dist ./dist
 COPY --from=production-deps /app/node_modules ./node_modules
@@ -37,4 +38,5 @@ EXPOSE 9000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD node -e "require('http').get('http://localhost:9000/ready', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
-CMD ["dist/main.js"]
+ENTRYPOINT []
+CMD ["npm", "run", "start:prod"]

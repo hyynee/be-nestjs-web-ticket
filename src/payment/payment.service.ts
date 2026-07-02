@@ -152,10 +152,7 @@ export class PaymentService {
 
   private toObjectId(
     value:
-      | Types.ObjectId
-      | string
-      | { _id?: Types.ObjectId | string }
-      | undefined,
+      Types.ObjectId | string | { _id?: Types.ObjectId | string } | undefined,
     fieldName: string
   ): Types.ObjectId {
     if (value instanceof Types.ObjectId) {
@@ -581,9 +578,7 @@ export class PaymentService {
           $setOnInsert: {
             eventId: this.toObjectId(
               booking.eventId as
-                | Types.ObjectId
-                | string
-                | { _id?: Types.ObjectId | string },
+                Types.ObjectId | string | { _id?: Types.ObjectId | string },
               "eventId"
             ),
             amount: booking.totalPrice,
@@ -801,9 +796,7 @@ export class PaymentService {
         if (booking.eventId) {
           rawEventId = this.toObjectId(
             booking.eventId as
-              | Types.ObjectId
-              | string
-              | { _id?: Types.ObjectId | string },
+              Types.ObjectId | string | { _id?: Types.ObjectId | string },
             "eventId"
           );
         } else {

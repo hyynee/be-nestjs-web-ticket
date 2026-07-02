@@ -22,8 +22,7 @@ const AUTH_USER_CACHE_TTL_SEC = 60;
 
 const extractAccessTokenFromCookie = (request: Request): string | null => {
   const cookies = request.cookies as
-    | Record<string, string | undefined>
-    | undefined;
+    Record<string, string | undefined> | undefined;
   return cookies?.access_token ?? null;
 };
 
