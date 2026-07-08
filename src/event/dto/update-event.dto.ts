@@ -7,6 +7,7 @@ import {
   IsUrl,
   IsArray,
   ValidateNested,
+  ValidateIf,
 } from "class-validator";
 import { Type } from "class-transformer";
 import { TimeSlotDto } from "./create-event.dto";
@@ -39,10 +40,15 @@ export class UpdateEventDTO {
   @IsOptional()
   location?: string;
 
-  @ApiProperty({ description: "Link ảnh thumbnail", required: false })
+  @ApiProperty({
+    description: "Link ảnh thumbnail. Truyền null để xoá ảnh hiện tại.",
+    required: false,
+    nullable: true,
+  })
+  @ValidateIf((_, value) => value !== null)
   @IsUrl()
   @IsOptional()
-  thumbnail?: string;
+  thumbnail?: string | null;
 
   @ApiProperty({
     description: "Trạng thái sự kiện",

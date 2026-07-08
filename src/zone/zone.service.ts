@@ -186,7 +186,9 @@ export class ZoneService {
           eventId: 1,
           name: 1,
           price: 1,
+          capacity: 1,
           hasSeating: 1,
+          isDeleted: 1,
           saleStartDate: 1,
           saleEndDate: 1,
           areas: 1,
@@ -331,6 +333,7 @@ export class ZoneService {
 
     const updatedData = {
       ...updateZoneDto,
+      eventId: targetEventId,
       updatedBy: currentUser.userId,
     };
     if (name) {

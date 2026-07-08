@@ -455,7 +455,6 @@ export class AreaService {
 
     try {
       let updatedArea!: Area;
-      let oldZoneId: string | undefined;
 
       await session.withTransaction(async () => {
         const currentArea = await this.areaModel
@@ -464,8 +463,6 @@ export class AreaService {
 
         if (!currentArea)
           throw new BadRequestException("Area not found or has been deleted");
-
-        oldZoneId = currentArea.zoneId.toString();
 
         const targetZoneId = zoneId
           ? new Types.ObjectId(zoneId)

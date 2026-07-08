@@ -161,6 +161,11 @@
       "json-summary"
     ],
     "coverageDirectory": "../coverage",
+    "setupFilesAfterEnv": [
+      "<rootDir>/test/jest.setup.ts"
+    ],
+    "silent": true,
+    "watchman": false,
     "testEnvironment": "node"
   }
 }

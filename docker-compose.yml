@@ -11,6 +11,7 @@ services:
     env_file:
       - .env
     environment:
+      SWAGGER_ENABLED: true 
       REDIS_HOST: redis-cache
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}

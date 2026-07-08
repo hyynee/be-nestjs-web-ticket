@@ -28,7 +28,6 @@ import { TicketModule } from "./ticket/ticket.module";
 import { ChatModule } from "./chatbot/chat.module";
 import { CustomThrottlerGuard } from "./helper/throtler.helper";
 import { StatisticalModule } from "./statistical/statistical.module";
-import { RolesGuard } from "./guards/role.guard";
 import { LoggerModule } from "./logger/logger.module";
 import { CacheModule } from "@nestjs/cache-manager";
 import { createKeyv } from "@keyv/redis";
@@ -46,6 +45,7 @@ import { MetricsModule } from "./metrics/metrics.module";
 import { CurrencyModule } from "./currency/currency.module";
 import { AuditModule } from "./audit/audit.module";
 import { HealthModule } from "./health/health.module";
+import { AiccModule } from "./aicc/aicc.module";
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -116,6 +116,7 @@ import { HealthModule } from "./health/health.module";
     CurrencyModule,
     AuditModule,
     HealthModule,
+    AiccModule,
   ],
   controllers: [AppController, UploadController],
   providers: [

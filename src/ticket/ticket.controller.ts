@@ -18,6 +18,7 @@ import { Roles } from "@src/common/decorators/roles.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { QueryTicketDto } from "./dto/query.dto";
+import { MyTicketsQueryDto } from "./dto/my-tickets-query.dto";
 import type { Request } from "express";
 
 const resolveClientIp = (request: Request): string => {
@@ -50,6 +51,17 @@ export class TicketController {
       undefined,
       user.userId
     );
+  }
+
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
+  @HttpCode(200)
+  @Get("my-tickets")
+  async getMyTickets(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: MyTicketsQueryDto
+  ) {
+    return this.ticketService.getMyTickets(user.userId, query);
   }
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })

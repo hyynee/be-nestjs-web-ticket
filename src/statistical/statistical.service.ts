@@ -75,24 +75,10 @@ type RevenueGroupResult = {
 
 type DateRangeCondition = { $gte: Date; $lte: Date };
 
-interface BookingFilter {
-  isDeleted: boolean;
-  eventId?: Types.ObjectId;
-  paymentStatus?: string;
-  createdAt?: DateRangeCondition;
-}
-
 interface PaymentFilter {
   status?: { $in: string[] };
   isDeleted?: boolean;
   eventId?: Types.ObjectId;
-  createdAt?: DateRangeCondition;
-}
-
-interface TicketFilter {
-  isDeleted: boolean;
-  eventId?: Types.ObjectId;
-  status?: { $in: string[] } | string;
   createdAt?: DateRangeCondition;
 }
 
@@ -596,8 +582,7 @@ export class StatisticalService {
       ...(eventId && { eventId: new Types.ObjectId(eventId) }),
     };
 
-    const tz = config.APP_TIMEZONE;
-    const zone = /^[+-]\d{2}:\d{2}$/.test(tz) ? `UTC${tz}` : tz;
+    const zone = config.APP_TIMEZONE;
 
     const groupId: Record<string, unknown> = {
       year: { $year: { date: "$createdAt", timezone: zone } },

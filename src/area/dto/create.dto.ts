@@ -19,6 +19,7 @@ export class CreateAreaDTO {
   rowLabel?: string;
   @ApiProperty({ description: "Số lượng ghế", required: false })
   @IsNumber()
+  @IsOptional()
   seatCount?: number;
   @ApiProperty({ description: "Danh sách ghế", required: false })
   @IsOptional()

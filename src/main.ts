@@ -104,9 +104,9 @@ async function bootstrap() {
 
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
-  const isProduction = configService.get<string>("NODE_ENV") === "production";
+  // const swaggerEnabled = !isProduction && configService.get<string>("SWAGGER_ENABLED") === "true";
   const swaggerEnabled =
-    !isProduction && configService.get<string>("SWAGGER_ENABLED") === "true";
+    configService.get<string>("SWAGGER_ENABLED") === "true";
 
   if (swaggerEnabled) {
     const swaggerConfig = new DocumentBuilder()

@@ -345,7 +345,11 @@ export class EventService {
     const updatedEvent = await this.eventModel
       .findByIdAndUpdate(
         id,
-        { ...eventData, updatedBy: new Types.ObjectId(currentUser.userId) },
+        {
+          ...eventData,
+          ...(eventData.thumbnail === null ? { thumbnail: "" } : {}),
+          updatedBy: new Types.ObjectId(currentUser.userId),
+        },
         { new: true }
       )
       .exec();

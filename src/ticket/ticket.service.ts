@@ -22,6 +22,7 @@ import { isDuplicateKeyError } from "@src/common/utils/mongo.utils";
 import { TicketGateway } from "./ticket.gateway";
 import { CheckInLog } from "@src/schemas/checkin-log.schema";
 import { QueryTicketDto } from "./dto/query.dto";
+import { MyTicketsQueryDto } from "./dto/my-tickets-query.dto";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
 import { RedisService } from "@src/redis/redis.service";
 import { UploadService } from "@src/upload/upload.service";
@@ -29,7 +30,6 @@ import { AuditService } from "@src/audit/audit.service";
 import { AuditAction } from "@src/schemas/audit-log.schema";
 import type {
   TicketBroadcastItem,
-  TicketEventTitle,
   TicketEventWindow,
   TimeSlotWindow,
   ZoneSeatMode,
@@ -1047,6 +1047,143 @@ export class TicketService {
 
     return result;
   }
+  async getMyTickets(
+    userId: string,
+    query: MyTicketsQueryDto
+  ): Promise<PaginatedResponse<Ticket>> {
+    const {
+      bookingId,
+      eventId,
+      status,
+      ticketCode,
+      page = 1,
+      limit = 20,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = query;
+
+    const userCacheKey = `tickets:user:${userId}:bookingId=${bookingId || "all"}:eventId=${eventId || "all"}:status=${status || "all"}:ticketCode=${ticketCode || ""}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+    const userIndexKey = `tickets:user:${userId}:index`;
+
+    const cachedRaw = await this.redisService.client
+      .get(userCacheKey)
+      .catch(() => null);
+    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Ticket>;
+
+    const skip = (page - 1) * limit;
+
+    const filter: FilterQuery<Ticket> = {
+      userId: new Types.ObjectId(userId),
+      isDeleted: false,
+    };
+
+    if (bookingId) filter.bookingId = new Types.ObjectId(bookingId);
+    if (eventId) filter.eventId = new Types.ObjectId(eventId);
+    if (status) filter.status = status;
+    if (ticketCode) {
+      filter.ticketCode = {
+        $regex: escapeRegex(ticketCode.trim()),
+        $options: "i",
+      };
+    }
+
+    const allowedSortFields = ["createdAt", "price", "status"];
+    const finalSortBy = allowedSortFields.includes(sortBy)
+      ? sortBy
+      : "createdAt";
+
+    const sort: Record<string, 1 | -1> = {
+      [finalSortBy]: sortOrder === "asc" ? 1 : -1,
+    };
+
+    const lookupStages = [
+      {
+        $lookup: {
+          from: "events",
+          localField: "eventId",
+          foreignField: "_id",
+          as: "eventId",
+          pipeline: [
+            { $project: { title: 1, startDate: 1, endDate: 1, location: 1 } },
+          ],
+        },
+      },
+      {
+        $lookup: {
+          from: "bookings",
+          localField: "bookingId",
+          foreignField: "_id",
+          as: "bookingId",
+          pipeline: [{ $project: { bookingCode: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "zones",
+          localField: "zoneId",
+          foreignField: "_id",
+          as: "zoneId",
+          pipeline: [{ $project: { name: 1 } }],
+        },
+      },
+      {
+        $lookup: {
+          from: "areas",
+          localField: "areaId",
+          foreignField: "_id",
+          as: "areaId",
+          pipeline: [{ $project: { name: 1 } }],
+        },
+      },
+      {
+        $addFields: {
+          eventId: { $ifNull: [{ $arrayElemAt: ["$eventId", 0] }, null] },
+          bookingId: { $ifNull: [{ $arrayElemAt: ["$bookingId", 0] }, null] },
+          zoneId: { $ifNull: [{ $arrayElemAt: ["$zoneId", 0] }, null] },
+          areaId: { $ifNull: [{ $arrayElemAt: ["$areaId", 0] }, null] },
+        },
+      },
+    ];
+
+    const [tickets, total] = await Promise.all([
+      this.ticketModel.aggregate([
+        { $match: filter },
+        { $sort: sort },
+        { $skip: skip },
+        { $limit: limit },
+        ...lookupStages,
+      ]),
+      this.ticketModel.countDocuments(filter),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    const result: PaginatedResponse<Ticket> = {
+      items: tickets,
+      meta: {
+        currentPage: page,
+        itemsPerPage: limit,
+        totalItems: total,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
+
+    await Promise.all([
+      this.redisService.client.set(userCacheKey, JSON.stringify(result), {
+        EX: this.TICKET_CACHE_TTL_SEC,
+      }),
+      this.redisService.client.sAdd(userIndexKey, userCacheKey),
+      this.redisService.client.expire(
+        userIndexKey,
+        this.TICKET_CACHE_TTL_SEC * 2
+      ),
+    ]).catch(() => {});
+
+    return result;
+  }
+
   // thống kê vé
   // lấy lịch sử checkin của vé
   async getCheckInHistory(ticketCode: string) {

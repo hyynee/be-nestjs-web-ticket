@@ -302,7 +302,7 @@ export class PaymentService {
       await this.redisService.client.set(key, "succeeded", {
         EX: this.SUCCEEDED_TTL_SEC,
       });
-    } catch (err) {
+    } catch {
       this.logger.warn(
         `Redis unavailable when marking webhook ${eventId} succeeded — event was processed, returning 200 regardless`
       );
