@@ -1,4 +1,11 @@
-import { IsMongoId, IsNumber, IsOptional, IsString } from "class-validator";
+import {
+  IsMongoId,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from "class-validator";
 import { Type } from "class-transformer";
 export class QueryBookingDto {
   @IsOptional()
@@ -19,11 +26,14 @@ export class QueryBookingDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(1)
   @Type(() => Number)
   page?: number = 1;
 
   @IsOptional()
   @IsNumber()
+  @Min(1)
+  @Max(100)
   @Type(() => Number)
   limit?: number = 10;
 

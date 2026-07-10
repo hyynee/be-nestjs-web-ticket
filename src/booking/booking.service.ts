@@ -24,6 +24,7 @@ import { Ticket } from "@src/schemas/ticket.schema";
 import { Payment } from "@src/schemas/payment.schema";
 import { CancelBookingDto } from "./dto/cancel-booking.dto";
 import { ZoneGateway } from "@src/zone/zone.gateway";
+import { ZoneService } from "@src/zone/zone.service";
 import { RedisService } from "@src/redis/redis.service";
 import {
   BOOKING_CACHE_TTL_MS,
@@ -69,12 +70,19 @@ export class BookingService {
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     private readonly zoneGateway: ZoneGateway,
+    private readonly zoneService: ZoneService,
     private readonly redisService: RedisService,
     private readonly paymentService: PaymentService,
     private readonly metricsService: MetricsService,
     private readonly auditService: AuditService,
     private readonly uploadService: UploadService
   ) {}
+
+  private assertObjectId(value: string, label: string): void {
+    if (!Types.ObjectId.isValid(value)) {
+      throw new BadRequestException(`Invalid ${label}`);
+    }
+  }
 
   private async emitZoneTicketUpdate(zoneId: Types.ObjectId | string) {
     const zone = await this.zoneModel
@@ -201,6 +209,7 @@ export class BookingService {
     let changedZoneId: Types.ObjectId | null = null;
     let slotCapacity: SlotCapacityInfo | null = null;
     let slotCapacityReserved = false;
+    let bookingCommitted = false;
 
     try {
       if (data.timeSlotId) {
@@ -211,7 +220,7 @@ export class BookingService {
         const targetSlot = eventForSlot?.timeSlots?.find(
           (s) => s._id.toString() === data.timeSlotId
         );
-        if (targetSlot?.capacity) {
+        if (typeof targetSlot?.capacity === "number") {
           const counterKey = `${SLOT_SOLD_KEY_PREFIX}${data.timeSlotId}`;
           const newCount = await this.redisService.client.incrBy(
             counterKey,
@@ -305,15 +314,22 @@ export class BookingService {
           throw new BadRequestException("Đã hết thời gian bán vé");
         }
 
-        const existingUserTickets = await this.bookingModel.countDocuments(
-          {
-            userId: new Types.ObjectId(userId),
-            eventId: new Types.ObjectId(data.eventId),
-            status: { $nin: [BookingStatus.CANCELLED, BookingStatus.EXPIRED] },
-            isDeleted: false,
-          },
-          { session }
-        );
+        const [existingUserUsage] = await this.bookingModel
+          .aggregate([
+            {
+              $match: {
+                userId: new Types.ObjectId(userId),
+                eventId: new Types.ObjectId(data.eventId),
+                status: {
+                  $nin: [BookingStatus.CANCELLED, BookingStatus.EXPIRED],
+                },
+                isDeleted: false,
+              },
+            },
+            { $group: { _id: null, totalQuantity: { $sum: "$quantity" } } },
+          ])
+          .session(session);
+        const existingUserTickets = existingUserUsage?.totalQuantity ?? 0;
         if (
           existingUserTickets + data.quantity >
           MAX_TICKETS_PER_USER_PER_EVENT
@@ -472,13 +488,22 @@ export class BookingService {
         };
       });
 
-      await Promise.all([
+      // Booking is durably committed to Mongo at this point — nothing below
+      // should trigger the slotCapacity compensation in the catch block,
+      // since that would decrement Redis for a booking that actually exists.
+      bookingCommitted = true;
+
+      await Promise.allSettled([
         this.invalidateBookingCache(data.eventId, data.zoneId),
         this.invalidateUserBookingCache(userId),
       ]);
 
       if (changedZoneId) {
-        await this.emitZoneTicketUpdate(changedZoneId);
+        await this.emitZoneTicketUpdate(changedZoneId).catch((err: Error) =>
+          this.logger.warn(
+            `createBooking: emitZoneTicketUpdate failed post-commit: ${err.message}`
+          )
+        );
       }
 
       this.metricsService.bookingsTotal.inc({ status: "success" });
@@ -487,7 +512,7 @@ export class BookingService {
       );
       return result;
     } catch (error) {
-      if (slotCapacity && slotCapacityReserved) {
+      if (!bookingCommitted && slotCapacity && slotCapacityReserved) {
         await this.redisService.client
           .decrBy(slotCapacity.counterKey, data.quantity)
           .catch(() => {});
@@ -599,6 +624,8 @@ export class BookingService {
   }
 
   async getZoneBookingInfo(eventId: string, zoneId: string) {
+    this.assertObjectId(eventId, "event ID");
+    this.assertObjectId(zoneId, "zone ID");
     const cacheKey = `zone:booking-info:event=${eventId}:zone=${zoneId}`;
     const lockKey = `${cacheKey}:lock`;
 
@@ -662,8 +689,11 @@ export class BookingService {
               $match: {
                 eventId: new Types.ObjectId(eventId),
                 zoneId: new Types.ObjectId(zoneId),
-                status: { $in: ["pending", "confirmed"] },
                 isDeleted: false,
+                $or: [
+                  { status: "confirmed" },
+                  { status: "pending", expiresAt: { $gt: new Date() } },
+                ],
               },
             },
             { $unwind: "$seats" },
@@ -830,6 +860,9 @@ export class BookingService {
       await Promise.all([
         this.invalidateBookingCache(changedEventKey, changedZoneKey),
         this.invalidateUserBookingCache(userId),
+        changedZoneId
+          ? this.zoneService.invalidateZoneAvailabilityCache(changedZoneId)
+          : Promise.resolve(),
       ]);
 
       if (changedZoneId) {
@@ -852,6 +885,7 @@ export class BookingService {
     adminId: string,
     reason?: string
   ) {
+    this.assertObjectId(bookingId, "booking ID");
     const session = await this.bookingModel.db.startSession();
     let changedZoneId: Types.ObjectId | null = null;
     let changedEventKey: string | undefined;
@@ -1004,6 +1038,9 @@ export class BookingService {
         this.invalidateBookingCache(changedEventKey, changedZoneKey),
         bookedUserId
           ? this.invalidateUserBookingCache(bookedUserId)
+          : Promise.resolve(),
+        changedZoneId
+          ? this.zoneService.invalidateZoneAvailabilityCache(changedZoneId)
           : Promise.resolve(),
       ]);
 
@@ -1179,10 +1216,11 @@ export class BookingService {
   async expirePendingBookings() {
     const session = await this.bookingModel.db.startSession();
     let committedZoneIds = new Set<string>();
-    const committedSlotTotals = new Map<string, number>();
+    let committedSlotTotals = new Map<string, number>();
     try {
       const result = await session.withTransaction(async () => {
         committedZoneIds = new Set<string>();
+        committedSlotTotals = new Map<string, number>();
         const now = new Date();
 
         const candidates = await this.bookingModel
@@ -1296,6 +1334,13 @@ export class BookingService {
       });
 
       await this.invalidateBookingCache();
+      if (committedZoneIds.size > 0) {
+        await Promise.all(
+          [...committedZoneIds].map((zoneId) =>
+            this.zoneService.invalidateZoneAvailabilityCache(zoneId)
+          )
+        );
+      }
       if (committedSlotTotals.size > 0) {
         await Promise.all(
           [...committedSlotTotals.entries()].map(([slotId, qty]) =>

@@ -1,4 +1,4 @@
-export const BOOKING_EXPIRY_MS = 30 * 60 * 1000;
+export const BOOKING_EXPIRY_MS = 40 * 60 * 1000;
 export const BOOKING_CACHE_TTL_MS = 30_000;
 
 export const MAX_TICKETS_PER_USER_PER_EVENT = 10;

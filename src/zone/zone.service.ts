@@ -76,6 +76,28 @@ export class ZoneService {
       /* Non-fatal */
     }
   }
+
+  /**
+   * Invalidates the zones:list cache and a specific zone's detail cache.
+   * Call this whenever a zone's soldCount/confirmedSoldCount changes
+   * outside of ZoneService itself (e.g. booking create/cancel/expire),
+   * otherwise GET /zone and GET /zone/:id can serve stale availability
+   * for up to ZONE_CACHE_TTL_SEC seconds.
+   */
+  async invalidateZoneAvailabilityCache(
+    zoneId: string | Types.ObjectId
+  ): Promise<void> {
+    await Promise.all([
+      this.invalidateZoneCache(),
+      this.redisService.client
+        .del(`${this.ZONE_DETAIL_PREFIX}${zoneId.toString()}`)
+        .catch(() => {}),
+    ]).catch((err: Error) =>
+      this.logger.warn(
+        `Failed to invalidate zone availability cache for zone ${zoneId}: ${err.message}`
+      )
+    );
+  }
   async getAllActiveZones(
     query: QueryZoneDto
   ): Promise<PaginatedResponse<Zone>> {

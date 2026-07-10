@@ -68,6 +68,9 @@ export class PaymentService {
   return {'conflict', ''}
 `;
 
+  // Stripe requires expires_at to be at least 30 minutes from session creation.
+  private static readonly STRIPE_MIN_EXPIRES_IN_MS = 31 * 60 * 1000;
+
   constructor(
     @InjectModel(Payment.name) private paymentModel: Model<any>,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
@@ -403,6 +406,15 @@ export class PaymentService {
 
     if (new Date() > booking.expiresAt) {
       throw new BadRequestException("Booking has expired");
+    }
+
+    if (
+      booking.expiresAt.getTime() - Date.now() <
+      PaymentService.STRIPE_MIN_EXPIRES_IN_MS
+    ) {
+      throw new BadRequestException(
+        "Thời gian giữ chỗ sắp hết hạn, vui lòng đặt lại vé để thanh toán"
+      );
     }
 
     const event = booking.eventId as unknown as BookingEventSummary;
