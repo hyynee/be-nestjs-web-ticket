@@ -14,8 +14,6 @@ Thumbs.db
 .idea/
 coverage/
 backup/
-# Ignore all test spec files
-*.spec.ts
-*.md 
+*.md
 *.txt
 *.js

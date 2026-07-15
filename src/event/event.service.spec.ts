@@ -1,0 +1,1400 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
+import { getModelToken } from "@nestjs/mongoose";
+import { Test, TestingModule } from "@nestjs/testing";
+import { Types } from "mongoose";
+import { EventService } from "./event.service";
+import { EventOwnershipService } from "./event-ownership.service";
+import { Event, EventStatus } from "@src/schemas/event.schema";
+import { Zone } from "@src/schemas/zone.schema";
+import { Area } from "@src/schemas/area.schema";
+import { Booking } from "@src/schemas/booking.schema";
+import { User } from "@src/schemas/user.schema";
+import { AuditService } from "@src/audit/audit.service";
+
+describe("EventService", () => {
+  let service: EventService;
+
+  const eventId = new Types.ObjectId().toString();
+  const adminUser = { userId: new Types.ObjectId().toString(), role: "admin" };
+  const normalUser = { userId: new Types.ObjectId().toString(), role: "user" };
+
+  const createSessionMock = () => ({
+    withTransaction: jest.fn(async (cb: () => Promise<void>) => cb()),
+    endSession: jest.fn().mockResolvedValue(undefined),
+  });
+
+  let eventModel: any;
+  let zoneModel: any;
+  let areaModel: any;
+  let bookingModel: any;
+  let userModel: any;
+  let mockBookingService: any;
+  let mockCacheManager: any;
+  let mockRedisClient: any;
+  let mockEventOwnershipService: any;
+  let mockAuditService: any;
+
+  beforeEach(async () => {
+    eventModel = jest.fn().mockImplementation((data: any) => ({
+      ...data,
+      _id: new Types.ObjectId(),
+      save: jest.fn().mockResolvedValue({ ...data, _id: new Types.ObjectId() }),
+    }));
+
+    eventModel.find = jest.fn();
+    eventModel.countDocuments = jest.fn();
+    eventModel.findOne = jest.fn();
+    eventModel.findByIdAndUpdate = jest.fn();
+    eventModel.findOneAndUpdate = jest.fn();
+    eventModel.findById = jest.fn();
+    eventModel.db = {
+      startSession: jest.fn().mockResolvedValue(createSessionMock()),
+    };
+
+    zoneModel = {
+      aggregate: jest.fn(),
+      updateMany: jest.fn(),
+    };
+
+    areaModel = {
+      updateMany: jest.fn(),
+    };
+
+    const makeDefaultBatchChain = () => ({
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
+    bookingModel = {
+      find: jest.fn().mockReturnValue(makeDefaultBatchChain()),
+      countDocuments: jest.fn().mockResolvedValue(0),
+    };
+
+    mockBookingService = {
+      adminCancelBooking: jest.fn().mockResolvedValue({ message: "cancelled" }),
+    };
+
+    mockCacheManager = {
+      get: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
+
+    userModel = {
+      findById: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+    };
+
+    mockEventOwnershipService = {
+      assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
+      getManagedEventIds: jest.fn().mockResolvedValue([]),
+    };
+
+    mockAuditService = {
+      record: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        EventService,
+        { provide: getModelToken(Event.name), useValue: eventModel },
+        { provide: getModelToken(Zone.name), useValue: zoneModel },
+        { provide: getModelToken(Area.name), useValue: areaModel },
+        { provide: getModelToken(Booking.name), useValue: bookingModel },
+        { provide: getModelToken(User.name), useValue: userModel },
+        {
+          provide: EventOwnershipService,
+          useValue: mockEventOwnershipService,
+        },
+        {
+          provide: AuditService,
+          useValue: mockAuditService,
+        },
+        {
+          provide: require("@nestjs/cache-manager").CACHE_MANAGER,
+          useValue: mockCacheManager,
+        },
+        {
+          provide: require("@src/booking/booking.service").BookingService,
+          useValue: mockBookingService,
+        },
+        {
+          provide: require("@src/redis/redis.service").RedisService,
+          useValue: {
+            client: {
+              get: jest.fn().mockResolvedValue(null),
+              set: jest.fn().mockResolvedValue("OK"),
+              sAdd: jest.fn().mockResolvedValue(1),
+              sMembers: jest.fn().mockResolvedValue([]),
+              expire: jest.fn().mockResolvedValue(1),
+              del: jest.fn().mockResolvedValue(0),
+            },
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<EventService>(EventService);
+    mockRedisClient = module.get(
+      require("@src/redis/redis.service").RedisService
+    ).client;
+  });
+
+  describe("getEvents", () => {
+    it("returns only non-deleted events for non-admin users", async () => {
+      const events = [{ title: "Concert" }];
+
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue(events),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+
+      eventModel.countDocuments.mockResolvedValue(1);
+
+      const result = await service.getEvents(
+        { page: 1, limit: 10 } as any,
+        normalUser as any
+      );
+
+      expect(result.items).toEqual(events);
+      expect(result.meta.totalItems).toBe(1);
+      expect(eventModel.countDocuments).toHaveBeenCalledWith({
+        isDeleted: false,
+      });
+    });
+
+    it("applies status filter when provided", async () => {
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+      eventModel.countDocuments.mockResolvedValue(0);
+
+      await service.getEvents(
+        { page: 1, limit: 10, status: "active" } as any,
+        normalUser as any
+      );
+
+      expect(eventModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({ isDeleted: false, status: "active" })
+      );
+    });
+
+    it("does not include status filter when status not provided", async () => {
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+      eventModel.countDocuments.mockResolvedValue(0);
+
+      await service.getEvents({ page: 1, limit: 10 } as any, normalUser as any);
+
+      const findFilter = eventModel.find.mock.calls[0][0];
+      expect(findFilter).not.toHaveProperty("status");
+    });
+
+    it("filters by isDeleted:false explicitly for admin when isDeleted not provided", async () => {
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+      eventModel.countDocuments.mockResolvedValue(0);
+
+      await service.getEvents({ page: 1, limit: 10 } as any, adminUser as any);
+
+      const findFilter = eventModel.find.mock.calls[0][0];
+      expect(findFilter).not.toHaveProperty("isDeleted");
+    });
+
+    it("supports admin isDeleted filter", async () => {
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+
+      eventModel.countDocuments.mockResolvedValue(0);
+
+      await service.getEvents(
+        { page: 1, limit: 10, isDeleted: true } as any,
+        adminUser as any
+      );
+
+      expect(eventModel.countDocuments).toHaveBeenCalledWith({
+        isDeleted: true,
+      });
+    });
+
+    it("applies search and dynamic sorting", async () => {
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+      eventModel.countDocuments.mockResolvedValue(0);
+
+      await service.getEvents(
+        {
+          page: 1,
+          limit: 10,
+          search: "music",
+          sortBy: "startDate",
+          sortOrder: "asc",
+        } as any,
+        adminUser as any
+      );
+
+      expect(eventModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $or: expect.any(Array),
+        })
+      );
+
+      const sortCall = eventModel.find.mock.results[0].value.sort;
+      expect(sortCall).toHaveBeenCalledWith({ startDate: 1 });
+    });
+  });
+
+  describe("getEventZones", () => {
+    it("throws BadRequestException for invalid event id", async () => {
+      await expect(
+        service.getEventZones("invalid-id", normalUser as any)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws NotFoundException when event does not exist", async () => {
+      eventModel.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.getEventZones(eventId, normalUser as any)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("returns zones with limited projection for non-admin", async () => {
+      eventModel.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(eventId),
+      });
+      zoneModel.aggregate.mockResolvedValue([{ name: "VIP", hasAreas: true }]);
+
+      const result = await service.getEventZones(eventId, normalUser as any);
+
+      expect(result).toEqual([{ name: "VIP", hasAreas: true }]);
+      expect(zoneModel.aggregate).toHaveBeenCalledTimes(1);
+
+      const pipeline = zoneModel.aggregate.mock.calls[0][0];
+      expect(pipeline).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            $match: expect.objectContaining({ isDeleted: false }),
+          }),
+          expect.objectContaining({
+            $project: expect.objectContaining({
+              name: 1,
+              price: 1,
+              hasSeating: 1,
+              hasAreas: 1,
+              areas: 1,
+            }),
+          }),
+        ])
+      );
+    });
+
+    it("returns full zone data for admin without user projection", async () => {
+      eventModel.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(eventId),
+      });
+      zoneModel.aggregate.mockResolvedValue([
+        { name: "VIP", areas: [{ _id: "a1" }] },
+      ]);
+
+      const result = await service.getEventZones(eventId, adminUser as any);
+
+      expect(result).toEqual([{ name: "VIP", areas: [{ _id: "a1" }] }]);
+      const pipeline = zoneModel.aggregate.mock.calls[0][0];
+      const hasProjectStage = pipeline.some((stage: any) => stage.$project);
+      expect(hasProjectStage).toBe(false);
+    });
+  });
+
+  describe("getActiveEventById", () => {
+    it("returns active event", async () => {
+      const event = { _id: eventId, isDeleted: false, title: "Concert" };
+      eventModel.findOne.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(event),
+        }),
+      });
+
+      const result = await service.getActiveEventById(eventId);
+      expect(result).toEqual(event);
+    });
+
+    it("throws NotFoundException when active event is missing", async () => {
+      eventModel.findOne.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(null),
+        }),
+      });
+
+      await expect(service.getActiveEventById(eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+  });
+
+  describe("getDeletedEvents", () => {
+    it("returns deleted events list", async () => {
+      const deleted = [{ _id: eventId, isDeleted: true }];
+      eventModel.find.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(deleted),
+      });
+
+      const result = await service.getDeletedEvents();
+
+      expect(result).toEqual(deleted);
+      expect(eventModel.find).toHaveBeenCalledWith({ isDeleted: true });
+    });
+  });
+
+  describe("createEvent", () => {
+    it("creates event and sets createdBy", async () => {
+      const dto = {
+        title: "Event A",
+        startDate: new Date("2030-01-01"),
+        endDate: new Date("2030-01-02"),
+        location: "HCM",
+      };
+
+      const result = await service.createEvent(adminUser as any, dto as any);
+
+      expect(result).toBeDefined();
+      expect(eventModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createdBy: expect.any(Types.ObjectId),
+          title: "Event A",
+        })
+      );
+    });
+
+    it("invalidates list cache keys when sMembers returns values", async () => {
+      mockRedisClient.sMembers.mockResolvedValue(["event:list:cache-key-1"]);
+      const dto = {
+        title: "Event A",
+        startDate: new Date("2030-01-01"),
+        endDate: new Date("2030-01-02"),
+        location: "HCM",
+      };
+
+      const result = await service.createEvent(adminUser as any, dto as any);
+
+      expect(result).toBeDefined();
+      expect(mockCacheManager.del).toHaveBeenCalledWith(
+        "event:list:cache-key-1"
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith("events:list:index");
+    });
+  });
+
+  describe("updateEvent", () => {
+    it("throws NotFoundException when event not found", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, { title: "New" } as any)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("updates event with updatedBy", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: eventId, isDeleted: false }),
+      });
+
+      eventModel.findByIdAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: eventId, title: "New" }),
+      });
+
+      const result = await service.updateEvent(adminUser as any, eventId, {
+        title: "New",
+      } as any);
+
+      expect(result).toEqual({ _id: eventId, title: "New" });
+      expect(eventModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        eventId,
+        expect.objectContaining({
+          title: "New",
+          updatedBy: expect.any(Types.ObjectId),
+        }),
+        { new: true }
+      );
+    });
+
+    it("throws NotFoundException when findByIdAndUpdate returns null (second check)", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: eventId, isDeleted: false }),
+      });
+      eventModel.findByIdAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, { title: "New" } as any)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("delegates ownership check to EventOwnershipService.assertCanManageEvent", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: eventId, isDeleted: false }),
+      });
+      eventModel.findByIdAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: eventId, title: "New" }),
+      });
+
+      await service.updateEvent(normalUser as any, eventId, {
+        title: "New",
+      } as any);
+
+      expect(
+        mockEventOwnershipService.assertCanManageEvent
+      ).toHaveBeenCalledWith(normalUser, eventId);
+    });
+
+    it("propagates ForbiddenException from the ownership check without mutating the event", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: eventId, isDeleted: false }),
+      });
+      mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
+        new ForbiddenException(
+          "You do not have permission to manage this event"
+        )
+      );
+
+      await expect(
+        service.updateEvent(normalUser as any, eventId, { title: "New" } as any)
+      ).rejects.toThrow(ForbiddenException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getMyManagedEvents", () => {
+    it("scopes the query to events the user owns or organizes", async () => {
+      const events = [{ title: "My Event" }];
+      const findChain = {
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(events),
+      };
+      eventModel.find.mockReturnValue(findChain);
+      eventModel.countDocuments.mockResolvedValue(1);
+
+      const result = await service.getMyManagedEvents(
+        normalUser as any,
+        {
+          page: 1,
+          limit: 10,
+        } as any
+      );
+
+      expect(result.items).toEqual(events);
+      expect(result.meta.totalItems).toBe(1);
+      const passedFilter = eventModel.find.mock.calls[0][0];
+      expect(passedFilter.isDeleted).toBe(false);
+      expect(passedFilter.$and[0].$or).toEqual([
+        { createdBy: new Types.ObjectId(normalUser.userId) },
+        { organizerIds: new Types.ObjectId(normalUser.userId) },
+      ]);
+    });
+  });
+
+  describe("addOrganizerToEvent", () => {
+    const targetUserId = new Types.ObjectId().toString();
+
+    it("adds the target user as organizer and promotes their role from user to organizer", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [] as Types.ObjectId[],
+        save: jest.fn().mockResolvedValue(undefined),
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "user",
+          isActive: true,
+        }),
+      });
+
+      await service.addOrganizerToEvent(
+        adminUser as any,
+        eventId,
+        targetUserId
+      );
+
+      expect(doc.organizerIds).toHaveLength(1);
+      expect(doc.save).toHaveBeenCalled();
+      expect(userModel.updateOne).toHaveBeenCalledWith(
+        { _id: targetUserId },
+        { $set: { role: "organizer" } },
+        expect.objectContaining({ session: expect.anything() })
+      );
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "event.organizer_add",
+          actorId: adminUser.userId,
+          eventId,
+          metadata: { targetUserId },
+        })
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        `auth:user-state:${targetUserId}`
+      );
+    });
+
+    it("promotes an existing checkin_staff to organizer so RolesGuard actually admits them", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [] as Types.ObjectId[],
+        save: jest.fn().mockResolvedValue(undefined),
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "checkin_staff",
+          isActive: true,
+        }),
+      });
+
+      await service.addOrganizerToEvent(
+        adminUser as any,
+        eventId,
+        targetUserId
+      );
+
+      expect(userModel.updateOne).toHaveBeenCalledWith(
+        { _id: targetUserId },
+        { $set: { role: "organizer" } },
+        expect.objectContaining({ session: expect.anything() })
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        `auth:user-state:${targetUserId}`
+      );
+    });
+
+    it("does not change role when target user is already organizer/admin", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [] as Types.ObjectId[],
+        save: jest.fn().mockResolvedValue(undefined),
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "organizer",
+          isActive: true,
+        }),
+      });
+
+      await service.addOrganizerToEvent(
+        adminUser as any,
+        eventId,
+        targetUserId
+      );
+
+      expect(userModel.updateOne).not.toHaveBeenCalled();
+      expect(mockRedisClient.del).not.toHaveBeenCalled();
+    });
+
+    it("throws BadRequestException when the target already manages the event", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [new Types.ObjectId(targetUserId)],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await expect(
+        service.addOrganizerToEvent(adminUser as any, eventId, targetUserId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws NotFoundException when target user does not exist", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [] as Types.ObjectId[],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.addOrganizerToEvent(adminUser as any, eventId, targetUserId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("throws BadRequestException when target user is inactive", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [] as Types.ObjectId[],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "user",
+          isActive: false,
+        }),
+      });
+
+      await expect(
+        service.addOrganizerToEvent(adminUser as any, eventId, targetUserId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("propagates the ownership check failure before touching the event", async () => {
+      mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
+        new ForbiddenException("nope")
+      );
+
+      await expect(
+        service.addOrganizerToEvent(normalUser as any, eventId, targetUserId)
+      ).rejects.toThrow(ForbiddenException);
+      expect(eventModel.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("removeOrganizerFromEvent", () => {
+    const organizerUserId = new Types.ObjectId().toString();
+
+    it("removes an assigned organizer", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [new Types.ObjectId(organizerUserId)],
+        save: jest.fn().mockResolvedValue(undefined),
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await service.removeOrganizerFromEvent(
+        adminUser as any,
+        eventId,
+        organizerUserId
+      );
+
+      expect(doc.organizerIds).toHaveLength(0);
+      expect(doc.save).toHaveBeenCalled();
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "event.organizer_remove",
+          actorId: adminUser.userId,
+          eventId,
+          metadata: { targetUserId: organizerUserId },
+        })
+      );
+    });
+
+    it("throws BadRequestException when trying to remove the event owner", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(organizerUserId),
+        organizerIds: [] as Types.ObjectId[],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await expect(
+        service.removeOrganizerFromEvent(
+          adminUser as any,
+          eventId,
+          organizerUserId
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when target is not an organizer of the event", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        organizerIds: [] as Types.ObjectId[],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await expect(
+        service.removeOrganizerFromEvent(
+          adminUser as any,
+          eventId,
+          organizerUserId
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws NotFoundException when the event does not exist", async () => {
+      eventModel.findOne.mockReturnValue(null);
+
+      await expect(
+        service.removeOrganizerFromEvent(
+          adminUser as any,
+          eventId,
+          organizerUserId
+        )
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe("getEventStaff", () => {
+    it("returns populated staff list after checking ownership", async () => {
+      const staffList = [{ _id: new Types.ObjectId(), email: "a@b.com" }];
+      eventModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ staffIds: staffList }),
+      });
+
+      const result = await service.getEventStaff(adminUser as any, eventId);
+
+      expect(result).toEqual(staffList);
+      expect(
+        mockEventOwnershipService.assertCanManageEvent
+      ).toHaveBeenCalledWith(adminUser, eventId);
+    });
+
+    it("throws NotFoundException when the event does not exist", async () => {
+      eventModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.getEventStaff(adminUser as any, eventId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("propagates ForbiddenException from the ownership check", async () => {
+      mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
+        new ForbiddenException("nope")
+      );
+
+      await expect(
+        service.getEventStaff(normalUser as any, eventId)
+      ).rejects.toThrow(ForbiddenException);
+      expect(eventModel.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("addStaffToEvent", () => {
+    const targetUserId = new Types.ObjectId().toString();
+
+    it("adds the target user as staff and promotes their role from user to checkin_staff", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        staffIds: [] as Types.ObjectId[],
+        save: jest.fn().mockResolvedValue(undefined),
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "user",
+          isActive: true,
+        }),
+      });
+
+      await service.addStaffToEvent(
+        adminUser as any,
+        eventId,
+        targetUserId,
+        "Gate A scanner"
+      );
+
+      expect(doc.staffIds).toHaveLength(1);
+      expect(doc.save).toHaveBeenCalled();
+      expect(userModel.updateOne).toHaveBeenCalledWith(
+        { _id: targetUserId },
+        { $set: { role: "checkin_staff" } },
+        expect.objectContaining({ session: expect.anything() })
+      );
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "event.staff_add",
+          actorId: adminUser.userId,
+          eventId,
+          reason: "Gate A scanner",
+          metadata: { targetUserId },
+        })
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        `auth:user-state:${targetUserId}`
+      );
+    });
+
+    it("does not change role when target user is already staff/organizer/admin", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        staffIds: [] as Types.ObjectId[],
+        save: jest.fn().mockResolvedValue(undefined),
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "organizer",
+          isActive: true,
+        }),
+      });
+
+      await service.addStaffToEvent(adminUser as any, eventId, targetUserId);
+
+      expect(userModel.updateOne).not.toHaveBeenCalled();
+      expect(mockRedisClient.del).not.toHaveBeenCalled();
+    });
+
+    it("throws BadRequestException when the target is already staff", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        staffIds: [new Types.ObjectId(targetUserId)],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await expect(
+        service.addStaffToEvent(adminUser as any, eventId, targetUserId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws NotFoundException when target user does not exist", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        staffIds: [] as Types.ObjectId[],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.addStaffToEvent(adminUser as any, eventId, targetUserId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("throws BadRequestException when target user is inactive", async () => {
+      const doc = {
+        _id: eventId,
+        createdBy: new Types.ObjectId(adminUser.userId),
+        staffIds: [] as Types.ObjectId[],
+        session: jest.fn().mockReturnThis(),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        session: jest.fn().mockResolvedValue({
+          _id: targetUserId,
+          role: "user",
+          isActive: false,
+        }),
+      });
+
+      await expect(
+        service.addStaffToEvent(adminUser as any, eventId, targetUserId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("propagates the ownership check failure before touching the event", async () => {
+      mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
+        new ForbiddenException("nope")
+      );
+
+      await expect(
+        service.addStaffToEvent(normalUser as any, eventId, targetUserId)
+      ).rejects.toThrow(ForbiddenException);
+      expect(eventModel.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("removeStaffFromEvent", () => {
+    const staffUserId = new Types.ObjectId().toString();
+
+    it("removes an assigned staff member", async () => {
+      const doc = {
+        _id: eventId,
+        staffIds: [new Types.ObjectId(staffUserId)],
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await service.removeStaffFromEvent(
+        adminUser as any,
+        eventId,
+        staffUserId
+      );
+
+      expect(doc.staffIds).toHaveLength(0);
+      expect(doc.save).toHaveBeenCalled();
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "event.staff_remove",
+          actorId: adminUser.userId,
+          eventId,
+          metadata: { targetUserId: staffUserId },
+        })
+      );
+    });
+
+    it("throws BadRequestException when target is not staff of the event", async () => {
+      const doc = {
+        _id: eventId,
+        staffIds: [] as Types.ObjectId[],
+      };
+      eventModel.findOne.mockReturnValue(doc);
+
+      await expect(
+        service.removeStaffFromEvent(adminUser as any, eventId, staffUserId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws NotFoundException when the event does not exist", async () => {
+      eventModel.findOne.mockReturnValue(null);
+
+      await expect(
+        service.removeStaffFromEvent(adminUser as any, eventId, staffUserId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("propagates the ownership check failure before touching the event", async () => {
+      mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
+        new ForbiddenException("nope")
+      );
+
+      await expect(
+        service.removeStaffFromEvent(normalUser as any, eventId, staffUserId)
+      ).rejects.toThrow(ForbiddenException);
+      expect(eventModel.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteEvent", () => {
+    it("soft-deletes event and cascades zone/area", async () => {
+      const session = createSessionMock();
+      eventModel.db.startSession.mockResolvedValue(session);
+
+      const doc = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: false,
+        save: jest.fn().mockResolvedValue({ _id: eventId, isDeleted: true }),
+      };
+
+      eventModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(doc),
+        }),
+      });
+
+      zoneModel.updateMany.mockResolvedValue({ acknowledged: true });
+      areaModel.updateMany.mockResolvedValue({ acknowledged: true });
+
+      const result = await service.deleteEvent(eventId);
+
+      expect(result).toEqual({ _id: eventId, isDeleted: true });
+      expect(zoneModel.updateMany).toHaveBeenCalledWith(
+        { eventId: doc._id, isDeleted: false },
+        { $set: { isDeleted: true } },
+        { session }
+      );
+      expect(areaModel.updateMany).toHaveBeenCalledWith(
+        { eventId: doc._id, isDeleted: false },
+        { $set: { isDeleted: true } },
+        { session }
+      );
+    });
+
+    it("throws NotFoundException when event already deleted or missing", async () => {
+      const session = createSessionMock();
+      eventModel.db.startSession.mockResolvedValue(session);
+
+      eventModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(null),
+        }),
+      });
+
+      await expect(service.deleteEvent(eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+
+    it("throws NotFoundException when deletedEvent is null after transaction", async () => {
+      const session = createSessionMock();
+      eventModel.db.startSession.mockResolvedValue(session);
+
+      const doc = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: false,
+        save: jest.fn().mockResolvedValue(null),
+      };
+
+      eventModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(doc),
+        }),
+      });
+
+      zoneModel.updateMany.mockResolvedValue({ acknowledged: true });
+      areaModel.updateMany.mockResolvedValue({ acknowledged: true });
+
+      await expect(service.deleteEvent(eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+  });
+
+  describe("restoreEvent", () => {
+    it("restores event and cascades zone/area", async () => {
+      const session = createSessionMock();
+      eventModel.db.startSession.mockResolvedValue(session);
+
+      const doc = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: true,
+        save: jest.fn().mockResolvedValue({ _id: eventId, isDeleted: false }),
+      };
+
+      eventModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(doc),
+        }),
+      });
+
+      zoneModel.updateMany.mockResolvedValue({ acknowledged: true });
+      areaModel.updateMany.mockResolvedValue({ acknowledged: true });
+
+      const result = await service.restoreEvent(eventId);
+
+      expect(result).toEqual({ _id: eventId, isDeleted: false });
+      expect(zoneModel.updateMany).toHaveBeenCalledWith(
+        { eventId: doc._id, isDeleted: true },
+        { $set: { isDeleted: false } },
+        { session }
+      );
+      expect(areaModel.updateMany).toHaveBeenCalledWith(
+        { eventId: doc._id, isDeleted: true },
+        { $set: { isDeleted: false } },
+        { session }
+      );
+    });
+
+    it("throws NotFoundException when deleted event is missing", async () => {
+      const session = createSessionMock();
+      eventModel.db.startSession.mockResolvedValue(session);
+
+      eventModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(null),
+        }),
+      });
+
+      await expect(service.restoreEvent(eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+
+    it("throws NotFoundException when restoredEvent is null after transaction", async () => {
+      const session = createSessionMock();
+      eventModel.db.startSession.mockResolvedValue(session);
+
+      const doc = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: true,
+        save: jest.fn().mockResolvedValue(null),
+      };
+
+      eventModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(doc),
+        }),
+      });
+
+      zoneModel.updateMany.mockResolvedValue({ acknowledged: true });
+      areaModel.updateMany.mockResolvedValue({ acknowledged: true });
+
+      await expect(service.restoreEvent(eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+  });
+
+  describe("cancelEventWithRefund", () => {
+    it("throws BadRequestException when eventId is invalid", async () => {
+      await expect(
+        service.cancelEventWithRefund("bad-id", adminUser.userId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws NotFoundException when event not found or already cancelled", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValueOnce(null);
+      await expect(
+        service.cancelEventWithRefund(eventId, adminUser.userId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    const makeBatchChain = (result: any[]) => ({
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(result),
+    });
+
+    it("cancels event and processes bookings in batches", async () => {
+      const cancelledEvent = { _id: eventId, status: EventStatus.CANCELLED };
+      eventModel.findOneAndUpdate.mockResolvedValueOnce(cancelledEvent);
+
+      const bookingIds = [new Types.ObjectId(), new Types.ObjectId()];
+
+      bookingModel.find = jest
+        .fn()
+        .mockReturnValueOnce(
+          makeBatchChain(bookingIds.map((id) => ({ _id: id })))
+        )
+        .mockReturnValueOnce(makeBatchChain([]));
+
+      const result = await service.cancelEventWithRefund(
+        eventId,
+        adminUser.userId
+      );
+
+      expect(result.event).toEqual(cancelledEvent);
+      expect(result.totalBookings).toBe(2);
+      expect(result.cancelled).toBe(2);
+      expect(result.failed).toHaveLength(0);
+      expect(mockBookingService.adminCancelBooking).toHaveBeenCalledTimes(2);
+    });
+
+    it("collects failed cancellations", async () => {
+      const cancelledEvent = { _id: eventId, status: EventStatus.CANCELLED };
+      eventModel.findOneAndUpdate.mockResolvedValueOnce(cancelledEvent);
+
+      const bookingId = new Types.ObjectId();
+      bookingModel.find = jest
+        .fn()
+        .mockReturnValueOnce(makeBatchChain([{ _id: bookingId }]))
+        .mockReturnValueOnce(makeBatchChain([]));
+
+      mockBookingService.adminCancelBooking.mockRejectedValueOnce(
+        new Error("Refund failed")
+      );
+
+      const result = await service.cancelEventWithRefund(
+        eventId,
+        adminUser.userId
+      );
+
+      expect(result.cancelled).toBe(0);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].bookingId).toBe(bookingId.toString());
+      expect(result.failed[0].error).toBe("Refund failed");
+    });
+
+    it("handles cursor-based pagination with 50+ active bookings", async () => {
+      const cancelledEvent = { _id: eventId, status: EventStatus.CANCELLED };
+      eventModel.findOneAndUpdate.mockResolvedValueOnce(cancelledEvent);
+
+      const batchSize = 50;
+      const firstBatchIds = Array.from(
+        { length: batchSize },
+        () => new Types.ObjectId()
+      );
+
+      bookingModel.find = jest
+        .fn()
+        .mockReturnValueOnce(
+          makeBatchChain(firstBatchIds.map((id) => ({ _id: id })))
+        )
+        .mockReturnValueOnce(makeBatchChain([]));
+
+      const result = await service.cancelEventWithRefund(
+        eventId,
+        adminUser.userId
+      );
+
+      expect(result.event).toEqual(cancelledEvent);
+      expect(result.totalBookings).toBe(50);
+      expect(result.cancelled).toBe(50);
+      expect(result.failed).toHaveLength(0);
+      expect(mockBookingService.adminCancelBooking).toHaveBeenCalledTimes(50);
+    });
+  });
+
+  describe("getCachedEvents", () => {
+    const query = { page: 1, limit: 10, status: "active" as const };
+
+    it("returns cached data when available", async () => {
+      const cached = { items: [], meta: {} };
+      mockCacheManager.get.mockResolvedValueOnce(cached);
+
+      const result = await service.getCachedEvents(query as any);
+
+      expect(result).toEqual(cached);
+    });
+
+    it("fetches events and caches them on cache miss", async () => {
+      mockCacheManager.get.mockResolvedValueOnce(null);
+
+      eventModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      });
+      eventModel.countDocuments.mockResolvedValue(0);
+
+      const result = await service.getCachedEvents(query as any);
+
+      expect(result).toBeDefined();
+      expect(mockCacheManager.set).toHaveBeenCalled();
+    });
+  });
+
+  describe("getEventById", () => {
+    it("returns cached data when available", async () => {
+      const cached = { _id: eventId, title: "Cached Event" };
+      mockCacheManager.get.mockResolvedValueOnce(cached);
+
+      const result = await service.getEventById(eventId);
+
+      expect(result).toEqual(cached);
+      expect(eventModel.findById).not.toHaveBeenCalled();
+    });
+
+    it("fetches from DB and caches result on cache miss", async () => {
+      mockCacheManager.get.mockResolvedValueOnce(null);
+      const event = { _id: eventId, title: "DB Event" };
+      eventModel.findById.mockResolvedValueOnce(event);
+
+      const result = await service.getEventById(eventId);
+
+      expect(result).toEqual(event);
+      expect(mockCacheManager.set).toHaveBeenCalledWith(
+        `event:details:${eventId}`,
+        event,
+        60_000
+      );
+    });
+
+    it("throws NotFoundException when event not found", async () => {
+      mockCacheManager.get.mockResolvedValueOnce(null);
+      eventModel.findById.mockResolvedValueOnce(null);
+
+      await expect(service.getEventById(eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+  });
+});
