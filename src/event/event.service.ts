@@ -964,28 +964,31 @@ export class EventService {
 
     if (
       eventData.status !== undefined &&
-      eventData.status !== existingEvent.status
+      eventData.status !== existingEvent.status &&
+      (existingEvent.status === EventStatus.ENDED ||
+        existingEvent.status === EventStatus.CANCELLED)
     ) {
-      if (
-        existingEvent.status === EventStatus.ENDED ||
-        existingEvent.status === EventStatus.CANCELLED
-      ) {
-        throw new BadRequestException(
-          `Không thể đổi trạng thái của event đang ở trạng thái "${existingEvent.status}"`
-        );
-      }
-      if (eventData.status === EventStatus.ACTIVE) {
-        // Same inventory checks as the dedicated publish endpoint — status
-        // must not be settable to "active" via this generic update path
-        // without passing the same validation, or it becomes a bypass.
-        this.assertEventFieldsPublishable(
-          eventData.title ?? existingEvent.title,
-          eventData.location ?? existingEvent.location,
-          effectiveStart,
-          effectiveEnd
-        );
-        await this.assertInventoryPublishable(existingEvent._id, effectiveEnd);
-      }
+      throw new BadRequestException(
+        `Không thể đổi trạng thái của event đang ở trạng thái "${existingEvent.status}"`
+      );
+    }
+
+    const targetStatus = eventData.status ?? existingEvent.status;
+    if (targetStatus === EventStatus.ACTIVE) {
+      // Same inventory checks as the dedicated publish endpoint — an event
+      // that is (or remains) active must never end up unpublishable. This
+      // must run not just when status is explicitly flipped to "active",
+      // but also when the event is already active and title/location/dates
+      // are edited without touching status — otherwise a live event could
+      // be updated straight into an invalid state (e.g. endDate before
+      // startDate) with no validation at all.
+      this.assertEventFieldsPublishable(
+        eventData.title ?? existingEvent.title,
+        eventData.location ?? existingEvent.location,
+        effectiveStart,
+        effectiveEnd
+      );
+      await this.assertInventoryPublishable(existingEvent._id, effectiveEnd);
     }
 
     if (eventData.timeSlots !== undefined) {

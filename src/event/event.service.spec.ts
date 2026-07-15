@@ -643,6 +643,118 @@ describe("EventService", () => {
 
       expect(result.status).toBe(EventStatus.ACTIVE);
     });
+
+    it("rejects endDate <= startDate on an already-active event even when status is not part of the request", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.ACTIVE,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-05"),
+        }),
+      });
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, {
+          endDate: new Date("2029-12-31"),
+        } as any)
+      ).rejects.toThrow(BadRequestException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("rejects a blank title on an already-active event even when status is not part of the request", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.ACTIVE,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-05"),
+        }),
+      });
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, {
+          title: " ",
+        } as any)
+      ).rejects.toThrow(BadRequestException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("rejects a blank location on an already-active event even when status is not part of the request", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.ACTIVE,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-05"),
+        }),
+      });
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, {
+          location: " ",
+        } as any)
+      ).rejects.toThrow(BadRequestException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("rejects shrinking endDate below an existing zone's saleEndDate on an already-active event", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.ACTIVE,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-10"),
+        }),
+      });
+      mockZonesLean([validZone({ saleEndDate: new Date("2030-01-09") })]);
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, {
+          endDate: new Date("2030-01-05"),
+        } as any)
+      ).rejects.toThrow(BadRequestException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("allows editing an already-active event when the resulting data is still publishable", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.ACTIVE,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-05"),
+        }),
+      });
+      mockZonesLean([validZone()]);
+      eventModel.findByIdAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          title: "Updated title",
+        }),
+      });
+
+      const result = await service.updateEvent(adminUser as any, eventId, {
+        title: "Updated title",
+      } as any);
+
+      expect(result.title).toBe("Updated title");
+    });
   });
 
   describe("publishEvent", () => {
