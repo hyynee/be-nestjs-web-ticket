@@ -27,6 +27,27 @@ describe("EventService", () => {
     endSession: jest.fn().mockResolvedValue(undefined),
   });
 
+  const validZone = (overrides: Record<string, any> = {}) => ({
+    _id: new Types.ObjectId(),
+    name: "General",
+    capacity: 10,
+    price: 100,
+    hasSeating: false,
+    ...overrides,
+  });
+
+  const mockZonesLean = (zones: any[]) => {
+    zoneModel.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(zones),
+    });
+  };
+
+  const mockAreasLean = (areas: any[]) => {
+    areaModel.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(areas),
+    });
+  };
+
   let eventModel: any;
   let zoneModel: any;
   let areaModel: any;
@@ -58,10 +79,16 @@ describe("EventService", () => {
     zoneModel = {
       aggregate: jest.fn(),
       updateMany: jest.fn(),
+      find: jest
+        .fn()
+        .mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
     };
 
     areaModel = {
       updateMany: jest.fn(),
+      find: jest
+        .fn()
+        .mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
     };
 
     const makeDefaultBatchChain = () => ({
@@ -452,6 +479,20 @@ describe("EventService", () => {
       );
       expect(mockRedisClient.del).toHaveBeenCalledWith("events:list:index");
     });
+
+    it("throws BadRequestException when creating with status=active directly (a brand-new event can never have zones yet)", async () => {
+      const dto = {
+        title: "Event A",
+        startDate: new Date("2030-01-01"),
+        endDate: new Date("2030-01-02"),
+        location: "HCM",
+        status: EventStatus.ACTIVE,
+      };
+
+      await expect(
+        service.createEvent(adminUser as any, dto as any)
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe("updateEvent", () => {
@@ -533,6 +574,374 @@ describe("EventService", () => {
         service.updateEvent(normalUser as any, eventId, { title: "New" } as any)
       ).rejects.toThrow(ForbiddenException);
       expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("throws BadRequestException when trying to change the status of an ended event", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.ENDED,
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-02"),
+        }),
+      });
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, {
+          status: EventStatus.ACTIVE,
+        } as any)
+      ).rejects.toThrow(BadRequestException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("blocks setting status=active via update when the event has no zones (closes the publish-validation bypass)", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.DRAFT,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-02"),
+        }),
+      });
+      mockZonesLean([]);
+
+      await expect(
+        service.updateEvent(adminUser as any, eventId, {
+          status: EventStatus.ACTIVE,
+        } as any)
+      ).rejects.toThrow(BadRequestException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("allows setting status=active via update when inventory is valid", async () => {
+      eventModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          isDeleted: false,
+          status: EventStatus.DRAFT,
+          title: "Event A",
+          location: "HCM",
+          startDate: new Date("2030-01-01"),
+          endDate: new Date("2030-01-02"),
+        }),
+      });
+      mockZonesLean([validZone()]);
+      eventModel.findByIdAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: eventId,
+          status: EventStatus.ACTIVE,
+        }),
+      });
+
+      const result = await service.updateEvent(adminUser as any, eventId, {
+        status: EventStatus.ACTIVE,
+      } as any);
+
+      expect(result.status).toBe(EventStatus.ACTIVE);
+    });
+  });
+
+  describe("publishEvent", () => {
+    const draftEvent = () => ({
+      _id: eventId,
+      isDeleted: false,
+      status: EventStatus.DRAFT,
+      title: "Event A",
+      location: "HCM",
+      startDate: new Date("2030-01-01"),
+      endDate: new Date("2030-01-02"),
+    });
+
+    it("publishes a draft event with valid inventory", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([validZone()]);
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.ACTIVE,
+      });
+
+      const result = await service.publishEvent(adminUser as any, eventId);
+
+      expect(result.status).toBe(EventStatus.ACTIVE);
+      expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: eventId, isDeleted: false, status: EventStatus.DRAFT },
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: EventStatus.ACTIVE }),
+        }),
+        { new: true }
+      );
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "event.publish",
+          actorId: adminUser.userId,
+          eventId,
+        })
+      );
+    });
+
+    it("delegates ownership check to EventOwnershipService.assertCanManageEvent", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([validZone()]);
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.ACTIVE,
+      });
+
+      await service.publishEvent(normalUser as any, eventId);
+
+      expect(
+        mockEventOwnershipService.assertCanManageEvent
+      ).toHaveBeenCalledWith(normalUser, eventId);
+    });
+
+    it("throws NotFoundException when event does not exist", async () => {
+      eventModel.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("throws BadRequestException when event is already active", async () => {
+      eventModel.findOne.mockResolvedValue({
+        ...draftEvent(),
+        status: EventStatus.ACTIVE,
+      });
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when event is ended or cancelled", async () => {
+      eventModel.findOne.mockResolvedValue({
+        ...draftEvent(),
+        status: EventStatus.CANCELLED,
+      });
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when the event has no active zones", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([]);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when total zone capacity is 0", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([validZone({ capacity: 0 })]);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when a zone's sale window is invalid", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([
+        validZone({
+          saleStartDate: new Date("2030-01-05"),
+          saleEndDate: new Date("2030-01-01"),
+        }),
+      ]);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when a seating zone has no area", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([validZone({ hasSeating: true })]);
+      mockAreasLean([]);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when an area has no seats", async () => {
+      const zone = validZone({ hasSeating: true });
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([zone]);
+      mockAreasLean([
+        { _id: new Types.ObjectId(), zoneId: zone._id, name: "A", seats: [] },
+      ]);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("throws BadRequestException when an area has duplicate seats", async () => {
+      const zone = validZone({ hasSeating: true });
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([zone]);
+      mockAreasLean([
+        {
+          _id: new Types.ObjectId(),
+          zoneId: zone._id,
+          name: "A",
+          seats: ["A1", "A1"],
+        },
+      ]);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("publishes a seating zone that has valid, unique-seat areas", async () => {
+      const zone = validZone({ hasSeating: true });
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([zone]);
+      mockAreasLean([
+        {
+          _id: new Types.ObjectId(),
+          zoneId: zone._id,
+          name: "A",
+          seats: ["A1", "A2"],
+        },
+      ]);
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.ACTIVE,
+      });
+
+      const result = await service.publishEvent(adminUser as any, eventId);
+      expect(result.status).toBe(EventStatus.ACTIVE);
+    });
+
+    it("throws BadRequestException when the status changed concurrently (findOneAndUpdate race loss)", async () => {
+      eventModel.findOne.mockResolvedValue(draftEvent());
+      mockZonesLean([validZone()]);
+      eventModel.findOneAndUpdate.mockResolvedValue(null);
+
+      await expect(
+        service.publishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe("unpublishEvent", () => {
+    it("moves an active event to inactive", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.INACTIVE,
+      });
+
+      const result = await service.unpublishEvent(adminUser as any, eventId);
+
+      expect(result.status).toBe(EventStatus.INACTIVE);
+      expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: eventId, isDeleted: false, status: EventStatus.ACTIVE },
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: EventStatus.INACTIVE }),
+        }),
+        { new: true }
+      );
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "event.unpublish", eventId })
+      );
+    });
+
+    it("throws NotFoundException when the event does not exist", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue(null);
+      eventModel.exists = jest.fn().mockResolvedValue(null);
+
+      await expect(
+        service.unpublishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("throws BadRequestException when the event is not active", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue(null);
+      eventModel.exists = jest.fn().mockResolvedValue({ _id: eventId });
+
+      await expect(
+        service.unpublishEvent(adminUser as any, eventId)
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("delegates ownership check to EventOwnershipService.assertCanManageEvent", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.INACTIVE,
+      });
+
+      await service.unpublishEvent(normalUser as any, eventId);
+
+      expect(
+        mockEventOwnershipService.assertCanManageEvent
+      ).toHaveBeenCalledWith(normalUser, eventId);
+    });
+  });
+
+  describe("endEvent", () => {
+    it("ends an active event", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.ENDED,
+      });
+
+      const result = await service.endEvent(adminUser as any, eventId);
+
+      expect(result.status).toBe(EventStatus.ENDED);
+      expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+        {
+          _id: eventId,
+          isDeleted: false,
+          status: { $in: [EventStatus.ACTIVE, EventStatus.INACTIVE] },
+        },
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: EventStatus.ENDED }),
+        }),
+        { new: true }
+      );
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "event.end", eventId })
+      );
+    });
+
+    it("throws NotFoundException when the event does not exist", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue(null);
+      eventModel.exists = jest.fn().mockResolvedValue(null);
+
+      await expect(service.endEvent(adminUser as any, eventId)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+
+    it("throws BadRequestException when the event is draft or already ended/cancelled", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue(null);
+      eventModel.exists = jest.fn().mockResolvedValue({ _id: eventId });
+
+      await expect(service.endEvent(adminUser as any, eventId)).rejects.toThrow(
+        BadRequestException
+      );
+    });
+
+    it("delegates ownership check to EventOwnershipService.assertCanManageEvent", async () => {
+      eventModel.findOneAndUpdate.mockResolvedValue({
+        _id: eventId,
+        status: EventStatus.ENDED,
+      });
+
+      await service.endEvent(normalUser as any, eventId);
+
+      expect(
+        mockEventOwnershipService.assertCanManageEvent
+      ).toHaveBeenCalledWith(normalUser, eventId);
     });
   });
 

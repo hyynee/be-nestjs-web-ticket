@@ -54,6 +54,9 @@ describe("EventController", () => {
             getEventStaff: jest.fn(),
             addStaffToEvent: jest.fn(),
             removeStaffFromEvent: jest.fn(),
+            publishEvent: jest.fn(),
+            unpublishEvent: jest.fn(),
+            endEvent: jest.fn(),
           },
         },
       ],
@@ -191,6 +194,48 @@ describe("EventController", () => {
         dto
       );
       expect(result).toEqual(updated);
+    });
+  });
+
+  describe("publishEvent", () => {
+    it("publishes an event by id", async () => {
+      const published = { id: mockEventId, status: "active" };
+      eventService.publishEvent.mockResolvedValue(published);
+
+      const result = await controller.publishEvent(mockUser, mockEventId);
+
+      expect(eventService.publishEvent).toHaveBeenCalledWith(
+        mockUser,
+        mockEventId
+      );
+      expect(result).toEqual(published);
+    });
+  });
+
+  describe("unpublishEvent", () => {
+    it("unpublishes an event by id", async () => {
+      const unpublished = { id: mockEventId, status: "inactive" };
+      eventService.unpublishEvent.mockResolvedValue(unpublished);
+
+      const result = await controller.unpublishEvent(mockUser, mockEventId);
+
+      expect(eventService.unpublishEvent).toHaveBeenCalledWith(
+        mockUser,
+        mockEventId
+      );
+      expect(result).toEqual(unpublished);
+    });
+  });
+
+  describe("endEvent", () => {
+    it("ends an event by id", async () => {
+      const ended = { id: mockEventId, status: "ended" };
+      eventService.endEvent.mockResolvedValue(ended);
+
+      const result = await controller.endEvent(mockUser, mockEventId);
+
+      expect(eventService.endEvent).toHaveBeenCalledWith(mockUser, mockEventId);
+      expect(result).toEqual(ended);
     });
   });
 
@@ -390,6 +435,21 @@ describe("EventController", () => {
         "organizer",
       ]);
       expect(reflector.get(ROLES_KEY, controller.removeStaff)).toEqual([
+        "admin",
+        "organizer",
+      ]);
+    });
+
+    it("opens publish/unpublish/end lifecycle actions to admin and organizer", () => {
+      expect(reflector.get(ROLES_KEY, controller.publishEvent)).toEqual([
+        "admin",
+        "organizer",
+      ]);
+      expect(reflector.get(ROLES_KEY, controller.unpublishEvent)).toEqual([
+        "admin",
+        "organizer",
+      ]);
+      expect(reflector.get(ROLES_KEY, controller.endEvent)).toEqual([
         "admin",
         "organizer",
       ]);

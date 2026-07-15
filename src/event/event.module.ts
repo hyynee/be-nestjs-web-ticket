@@ -1,6 +1,7 @@
 import { Module, forwardRef } from "@nestjs/common";
 import { EventService } from "./event.service";
 import { EventOwnershipService } from "./event-ownership.service";
+import { EventScheduler } from "./event.scheduler";
 import { EventController } from "./event.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { EventSchema } from "@src/schemas/event.schema";
@@ -22,7 +23,7 @@ import { BookingModule } from "@src/booking/booking.module";
     forwardRef(() => BookingModule),
   ],
   controllers: [EventController],
-  providers: [EventService, EventOwnershipService],
+  providers: [EventService, EventOwnershipService, EventScheduler],
   exports: [EventService, EventOwnershipService],
 })
 export class EventModule {}

@@ -653,6 +653,266 @@ export class EventService {
     }
   }
 
+  /** Synchronous field-level checks shared by publish() and updateEvent() when it targets "active". */
+  private assertEventFieldsPublishable(
+    title: string,
+    location: string,
+    startDate: Date,
+    endDate: Date
+  ): void {
+    if (!title || !title.trim()) {
+      throw new BadRequestException("Event thiếu tiêu đề, không thể publish");
+    }
+    if (!location || !location.trim()) {
+      throw new BadRequestException("Event thiếu địa điểm, không thể publish");
+    }
+    if (!(new Date(startDate) < new Date(endDate))) {
+      throw new BadRequestException(
+        "Ngày bắt đầu phải trước ngày kết thúc để publish"
+      );
+    }
+  }
+
+  /** Zone/area inventory checks shared by publish() and updateEvent() when it targets "active". */
+  private async assertInventoryPublishable(
+    eventId: Types.ObjectId,
+    eventEndDate: Date
+  ): Promise<void> {
+    const zones = await this.zoneModel
+      .find({ eventId, isDeleted: false })
+      .lean();
+
+    if (zones.length === 0) {
+      throw new BadRequestException(
+        "Event chưa có zone nào đang hoạt động, không thể publish"
+      );
+    }
+
+    const totalCapacity = zones.reduce(
+      (sum, zone) => sum + (zone.capacity ?? 0),
+      0
+    );
+    if (totalCapacity <= 0) {
+      throw new BadRequestException(
+        "Tổng capacity của các zone phải lớn hơn 0 để publish"
+      );
+    }
+
+    for (const zone of zones) {
+      if (typeof zone.price !== "number" || zone.price < 0) {
+        throw new BadRequestException(
+          `Zone "${zone.name}" có giá vé không hợp lệ`
+        );
+      }
+      if (
+        zone.saleStartDate &&
+        zone.saleEndDate &&
+        zone.saleStartDate > zone.saleEndDate
+      ) {
+        throw new BadRequestException(
+          `Zone "${zone.name}" có thời gian mở bán không hợp lệ (bắt đầu sau kết thúc)`
+        );
+      }
+      if (zone.saleEndDate && zone.saleEndDate > new Date(eventEndDate)) {
+        throw new BadRequestException(
+          `Zone "${zone.name}" có ngày kết thúc mở bán sau ngày kết thúc sự kiện`
+        );
+      }
+    }
+
+    const seatingZoneIds = zones
+      .filter((zone) => zone.hasSeating)
+      .map((zone) => zone._id);
+
+    if (seatingZoneIds.length === 0) {
+      return;
+    }
+
+    const areas = await this.areaModel
+      .find({ zoneId: { $in: seatingZoneIds }, isDeleted: false })
+      .lean();
+
+    const areasByZoneId = new Map<string, typeof areas>();
+    for (const area of areas) {
+      const key = area.zoneId.toString();
+      const bucket = areasByZoneId.get(key);
+      if (bucket) {
+        bucket.push(area);
+      } else {
+        areasByZoneId.set(key, [area]);
+      }
+    }
+
+    for (const zone of zones) {
+      if (!zone.hasSeating) continue;
+      const zoneAreas = areasByZoneId.get(zone._id.toString()) ?? [];
+      if (zoneAreas.length === 0) {
+        throw new BadRequestException(
+          `Zone "${zone.name}" bật bán theo ghế nhưng chưa có khu vực (area) nào`
+        );
+      }
+      for (const area of zoneAreas) {
+        if (!area.seats || area.seats.length === 0) {
+          throw new BadRequestException(
+            `Khu vực "${area.name}" (zone "${zone.name}") chưa có ghế nào`
+          );
+        }
+        if (new Set(area.seats).size !== area.seats.length) {
+          throw new BadRequestException(
+            `Khu vực "${area.name}" (zone "${zone.name}") có ghế bị trùng lặp`
+          );
+        }
+      }
+    }
+  }
+
+  /** Publishes a draft/inactive event to "active" after validating inventory is bookable. */
+  async publishEvent(currentUser: JwtPayload, eventId: string): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const event = await this.eventModel.findOne({
+      _id: eventId,
+      isDeleted: false,
+    });
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+    if (
+      event.status !== EventStatus.DRAFT &&
+      event.status !== EventStatus.INACTIVE
+    ) {
+      throw new BadRequestException(
+        `Không thể publish event đang ở trạng thái "${event.status}"`
+      );
+    }
+
+    this.assertEventFieldsPublishable(
+      event.title,
+      event.location,
+      event.startDate,
+      event.endDate
+    );
+    await this.assertInventoryPublishable(event._id, event.endDate);
+
+    const updated = await this.eventModel.findOneAndUpdate(
+      { _id: event._id, isDeleted: false, status: event.status },
+      {
+        $set: {
+          status: EventStatus.ACTIVE,
+          updatedBy: new Types.ObjectId(currentUser.userId),
+        },
+      },
+      { new: true }
+    );
+    if (!updated) {
+      throw new BadRequestException(
+        "Trạng thái event đã thay đổi, vui lòng thử lại"
+      );
+    }
+
+    await this.invalidateEventCache(eventId);
+    await this.auditService.record({
+      action: AuditAction.EVENT_PUBLISH,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+    });
+
+    return updated;
+  }
+
+  /** Pauses booking on an active event without ending its lifecycle. */
+  async unpublishEvent(
+    currentUser: JwtPayload,
+    eventId: string
+  ): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const updated = await this.eventModel.findOneAndUpdate(
+      { _id: eventId, isDeleted: false, status: EventStatus.ACTIVE },
+      {
+        $set: {
+          status: EventStatus.INACTIVE,
+          updatedBy: new Types.ObjectId(currentUser.userId),
+        },
+      },
+      { new: true }
+    );
+    if (!updated) {
+      const exists = await this.eventModel.exists({
+        _id: eventId,
+        isDeleted: false,
+      });
+      if (!exists) {
+        throw new NotFoundException(`Event with ID ${eventId} not found`);
+      }
+      throw new BadRequestException(
+        "Chỉ có thể unpublish event đang ở trạng thái active"
+      );
+    }
+
+    await this.invalidateEventCache(eventId);
+    await this.auditService.record({
+      action: AuditAction.EVENT_UNPUBLISH,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+    });
+
+    return updated;
+  }
+
+  /** Manually ends an active/inactive event's lifecycle (terminal state, same as auto-end). */
+  async endEvent(currentUser: JwtPayload, eventId: string): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const updated = await this.eventModel.findOneAndUpdate(
+      {
+        _id: eventId,
+        isDeleted: false,
+        status: { $in: [EventStatus.ACTIVE, EventStatus.INACTIVE] },
+      },
+      {
+        $set: {
+          status: EventStatus.ENDED,
+          updatedBy: new Types.ObjectId(currentUser.userId),
+        },
+      },
+      { new: true }
+    );
+    if (!updated) {
+      const exists = await this.eventModel.exists({
+        _id: eventId,
+        isDeleted: false,
+      });
+      if (!exists) {
+        throw new NotFoundException(`Event with ID ${eventId} not found`);
+      }
+      throw new BadRequestException(
+        "Chỉ có thể kết thúc event đang active hoặc inactive"
+      );
+    }
+
+    await this.invalidateEventCache(eventId);
+    await this.auditService.record({
+      action: AuditAction.EVENT_END,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+    });
+
+    return updated;
+  }
+
   async createEvent(
     currentUser: JwtPayload,
     eventData: CreateEventDTO
@@ -666,6 +926,18 @@ export class EventService {
       createdBy: new Types.ObjectId(currentUser.userId),
       ...eventData,
     });
+    if (eventData.status === EventStatus.ACTIVE) {
+      // A brand-new event can never have zones yet, so this will always
+      // reject — by design: creation can't be used to skip the publish
+      // validation. Kept explicit rather than silently downgrading to draft.
+      this.assertEventFieldsPublishable(
+        eventData.title,
+        eventData.location,
+        eventData.startDate,
+        eventData.endDate
+      );
+      await this.assertInventoryPublishable(newEvent._id, eventData.endDate);
+    }
     const saved = await newEvent.save();
     await this.invalidateEventCache(saved._id.toString());
     return saved;
@@ -687,9 +959,36 @@ export class EventService {
 
     await this.eventOwnershipService.assertCanManageEvent(currentUser, id);
 
+    const effectiveStart = eventData.startDate ?? existingEvent.startDate;
+    const effectiveEnd = eventData.endDate ?? existingEvent.endDate;
+
+    if (
+      eventData.status !== undefined &&
+      eventData.status !== existingEvent.status
+    ) {
+      if (
+        existingEvent.status === EventStatus.ENDED ||
+        existingEvent.status === EventStatus.CANCELLED
+      ) {
+        throw new BadRequestException(
+          `Không thể đổi trạng thái của event đang ở trạng thái "${existingEvent.status}"`
+        );
+      }
+      if (eventData.status === EventStatus.ACTIVE) {
+        // Same inventory checks as the dedicated publish endpoint — status
+        // must not be settable to "active" via this generic update path
+        // without passing the same validation, or it becomes a bypass.
+        this.assertEventFieldsPublishable(
+          eventData.title ?? existingEvent.title,
+          eventData.location ?? existingEvent.location,
+          effectiveStart,
+          effectiveEnd
+        );
+        await this.assertInventoryPublishable(existingEvent._id, effectiveEnd);
+      }
+    }
+
     if (eventData.timeSlots !== undefined) {
-      const effectiveStart = eventData.startDate ?? existingEvent.startDate;
-      const effectiveEnd = eventData.endDate ?? existingEvent.endDate;
       this.validateTimeSlots(eventData.timeSlots, effectiveStart, effectiveEnd);
 
       // Guard: ngăn xóa slot đang có booking active

@@ -17,6 +17,9 @@ export enum AuditAction {
   EVENT_ORGANIZER_REMOVE = "event.organizer_remove",
   EVENT_STAFF_ADD = "event.staff_add",
   EVENT_STAFF_REMOVE = "event.staff_remove",
+  EVENT_PUBLISH = "event.publish",
+  EVENT_UNPUBLISH = "event.unpublish",
+  EVENT_END = "event.end",
 }
 
 @Schema({ timestamps: true })

@@ -170,6 +170,45 @@ export class EventController {
     return this.eventService.removeStaffFromEvent(currentUser, id, userId);
   }
 
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @HttpCode(200)
+  @Post(":id/publish")
+  async publishEvent(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string
+  ) {
+    return this.eventService.publishEvent(currentUser, id);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @HttpCode(200)
+  @Post(":id/unpublish")
+  async unpublishEvent(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string
+  ) {
+    return this.eventService.unpublishEvent(currentUser, id);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @HttpCode(200)
+  @Post(":id/end")
+  async endEvent(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string
+  ) {
+    return this.eventService.endEvent(currentUser, id);
+  }
+
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @ApiCookieAuth("access_token")
   @Roles("admin")
