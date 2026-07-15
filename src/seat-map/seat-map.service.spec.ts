@@ -241,6 +241,35 @@ describe("SeatMapService", () => {
         { seat: "A2", status: "blocked" },
       ]);
     });
+
+    it("excludes expired SeatState overrides from the query, so a lapsed block reads as available instead of waiting for Mongo's TTL cleanup", async () => {
+      zoneModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: zoneId,
+            name: "VIP",
+            hasSeating: true,
+            capacity: 3,
+            soldCount: 0,
+          },
+        ]),
+      });
+      areaModel.find.mockReturnValue({
+        lean: jest
+          .fn()
+          .mockResolvedValue([
+            { _id: areaId, eventId, zoneId, name: "Row A", seats: ["A1"] },
+          ]),
+      });
+
+      await service.getEventSeatMap(eventId.toString());
+
+      const [filter] = seatStateModel.find.mock.calls[0];
+      expect(filter.$or).toEqual([
+        { expiresAt: { $exists: false } },
+        { expiresAt: { $gt: expect.any(Date) } },
+      ]);
+    });
   });
 
   describe("getZoneSeatMap", () => {
@@ -392,6 +421,81 @@ describe("SeatMapService", () => {
       expect(ops[0].updateOne.update.$set.status).toBe(
         SeatBlockStatus.DISABLED
       );
+    });
+
+    it("clears a previous expiresAt via $unset when re-blocking without one ($set: undefined would be silently dropped by the Mongo driver, leaving the stale expiry in place)", async () => {
+      areaModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: areaId,
+          eventId,
+          zoneId,
+          name: "Row A",
+          seats: ["A1"],
+        }),
+      });
+
+      await service.blockSeats(
+        adminUser as any,
+        {
+          ...dto,
+          seats: ["A1"],
+        } as any
+      );
+
+      const ops = seatStateModel.bulkWrite.mock.calls[0][0];
+      expect(ops[0].updateOne.update.$set.expiresAt).toBeUndefined();
+      expect(ops[0].updateOne.update.$unset).toEqual({ expiresAt: "" });
+    });
+
+    it("sets expiresAt directly (no $unset) when a future expiresAt is provided", async () => {
+      areaModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: areaId,
+          eventId,
+          zoneId,
+          name: "Row A",
+          seats: ["A1"],
+        }),
+      });
+      const future = new Date(Date.now() + 60_000).toISOString();
+
+      await service.blockSeats(
+        adminUser as any,
+        {
+          ...dto,
+          seats: ["A1"],
+          expiresAt: future,
+        } as any
+      );
+
+      const ops = seatStateModel.bulkWrite.mock.calls[0][0];
+      expect(ops[0].updateOne.update.$set.expiresAt).toEqual(new Date(future));
+      expect(ops[0].updateOne.update.$unset).toBeUndefined();
+    });
+
+    it("rejects an expiresAt that is not in the future", async () => {
+      areaModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: areaId,
+          eventId,
+          zoneId,
+          name: "Row A",
+          seats: ["A1"],
+        }),
+      });
+      const past = new Date(Date.now() - 60_000).toISOString();
+
+      await expect(
+        service.blockSeats(
+          adminUser as any,
+          {
+            ...dto,
+            seats: ["A1"],
+            expiresAt: past,
+          } as any
+        )
+      ).rejects.toThrow(BadRequestException);
+      expect(seatStateModel.bulkWrite).not.toHaveBeenCalled();
     });
   });
 

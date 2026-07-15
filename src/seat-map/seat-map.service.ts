@@ -86,6 +86,10 @@ export class SeatMapService {
           zoneId: area.zoneId,
           areaId: area._id,
           seat: { $in: seats },
+          $or: [
+            { expiresAt: { $exists: false } },
+            { expiresAt: { $gt: new Date() } },
+          ],
         })
         .select("seat status")
         .lean(),
@@ -212,8 +216,21 @@ export class SeatMapService {
     }
 
     const status = dto.status ?? SeatBlockStatus.BLOCKED;
-    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : undefined;
+    let expiresAt: Date | undefined;
+    if (dto.expiresAt) {
+      expiresAt = new Date(dto.expiresAt);
+      if (expiresAt <= new Date()) {
+        throw new BadRequestException(
+          "expiresAt phải là thời điểm trong tương lai"
+        );
+      }
+    }
 
+    // A seat re-blocked without expiresAt must clear any previous expiry —
+    // $set with an undefined value is stripped by the Mongo driver before
+    // it ever reaches the server, silently leaving the old expiresAt (and
+    // the TTL cleanup that goes with it) in place, so this is $unset, not
+    // $set: { expiresAt: undefined }.
     await this.seatStateModel.bulkWrite(
       dto.seats.map((seat) => ({
         updateOne: {
@@ -232,8 +249,9 @@ export class SeatMapService {
               status,
               reason: dto.reason,
               createdBy: new Types.ObjectId(currentUser.userId),
-              expiresAt,
+              ...(expiresAt ? { expiresAt } : {}),
             },
+            ...(expiresAt ? {} : { $unset: { expiresAt: "" } }),
           },
           upsert: true,
         },
