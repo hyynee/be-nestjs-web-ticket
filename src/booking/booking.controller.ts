@@ -15,6 +15,7 @@ import { ApiCookieAuth } from "@nestjs/swagger";
 import { RolesGuard } from "@src/guards/role.guard";
 import { Roles } from "@src/common/decorators/roles.decorator";
 import { AuthGuard } from "@nestjs/passport";
+import { VerifiedUserGuard } from "@src/guards/verified-user.guard";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
@@ -28,7 +29,7 @@ export class BookingController {
 
   @Throttle({ short: { limit: 3, ttl: 10000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"))
+  @UseGuards(AuthGuard("jwt"), VerifiedUserGuard)
   @Post("")
   @HttpCode(201)
   createBooking(

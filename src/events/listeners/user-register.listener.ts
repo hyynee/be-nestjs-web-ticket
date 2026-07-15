@@ -35,6 +35,23 @@ export class UserRegisterListener {
       this.logger.error("Send password reset email failed", error);
     }
   }
+  @OnEvent("email.verification.requested")
+  async handleEmailVerificationRequestedEvent(payload: {
+    email: string;
+    token: string;
+    fullName: string;
+  }) {
+    try {
+      await this.mail.sendVerificationEmail(
+        payload.email,
+        payload.token,
+        payload.fullName
+      );
+    } catch (error) {
+      this.logger.error("Send verification email failed", error);
+    }
+  }
+
   @OnEvent("booking.confirmation")
   async handleBookingConfirmationEvent(payload: BookingConfirmationData) {
     try {

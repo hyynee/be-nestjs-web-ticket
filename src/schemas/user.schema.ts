@@ -31,6 +31,17 @@ export class User extends Document {
   })
   role: string;
 
+  @Prop({ default: false })
+  twoFactorEnabled: boolean;
+
+  /** AES-256-GCM encrypted TOTP secret — never stored or returned raw. */
+  @Prop({ select: false })
+  twoFactorSecret?: string;
+
+  /** SHA-256 hashes of single-use recovery codes — raw codes are shown to the user once, at generation time. */
+  @Prop({ type: [String], default: [], select: false })
+  twoFactorRecoveryCodes: string[];
+
   declare comparePassword: (password: string) => Promise<boolean>;
 }
 

@@ -95,6 +95,15 @@ export class MailService {
     return { status: "queued" };
   }
 
+  async sendVerificationEmail(to: string, token: string, fullName: string) {
+    await this.queueService.addJob({
+      type: "send-verification-email",
+      payload: { to, token, fullName },
+      requestedAt: new Date().toISOString(),
+    });
+    return { status: "queued" };
+  }
+
   async sendPasswordResetEmail(
     email: string,
     resetToken: string,
@@ -128,6 +137,39 @@ export class MailService {
                   Đến trang chủ
                 </a>
               </p>
+              <p>Trân trọng,<br/>Ticket System</p>
+            </div>
+          </body>
+        </html>
+      `,
+    });
+  }
+
+  async deliverVerificationEmail(
+    to: string,
+    token: string,
+    fullName: string
+  ): Promise<void> {
+    const safeName = this.escapeHtml(fullName);
+    const verifyLink = `${config.FRONTEND_URL}/verify-email?token=${token}`;
+
+    await this.transporter.sendMail({
+      from: `"Ticket System" <${config.SMTP_USER}>`,
+      to,
+      subject: "Xác thực địa chỉ email",
+      html: `
+        <html>
+          <body style="font-family: Arial, sans-serif; background: #f3f4f6; padding: 20px;">
+            <div style="max-width: 600px; margin: auto; background: white; padding: 30px; border-radius: 8px;">
+              <h2 style="color: #111827;">Xác thực email</h2>
+              <p>Xin chào <strong>${safeName}</strong>,</p>
+              <p>Nhấn vào liên kết bên dưới để xác thực địa chỉ email của bạn (có hiệu lực trong 24 giờ):</p>
+              <p>
+                <a href="${verifyLink}" style="display:inline-block;padding:10px 20px;background:#4f46e5;color:white;text-decoration:none;border-radius:6px;">
+                  Xác thực email
+                </a>
+              </p>
+              <p>Nếu bạn không tạo tài khoản này, hãy bỏ qua email này.</p>
               <p>Trân trọng,<br/>Ticket System</p>
             </div>
           </body>

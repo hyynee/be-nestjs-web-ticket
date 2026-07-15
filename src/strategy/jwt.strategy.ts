@@ -16,6 +16,7 @@ type JwtClaims = {
 type CachedUserState = {
   isActive: boolean;
   role: string;
+  isVerified: boolean;
 };
 
 const AUTH_USER_CACHE_TTL_SEC = 60;
@@ -78,14 +79,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!userState) {
       const user = await this.userModel
         .findById(payload.userId)
-        .select("_id role isActive")
+        .select("_id role isActive isVerified")
         .lean();
 
       if (!user || user.isActive === false) {
         throw new UnauthorizedException("User not found or inactive");
       }
 
-      userState = { isActive: user.isActive, role: user.role };
+      userState = {
+        isActive: user.isActive,
+        role: user.role,
+        isVerified: user.isVerified,
+      };
 
       try {
         await this.redisService.client.set(
@@ -100,6 +105,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException("User not found or inactive");
     }
 
-    return { ...payload, role: userState.role };
+    return {
+      ...payload,
+      role: userState.role,
+      isVerified: userState.isVerified,
+    };
   }
 }

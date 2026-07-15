@@ -25,6 +25,18 @@ export class UserEventsService {
     this.eventEmitter.emit("password.reset.success", { email, fullName });
   }
 
+  emitEmailVerificationRequested(
+    email: string,
+    token: string,
+    fullName: string
+  ): void {
+    this.eventEmitter.emit("email.verification.requested", {
+      email,
+      token,
+      fullName,
+    });
+  }
+
   emitSendBookingConfirmation(data: BookingConfirmationData): void {
     this.eventEmitter.emit("booking.confirmation", data);
   }

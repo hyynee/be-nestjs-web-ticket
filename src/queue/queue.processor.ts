@@ -60,6 +60,13 @@ export class QueueProcessor extends WorkerHost {
             payload.fullName
           );
           break;
+        case "send-verification-email":
+          await this.mailService.deliverVerificationEmail(
+            payload.to,
+            payload.token,
+            payload.fullName
+          );
+          break;
         case "send-password-reset":
           await this.mailService.deliverPasswordResetEmail(
             payload.email,

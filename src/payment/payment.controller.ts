@@ -15,6 +15,7 @@ import { Throttle } from "@nestjs/throttler";
 import { PaymentService, WebhookIdempotencyStatus } from "./payment.service";
 import { AuthGuard } from "@nestjs/passport";
 import { UseGuards, Post } from "@nestjs/common";
+import { VerifiedUserGuard } from "@src/guards/verified-user.guard";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { ApiCookieAuth } from "@nestjs/swagger";
@@ -48,7 +49,7 @@ export class PaymentController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"))
+  @UseGuards(AuthGuard("jwt"), VerifiedUserGuard)
   @HttpCode(201)
   @Post("create-checkout-session")
   async createCheckoutSession(
@@ -192,7 +193,7 @@ export class PaymentController {
 
   // check out paypal
   @ApiCookieAuth("access_token")
-  @UseGuards(AuthGuard("jwt"))
+  @UseGuards(AuthGuard("jwt"), VerifiedUserGuard)
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @HttpCode(200)
   @Post("create-paypal-transaction")

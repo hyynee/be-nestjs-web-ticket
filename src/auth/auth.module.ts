@@ -11,7 +11,10 @@ import { GoogleStrategy } from "@src/strategy/google.strategy";
 import { LockLoginModule } from "@src/lock-login/lock-login.module";
 import { MailModule } from "@src/services/mail.module";
 import { ResetTokenSchema } from "@src/schemas/reset-token.schema";
+import { EmailVerificationTokenSchema } from "@src/schemas/email-verification-token.schema";
+import { SessionSchema } from "@src/schemas/session.schema";
 import { EventsModule } from "@src/events/events.module";
+import { TwoFactorModule } from "@src/two-factor/two-factor.module";
 import { ConfigService } from "@nestjs/config";
 
 @Module({
@@ -19,6 +22,11 @@ import { ConfigService } from "@nestjs/config";
     MongooseModule.forFeature([
       { name: "User", schema: UserSchema },
       { name: "ResetToken", schema: ResetTokenSchema },
+      {
+        name: "EmailVerificationToken",
+        schema: EmailVerificationTokenSchema,
+      },
+      { name: "Session", schema: SessionSchema },
     ]),
 
     JwtModule.registerAsync({
@@ -36,6 +44,7 @@ import { ConfigService } from "@nestjs/config";
     ResponseModule,
     EventsModule,
     MailModule,
+    TwoFactorModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, GoogleStrategy],

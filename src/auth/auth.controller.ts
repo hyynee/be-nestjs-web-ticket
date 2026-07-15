@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
   Post,
   Put,
   Req,
@@ -10,7 +12,7 @@ import {
   HttpCode,
   HttpStatus,
 } from "@nestjs/common";
-import { AuthService } from "./auth.service";
+import { AuthService, SessionRequestMeta } from "./auth.service";
 import { LoginDTO } from "./dto/login.dto";
 import { RegisterDTO } from "./dto/create.dto";
 import { AuthGuard } from "@nestjs/passport";
@@ -26,6 +28,9 @@ import { JwtPayload } from "./dto/jwt-payload.dto";
 import { LockLoginGuard } from "@src/guards/lock-login.guard";
 import { ForgotPassword } from "./dto/forgot-password.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
+import { VerifyEmailDto } from "./dto/verify-email.dto";
+import { ResendVerificationEmailDto } from "./dto/resend-verification-email.dto";
+import { LoginTwoFactorDto } from "@src/two-factor/dto/login-2fa.dto";
 import { Throttle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 
@@ -33,6 +38,13 @@ import type { Request, Response } from "express";
 @ApiTags("Auth")
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  private extractSessionMeta(req: Request): SessionRequestMeta {
+    return {
+      ipAddress: req.ip || undefined,
+      userAgent: req.headers["user-agent"],
+    };
+  }
 
   @Throttle({ short: { limit: 3, ttl: 60000 } })
   @Post("register")
@@ -55,8 +67,34 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ) {
-    return this.authService.login(loginDto, req.ip || "unknown", res);
+    return this.authService.login(loginDto, this.extractSessionMeta(req), res);
   }
+
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @Post("2fa/login")
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Hoàn tất đăng nhập bằng OTP/recovery code (sau khi login trả requires2fa)",
+  })
+  @ApiResponse({ status: 200, description: "Đăng nhập thành công" })
+  @ApiResponse({
+    status: 401,
+    description: "OTP/recovery code không đúng hoặc phiên đã hết hạn",
+  })
+  async completeTwoFactorLogin(
+    @Body() dto: LoginTwoFactorDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ) {
+    return this.authService.completeTwoFactorLogin(
+      dto.twoFactorToken,
+      dto.otp,
+      this.extractSessionMeta(req),
+      res
+    );
+  }
+
   @Get("google")
   @UseGuards(AuthGuard("google"))
   @ApiOperation({ summary: "Bắt đầu đăng nhập bằng Google" })
@@ -77,7 +115,11 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: "Profile Google không hợp lệ" })
   async googleLoginCallback(@Req() req: Request, @Res() res: Response) {
-    return this.authService.handleGoogleLoginCallback(req.user, res);
+    return this.authService.handleGoogleLoginCallback(
+      req.user,
+      this.extractSessionMeta(req),
+      res
+    );
   }
 
   @Get("status")
@@ -98,7 +140,11 @@ export class AuthController {
       typeof req.cookies?.refresh_token === "string"
         ? req.cookies.refresh_token
         : "";
-    return this.authService.refreshToken(refreshToken, res);
+    return this.authService.refreshToken(
+      refreshToken,
+      this.extractSessionMeta(req),
+      res
+    );
   }
 
   @Get("me")
@@ -122,6 +168,49 @@ export class AuthController {
         : undefined;
 
     return this.authService.logout(refreshToken, res, req);
+  }
+
+  @Post("logout-all")
+  @HttpCode(HttpStatus.OK)
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
+  @ApiOperation({ summary: "Đăng xuất khỏi tất cả thiết bị" })
+  logoutAll(
+    @CurrentUser() currentUser: JwtPayload,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ) {
+    return this.authService.logoutAll(currentUser.userId, res, req);
+  }
+
+  @Get("sessions")
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
+  @ApiOperation({
+    summary: "Danh sách thiết bị/phiên đăng nhập đang hoạt động",
+  })
+  getSessions(@CurrentUser() currentUser: JwtPayload, @Req() req: Request) {
+    const currentRawToken =
+      typeof req.cookies?.refresh_token === "string"
+        ? req.cookies.refresh_token
+        : undefined;
+    return this.authService.getSessions(currentUser.userId, currentRawToken);
+  }
+
+  @Delete("sessions/:id")
+  @HttpCode(HttpStatus.OK)
+  @ApiCookieAuth("access_token")
+  @UseGuards(AuthGuard("jwt"))
+  @ApiOperation({ summary: "Thu hồi một phiên đăng nhập cụ thể" })
+  @ApiResponse({
+    status: 404,
+    description: "Session không tồn tại hoặc đã bị thu hồi",
+  })
+  revokeSession(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") sessionId: string
+  ) {
+    return this.authService.revokeSession(currentUser.userId, sessionId);
   }
 
   @Put("change-password")
@@ -148,5 +237,24 @@ export class AuthController {
   @Post("/resetPassword")
   async resetPassword(@Body() data: ResetPasswordDto) {
     return this.authService.resetPassword(data);
+  }
+
+  @Throttle({ short: { limit: 3, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post("verify-email")
+  @ApiOperation({ summary: "Xác thực địa chỉ email bằng token" })
+  @ApiResponse({ status: 200, description: "Xác thực email thành công" })
+  @ApiResponse({ status: 400, description: "Token không hợp lệ hoặc hết hạn" })
+  async verifyEmail(@Body() data: VerifyEmailDto) {
+    return this.authService.verifyEmail(data);
+  }
+
+  @Throttle({ short: { limit: 2, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post("resend-verification")
+  @ApiOperation({ summary: "Gửi lại email xác thực" })
+  @ApiResponse({ status: 200, description: "Đã gửi (nếu email hợp lệ)" })
+  async resendVerification(@Body() data: ResendVerificationEmailDto) {
+    return this.authService.resendVerificationEmail(data.email);
   }
 }

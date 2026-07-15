@@ -1,17 +1,20 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Document, Types } from "mongoose";
-import { User } from "./user.schema";
 
 @Schema({ timestamps: true })
 export class EmailVerificationToken extends Document {
   @Prop({ type: Types.ObjectId, ref: "User", required: true })
-  userId: User;
+  userId: Types.ObjectId;
 
-  @Prop({ required: true })
-  token: string;
+  /** SHA-256 hash of the raw token emailed to the user — the raw value is never persisted. */
+  @Prop({ required: true, unique: true })
+  tokenHash: string;
 
   @Prop({ required: true })
   expiresAt: Date;
+
+  @Prop({ default: false })
+  isUsed: boolean;
 }
 
 export const EmailVerificationTokenSchema = SchemaFactory.createForClass(
