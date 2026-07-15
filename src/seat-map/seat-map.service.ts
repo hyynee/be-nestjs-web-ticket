@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
+import { Event } from "@src/schemas/event.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
 import { Booking, BookingStatus, SeatLock } from "@src/schemas/booking.schema";
@@ -52,6 +53,7 @@ type AreaLean = {
 @Injectable()
 export class SeatMapService {
   constructor(
+    @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
@@ -162,6 +164,13 @@ export class SeatMapService {
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
+    const event = await this.eventModel
+      .findOne({ _id: eventId, isDeleted: false })
+      .select("_id")
+      .lean();
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
     const zones = await this.zoneModel
       .find({ eventId: new Types.ObjectId(eventId), isDeleted: false })
       .lean<Zone[]>();
@@ -176,6 +185,16 @@ export class SeatMapService {
       .findOne({ _id: zoneId, isDeleted: false })
       .lean<Zone>();
     if (!zone) {
+      throw new NotFoundException(`Zone with ID ${zoneId} not found`);
+    }
+    // Defense-in-depth: deleteEvent() cascades isDeleted to its zones, so
+    // this should already be unreachable in the normal flow, but a zone
+    // must never be shown for an event that doesn't exist / was deleted.
+    const event = await this.eventModel
+      .findOne({ _id: zone.eventId, isDeleted: false })
+      .select("_id")
+      .lean();
+    if (!event) {
       throw new NotFoundException(`Zone with ID ${zoneId} not found`);
     }
     return this.buildZoneSeatMap(zone);

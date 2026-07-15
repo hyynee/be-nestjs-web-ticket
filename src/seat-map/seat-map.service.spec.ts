@@ -3,6 +3,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
 import { SeatMapService } from "./seat-map.service";
+import { Event } from "@src/schemas/event.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
 import { Booking, SeatLock } from "@src/schemas/booking.schema";
@@ -20,6 +21,7 @@ describe("SeatMapService", () => {
   const userId = new Types.ObjectId().toString();
   const adminUser = { userId, role: "admin" };
 
+  let eventModel: any;
   let zoneModel: any;
   let areaModel: any;
   let bookingModel: any;
@@ -35,6 +37,13 @@ describe("SeatMapService", () => {
   });
 
   beforeEach(async () => {
+    eventModel = {
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ _id: eventId }),
+      }),
+    };
+
     zoneModel = {
       find: jest
         .fn()
@@ -78,6 +87,7 @@ describe("SeatMapService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SeatMapService,
+        { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },
         { provide: getModelToken(Area.name), useValue: areaModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
@@ -97,6 +107,18 @@ describe("SeatMapService", () => {
       await expect(service.getEventSeatMap("not-an-id")).rejects.toThrow(
         BadRequestException
       );
+    });
+
+    it("throws NotFoundException when the event does not exist or was deleted, instead of silently returning []", async () => {
+      eventModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(service.getEventSeatMap(eventId.toString())).rejects.toThrow(
+        NotFoundException
+      );
+      expect(zoneModel.find).not.toHaveBeenCalled();
     });
 
     it("returns a summary (no areas) for a non-seating zone", async () => {
@@ -287,6 +309,7 @@ describe("SeatMapService", () => {
       zoneModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue({
           _id: zoneId,
+          eventId,
           name: "General",
           hasSeating: false,
           capacity: 5,
@@ -297,6 +320,27 @@ describe("SeatMapService", () => {
       const result = await service.getZoneSeatMap(zoneId.toString());
       expect(result.zoneId).toBe(zoneId);
       expect(result.availableTickets).toBe(3);
+    });
+
+    it("throws NotFoundException when the zone's parent event does not exist or was deleted (defense-in-depth — deleteEvent() normally cascades isDeleted to zones already)", async () => {
+      zoneModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: zoneId,
+          eventId,
+          name: "General",
+          hasSeating: false,
+          capacity: 5,
+          soldCount: 2,
+        }),
+      });
+      eventModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(service.getZoneSeatMap(zoneId.toString())).rejects.toThrow(
+        NotFoundException
+      );
     });
   });
 
