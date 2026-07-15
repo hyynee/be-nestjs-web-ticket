@@ -28,6 +28,7 @@ import { Event } from "@src/schemas/event.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
 import { Booking, SeatLock } from "@src/schemas/booking.schema";
+import { SeatState } from "@src/schemas/seat-state.schema";
 import { Ticket } from "@src/schemas/ticket.schema";
 import { Payment } from "@src/schemas/payment.schema";
 import { CheckInLog } from "@src/schemas/checkin-log.schema";
@@ -722,6 +723,16 @@ describe("Edge Case — Slot Capacity Boundary (BookingService.createBooking)", 
           useValue: {
             insertMany: jest.fn().mockResolvedValue([]),
             deleteMany: jest.fn(),
+          },
+        },
+        {
+          provide: getModelToken(SeatState.name),
+          useValue: {
+            find: jest.fn().mockReturnValue({
+              session: jest.fn().mockReturnThis(),
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockResolvedValue([]),
+            }),
           },
         },
         {

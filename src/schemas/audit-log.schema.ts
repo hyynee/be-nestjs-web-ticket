@@ -20,6 +20,8 @@ export enum AuditAction {
   EVENT_PUBLISH = "event.publish",
   EVENT_UNPUBLISH = "event.unpublish",
   EVENT_END = "event.end",
+  SEAT_BLOCK = "seat.block",
+  SEAT_UNBLOCK = "seat.unblock",
 }
 
 @Schema({ timestamps: true })

@@ -30,6 +30,13 @@ interface ZoneTicketUpdatePayload {
   availableTickets: number;
 }
 
+interface SeatMapUpdatePayload {
+  eventId: Types.ObjectId;
+  zoneId: Types.ObjectId;
+  areaId: Types.ObjectId;
+  seats: Array<{ seat: string; status: string }>;
+}
+
 @WebSocketGateway({
   cors: {
     origin: getAllowedWsOrigins(),
@@ -48,5 +55,11 @@ export class ZoneGateway {
       .to(`event:${data.eventId.toString()}`)
       .emit("zone.ticket_update", data);
     // chia room theo eventId de chi nhan thong bao cap nhat ve zone cho nhung client quan tam den event do
+  }
+
+  emitSeatMapUpdate(data: SeatMapUpdatePayload) {
+    this.server
+      .to(`event:${data.eventId.toString()}`)
+      .emit("seat_map.update", data);
   }
 }

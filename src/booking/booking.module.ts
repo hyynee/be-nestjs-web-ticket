@@ -13,6 +13,7 @@ import { EventSchema, Event } from "@src/schemas/event.schema";
 import { Area, AreaSchema } from "@src/schemas/area.schema";
 import { Ticket, TicketSchema } from "@src/schemas/ticket.schema";
 import { Payment, PaymentSchema } from "@src/schemas/payment.schema";
+import { SeatState, SeatStateSchema } from "@src/schemas/seat-state.schema";
 import { BookingScheduler } from "./booking.scheduler";
 import { ZoneModule } from "@src/zone/zone.module";
 import { PaymentModule } from "@src/payment/payment.module";
@@ -29,6 +30,7 @@ import { EventOwnershipService } from "@src/event/event-ownership.service";
       { name: Area.name, schema: AreaSchema },
       { name: Ticket.name, schema: TicketSchema },
       { name: Payment.name, schema: PaymentSchema },
+      { name: SeatState.name, schema: SeatStateSchema },
     ]),
     ZoneModule,
     PaymentModule,

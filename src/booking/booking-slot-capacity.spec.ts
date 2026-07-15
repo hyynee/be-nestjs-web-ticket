@@ -8,6 +8,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
 import { BookingService } from "./booking.service";
 import { Booking, SeatLock } from "@src/schemas/booking.schema";
+import { SeatState } from "@src/schemas/seat-state.schema";
 import { Event } from "@src/schemas/event.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
@@ -175,6 +176,16 @@ describe("BookingService — Slot Capacity", () => {
           useValue: {
             insertMany: jest.fn().mockResolvedValue([]),
             deleteMany: jest.fn(),
+          },
+        },
+        {
+          provide: getModelToken(SeatState.name),
+          useValue: {
+            find: jest.fn().mockReturnValue({
+              session: jest.fn().mockReturnThis(),
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockResolvedValue([]),
+            }),
           },
         },
         { provide: ZoneGateway, useValue: { emitZoneTicketUpdate: jest.fn() } },

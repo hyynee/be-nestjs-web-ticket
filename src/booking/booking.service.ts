@@ -12,6 +12,7 @@ import {
   PaymentStatus,
   SeatLock,
 } from "@src/schemas/booking.schema";
+import { SeatState } from "@src/schemas/seat-state.schema";
 
 import { Event, EventStatus } from "@src/schemas/event.schema";
 import { Zone } from "@src/schemas/zone.schema";
@@ -71,6 +72,7 @@ export class BookingService {
     @InjectModel(Area.name) private areaModel: Model<Area>,
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
+    @InjectModel(SeatState.name) private seatStateModel: Model<SeatState>,
     private readonly zoneGateway: ZoneGateway,
     private readonly zoneService: ZoneService,
     private readonly redisService: RedisService,
@@ -406,6 +408,26 @@ export class BookingService {
             if (invalidSeats.length > 0) {
               throw new BadRequestException(
                 `Các ghế không hợp lệ: ${invalidSeats.join(", ")}`
+              );
+            }
+
+            const blockedSeats = await this.seatStateModel
+              .find({
+                eventId: new Types.ObjectId(data.eventId),
+                areaId: new Types.ObjectId(data.areaId),
+                seat: { $in: data.seats },
+                $or: [
+                  { expiresAt: { $exists: false } },
+                  { expiresAt: { $gt: now } },
+                ],
+              })
+              .session(session)
+              .select("seat")
+              .lean();
+
+            if (blockedSeats.length > 0) {
+              throw new BadRequestException(
+                `Ghế không khả dụng: ${blockedSeats.map((s) => s.seat).join(", ")}`
               );
             }
 

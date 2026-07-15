@@ -212,6 +212,24 @@ describe("ZoneGateway (unit)", () => {
     });
   });
 
+  describe("emitSeatMapUpdate", () => {
+    it("calls server.to().emit() with seat_map.update", () => {
+      const payload = {
+        eventId: new Types.ObjectId(),
+        zoneId: new Types.ObjectId(),
+        areaId: new Types.ObjectId(),
+        seats: [{ seat: "A1", status: "blocked" }],
+      };
+
+      gateway.emitSeatMapUpdate(payload);
+
+      expect(mockServer.to).toHaveBeenCalledWith(
+        `event:${payload.eventId.toString()}`
+      );
+      expect(mockServer.emit).toHaveBeenCalledWith("seat_map.update", payload);
+    });
+  });
+
   describe("getAllowedWsOrigins", () => {
     const OLD_ENV = process.env.CORS_ORIGINS;
 

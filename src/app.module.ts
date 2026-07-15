@@ -18,6 +18,7 @@ import { UserModule } from "./user/user.module";
 import { EventModule } from "./event/event.module";
 import { ZoneModule } from "./zone/zone.module";
 import { AreaModule } from "./area/area.module";
+import { SeatMapModule } from "./seat-map/seat-map.module";
 import { BookingModule } from "./booking/booking.module";
 import { PaymentModule } from "./payment/payment.module";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -98,6 +99,7 @@ import { AiccModule } from "./aicc/aicc.module";
     EventModule,
     ZoneModule,
     AreaModule,
+    SeatMapModule,
     BookingModule,
     PaymentModule,
     // cau hinh de upload image

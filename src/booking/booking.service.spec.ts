@@ -20,6 +20,7 @@ import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
 import { Ticket } from "@src/schemas/ticket.schema";
 import { Payment } from "@src/schemas/payment.schema";
+import { SeatState } from "@src/schemas/seat-state.schema";
 import { ZoneGateway } from "@src/zone/zone.gateway";
 import { ZoneService } from "@src/zone/zone.service";
 import { RedisService } from "@src/redis/redis.service";
@@ -49,6 +50,7 @@ describe("BookingService", () => {
   let ticketModel: any;
   let paymentModel: any;
   let seatLockModel: any;
+  let seatStateModel: any;
   let zoneGateway: { emitZoneTicketUpdate: jest.Mock };
   let paymentService: { issueAdminRefund: jest.Mock };
 
@@ -154,6 +156,14 @@ describe("BookingService", () => {
       insertMany: jest.fn().mockResolvedValue([]),
     };
 
+    seatStateModel = {
+      find: jest.fn().mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    };
+
     zoneGateway = {
       emitZoneTicketUpdate: jest.fn(),
     };
@@ -185,6 +195,7 @@ describe("BookingService", () => {
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(SeatLock.name), useValue: seatLockModel },
+        { provide: getModelToken(SeatState.name), useValue: seatStateModel },
         { provide: ZoneGateway, useValue: zoneGateway },
         {
           provide: ZoneService,
@@ -607,6 +618,38 @@ describe("BookingService", () => {
       ).rejects.toThrow(
         new BadRequestException("Khu vực này yêu cầu chọn ghế cụ thể")
       );
+    });
+
+    it("rejects when seats are blocked or disabled via SeatState overrides", async () => {
+      mockCreateContext({
+        _id: new Types.ObjectId(zoneId),
+        eventId: new Types.ObjectId(eventId),
+        price: 120,
+        hasSeating: true,
+        isDeleted: false,
+      });
+      areaModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          session: jest.fn().mockResolvedValue({
+            _id: new Types.ObjectId(areaId),
+            seats: ["A1", "A2", "A3"],
+          }),
+        }),
+      });
+      seatStateModel.find.mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{ seat: "A1" }]),
+      });
+
+      await expect(
+        service.createBooking(userId, {
+          ...baseDto,
+          quantity: 2,
+          areaId,
+          seats: ["A1", "A2"],
+        } as any)
+      ).rejects.toThrow(new BadRequestException("Ghế không khả dụng: A1"));
     });
 
     it("rejects when seat conflict exists (seats already booked)", async () => {
