@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import {
   ArrayMaxSize,
   ArrayNotEmpty,
+  ArrayUnique,
   IsArray,
   IsDateString,
   IsEnum,
@@ -25,6 +26,7 @@ export class BlockSeatsDto {
   @IsArray()
   @ArrayNotEmpty()
   @ArrayMaxSize(500)
+  @ArrayUnique()
   @IsString({ each: true })
   seats: string[];
 

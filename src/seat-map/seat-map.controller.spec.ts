@@ -1,5 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Reflector } from "@nestjs/core";
+import { validate } from "class-validator";
+import { plainToInstance } from "class-transformer";
 import {
   EventSeatMapController,
   ZoneSeatMapController,
@@ -132,5 +134,41 @@ describe("SeatMap controllers", () => {
         "organizer",
       ]);
     });
+  });
+});
+
+// ── DTO validation ──────────────────────────────────────────────────────────
+
+describe("BlockSeatsDto validation", () => {
+  it("rejects a seats array with duplicate entries", async () => {
+    const dto = plainToInstance(BlockSeatsDto, {
+      zoneId: "507f1f77bcf86cd799439011",
+      areaId: "507f1f77bcf86cd799439012",
+      seats: ["A1", "A1"],
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === "seats")).toBe(true);
+  });
+
+  it("accepts a seats array with unique entries", async () => {
+    const dto = plainToInstance(BlockSeatsDto, {
+      zoneId: "507f1f77bcf86cd799439011",
+      areaId: "507f1f77bcf86cd799439012",
+      seats: ["A1", "A2"],
+    });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe("UnblockSeatsDto validation", () => {
+  it("rejects a seats array with duplicate entries", async () => {
+    const dto = plainToInstance(UnblockSeatsDto, {
+      zoneId: "507f1f77bcf86cd799439011",
+      areaId: "507f1f77bcf86cd799439012",
+      seats: ["A1", "A1"],
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === "seats")).toBe(true);
   });
 });

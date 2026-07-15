@@ -197,6 +197,16 @@ export class SeatMapService {
     return area;
   }
 
+  private assertSeatsExistInArea(area: AreaLean, seats: string[]): void {
+    const validSeats = area.seats ?? [];
+    const invalidSeats = seats.filter((seat) => !validSeats.includes(seat));
+    if (invalidSeats.length > 0) {
+      throw new BadRequestException(
+        `Ghế không tồn tại trong khu vực: ${invalidSeats.join(", ")}`
+      );
+    }
+  }
+
   async blockSeats(
     currentUser: JwtPayload,
     dto: BlockSeatsDto
@@ -206,14 +216,7 @@ export class SeatMapService {
       currentUser,
       area.eventId.toString()
     );
-
-    const validSeats = area.seats ?? [];
-    const invalidSeats = dto.seats.filter((seat) => !validSeats.includes(seat));
-    if (invalidSeats.length > 0) {
-      throw new BadRequestException(
-        `Ghế không tồn tại trong khu vực: ${invalidSeats.join(", ")}`
-      );
-    }
+    this.assertSeatsExistInArea(area, dto.seats);
 
     const status = dto.status ?? SeatBlockStatus.BLOCKED;
     let expiresAt: Date | undefined;
@@ -294,6 +297,7 @@ export class SeatMapService {
       currentUser,
       area.eventId.toString()
     );
+    this.assertSeatsExistInArea(area, dto.seats);
 
     await this.seatStateModel.deleteMany({
       eventId: area.eventId,

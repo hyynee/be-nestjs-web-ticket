@@ -2,6 +2,7 @@ import { ApiProperty } from "@nestjs/swagger";
 import {
   ArrayMaxSize,
   ArrayNotEmpty,
+  ArrayUnique,
   IsArray,
   IsMongoId,
   IsString,
@@ -20,6 +21,7 @@ export class UnblockSeatsDto {
   @IsArray()
   @ArrayNotEmpty()
   @ArrayMaxSize(500)
+  @ArrayUnique()
   @IsString({ each: true })
   seats: string[];
 }

@@ -571,5 +571,29 @@ describe("SeatMapService", () => {
       ).rejects.toThrow();
       expect(seatStateModel.deleteMany).not.toHaveBeenCalled();
     });
+
+    it("rejects a seat that does not exist in the area instead of deleting/emitting a fake status for it", async () => {
+      areaModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: areaId,
+          eventId,
+          zoneId,
+          name: "Row A",
+          seats: ["A1"],
+        }),
+      });
+
+      await expect(
+        service.unblockSeats(
+          adminUser as any,
+          {
+            ...dto,
+            seats: ["X999"],
+          } as any
+        )
+      ).rejects.toThrow(BadRequestException);
+      expect(seatStateModel.deleteMany).not.toHaveBeenCalled();
+      expect(mockZoneGateway.emitSeatMapUpdate).not.toHaveBeenCalled();
+    });
   });
 });
