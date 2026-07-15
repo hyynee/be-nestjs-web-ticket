@@ -9,6 +9,14 @@ export enum AuditAction {
   EVENT_CANCEL = "event.cancel",
   REFUND_ISSUED = "refund.issued",
   REFUND_FAILED = "refund.failed",
+  QUEUE_JOB_ADD = "queue.job_add",
+  QUEUE_JOB_RETRY = "queue.job_retry",
+  QUEUE_JOB_DEAD_LETTER = "queue.job_dead_letter",
+  QUEUE_JOB_REMOVE = "queue.job_remove",
+  EVENT_ORGANIZER_ADD = "event.organizer_add",
+  EVENT_ORGANIZER_REMOVE = "event.organizer_remove",
+  EVENT_STAFF_ADD = "event.staff_add",
+  EVENT_STAFF_REMOVE = "event.staff_remove",
 }
 
 @Schema({ timestamps: true })
@@ -48,3 +56,5 @@ AuditLogSchema.index({ action: 1, createdAt: -1 });
 AuditLogSchema.index({ bookingId: 1 });
 AuditLogSchema.index({ eventId: 1 });
 AuditLogSchema.index({ createdAt: -1 });
+AuditLogSchema.index({ ticketId: 1, createdAt: -1 });
+AuditLogSchema.index({ eventId: 1, action: 1, createdAt: -1 });

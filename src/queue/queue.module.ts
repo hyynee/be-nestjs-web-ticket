@@ -3,12 +3,31 @@ import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
 import { QueueService } from "./queue.service";
+import { QueueController } from "./queue.controller";
 import { QueueProcessor } from "./queue.processor";
 import { MailModule } from "@src/services/mail.module";
 import { forwardRef } from "@nestjs/common";
 import { ExportModule } from "@src/export/export.module";
 import { User, UserSchema } from "@src/schemas/user.schema";
 import { TicketModule } from "@src/ticket/ticket.module";
+
+const queueRegistrations = BullModule.registerQueue(
+  {
+    name: "default",
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+    },
+  },
+  {
+    name: "dead-letter",
+    defaultJobOptions: {
+      attempts: 1,
+      removeOnComplete: false,
+      removeOnFail: false,
+    },
+  }
+);
 
 @Module({
   imports: [
@@ -37,27 +56,14 @@ import { TicketModule } from "@src/ticket/ticket.module";
         },
       }),
     }),
-    BullModule.registerQueue({
-      name: "default",
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 5000 },
-      },
-    }),
-    BullModule.registerQueue({
-      name: "dead-letter",
-      defaultJobOptions: {
-        attempts: 1,
-        removeOnComplete: false,
-        removeOnFail: false,
-      },
-    }),
+    queueRegistrations,
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     forwardRef(() => MailModule),
     forwardRef(() => ExportModule),
     TicketModule,
   ],
+  controllers: [QueueController],
   providers: [QueueProcessor, QueueService],
-  exports: [QueueService],
+  exports: [QueueService, queueRegistrations],
 })
 export class QueueModule {}
