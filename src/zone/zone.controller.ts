@@ -46,7 +46,7 @@ export class ZoneController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("")
   @ApiOperation({ summary: "Tạo khu vực mới" })
@@ -59,7 +59,7 @@ export class ZoneController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("update/:id")
   @ApiOperation({ summary: "Cập nhật thông tin khu vực" })

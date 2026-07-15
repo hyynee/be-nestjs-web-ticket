@@ -5,6 +5,8 @@ import { ApiCookieAuth, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
 import { Roles } from "@src/common/decorators/roles.decorator";
+import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import {
   DashboardOverviewDto,
   RevenueStatisticsResponseDto,
@@ -71,11 +73,17 @@ export class StatisticalController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("revenue/:eventId")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiOperation({ summary: "Get revenue statistics by event" })
-  async getRevenueStatisticsByEvent(@Param("eventId") eventId: string) {
-    return this.statisticalService.getRevenueStatisticsByEvent(eventId);
+  async getRevenueStatisticsByEvent(
+    @Param("eventId") eventId: string,
+    @CurrentUser() currentUser: JwtPayload
+  ) {
+    return this.statisticalService.getRevenueStatisticsByEvent(
+      eventId,
+      currentUser
+    );
   }
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("potential-customers")
@@ -88,10 +96,13 @@ export class StatisticalController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get("checkin-zones/:eventId")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiOperation({ summary: "Get check-in user with zones" })
-  async getCheckInZones(@Param("eventId") eventId: string) {
-    return this.statisticalService.getCheckInZones(eventId);
+  async getCheckInZones(
+    @Param("eventId") eventId: string,
+    @CurrentUser() currentUser: JwtPayload
+  ) {
+    return this.statisticalService.getCheckInZones(eventId, currentUser);
   }
 }

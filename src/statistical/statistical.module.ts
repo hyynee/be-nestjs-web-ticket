@@ -7,6 +7,7 @@ import { Payment, PaymentSchema } from "@src/schemas/payment.schema";
 import { Ticket, TicketSchema } from "@src/schemas/ticket.schema";
 import { MongooseModule } from "@nestjs/mongoose";
 import { EventSchema, Event } from "@src/schemas/event.schema";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
 
 @Module({
   imports: [
@@ -18,6 +19,6 @@ import { EventSchema, Event } from "@src/schemas/event.schema";
     ]),
   ],
   controllers: [StatisticalController],
-  providers: [StatisticalService, StatisticalScheduler],
+  providers: [StatisticalService, StatisticalScheduler, EventOwnershipService],
 })
 export class StatisticalModule {}

@@ -17,6 +17,17 @@ import { escapeRegex } from "@src/common/utils/regex.utils";
 import { Event, EventStatus } from "@src/schemas/event.schema";
 import { Area } from "@src/schemas/area.schema";
 import { RedisService } from "@src/redis/redis.service";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
+
+const ALLOWED_SORT_FIELDS = [
+  "createdAt",
+  "name",
+  "price",
+  "capacity",
+  "soldCount",
+  "confirmedSoldCount",
+] as const;
+type SortField = (typeof ALLOWED_SORT_FIELDS)[number];
 
 @Injectable()
 export class ZoneService {
@@ -30,7 +41,8 @@ export class ZoneService {
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    private readonly eventOwnershipService: EventOwnershipService
   ) {}
 
   private async ensureActiveEvent(eventId: string | Types.ObjectId) {
@@ -107,14 +119,19 @@ export class ZoneService {
       hasSeating,
       page = 1,
       limit = 10,
-      sortBy = "createdAt",
       sortOrder = "desc",
     } = query;
+
+    const sortBy: SortField = ALLOWED_SORT_FIELDS.includes(
+      query.sortBy as SortField
+    )
+      ? (query.sortBy as SortField)
+      : "createdAt";
 
     if (eventId && !Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
-    const cacheKey = this.generateListCacheKey(query);
+    const cacheKey = this.generateListCacheKey({ ...query, sortBy });
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
@@ -254,6 +271,10 @@ export class ZoneService {
     if (!Types.ObjectId.isValid(createZoneDto.eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
+    await this.eventOwnershipService.assertCanManageEvent(
+      currentUser,
+      createZoneDto.eventId
+    );
     await this.ensureActiveEvent(createZoneDto.eventId);
     const existingZone = await this.zoneModel.findOne({
       eventId: new Types.ObjectId(eventId),
@@ -310,9 +331,25 @@ export class ZoneService {
     if (!currentZone) {
       throw new BadRequestException("Zone not found or has been deleted");
     }
+
+    await this.eventOwnershipService.assertCanManageEvent(
+      currentUser,
+      currentZone.eventId.toString()
+    );
+
     const targetEventId = eventId
       ? new Types.ObjectId(eventId)
       : currentZone.eventId;
+
+    if (
+      eventId &&
+      targetEventId.toString() !== currentZone.eventId.toString()
+    ) {
+      await this.eventOwnershipService.assertCanManageEvent(
+        currentUser,
+        eventId
+      );
+    }
 
     await this.ensureActiveEvent(targetEventId);
 

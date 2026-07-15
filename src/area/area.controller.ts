@@ -27,7 +27,7 @@ export class AreaController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("/create")
   createArea(
@@ -46,7 +46,7 @@ export class AreaController {
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Put("/:id/delete")
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   softDeleteArea(
     @CurrentUser() currentUser: JwtPayload,
@@ -59,7 +59,7 @@ export class AreaController {
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @Put("/:id")
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   updateArea(
     @CurrentUser() currentUser: JwtPayload,

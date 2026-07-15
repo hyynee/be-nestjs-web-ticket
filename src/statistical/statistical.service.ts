@@ -17,6 +17,8 @@ import { Ticket } from "@src/schemas/ticket.schema";
 import { Event } from "@src/schemas/event.schema";
 import { RedisService } from "@src/redis/redis.service";
 import config from "@src/config/config";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 
 type HotEventByRevenue = {
   id: Types.ObjectId;
@@ -119,7 +121,8 @@ export class StatisticalService {
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Event.name) private eventModel: Model<Event>,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    private readonly eventOwnershipService: EventOwnershipService
   ) {}
 
   private readonly SUCCESS_STATUSES: string[] = [
@@ -277,11 +280,15 @@ export class StatisticalService {
     );
   }
 
-  async getRevenueStatisticsByEvent(eventId: string | undefined) {
+  async getRevenueStatisticsByEvent(
+    eventId: string | undefined,
+    currentUser: JwtPayload
+  ) {
     if (!eventId) throw new BadRequestException("Event ID is required");
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID format");
     }
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
     return this.withRedisCache(
       CACHE_KEY.revenueEvent(eventId),
       CACHE_TTL.REVENUE_EVENT,
@@ -309,10 +316,14 @@ export class StatisticalService {
     );
   }
 
-  async getCheckInZones(eventId: string): Promise<CheckInZoneStatistics[]> {
+  async getCheckInZones(
+    eventId: string,
+    currentUser: JwtPayload
+  ): Promise<CheckInZoneStatistics[]> {
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID format");
     }
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
     return this.withRedisCache(
       CACHE_KEY.checkin(eventId),
       CACHE_TTL.CHECKIN,

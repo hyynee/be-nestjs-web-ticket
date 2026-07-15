@@ -65,6 +65,14 @@ export class Event extends Document {
   @Prop({ type: Types.ObjectId, ref: "User" })
   updatedBy?: User;
 
+  /** Additional users (role `organizer`) allowed to manage this event besides `createdBy`. */
+  @Prop({ type: [{ type: Types.ObjectId, ref: "User" }], default: [] })
+  organizerIds: Types.ObjectId[];
+
+  /** Users (role `checkin_staff`) allowed to validate/check-in tickets for this event only. */
+  @Prop({ type: [{ type: Types.ObjectId, ref: "User" }], default: [] })
+  staffIds: Types.ObjectId[];
+
   @Prop({ default: false })
   isDeleted: boolean;
 
@@ -82,6 +90,8 @@ EventSchema.virtual("isActiveNow").get(function () {
 });
 
 EventSchema.index({ createdBy: 1 });
+EventSchema.index({ organizerIds: 1, isDeleted: 1 });
+EventSchema.index({ staffIds: 1, isDeleted: 1 });
 EventSchema.index({ status: 1 });
 EventSchema.index({ startDate: 1 });
 EventSchema.index({ isDeleted: 1 });

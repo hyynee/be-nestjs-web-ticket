@@ -73,11 +73,7 @@ export class TicketController {
     @CurrentUser() user: JwtPayload,
     @Param("ticketCode") ticketCode: string
   ) {
-    return this.ticketService.validateTicket(
-      ticketCode,
-      user.userId,
-      user.role
-    );
+    return this.ticketService.validateTicket(ticketCode, user);
   }
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @ApiCookieAuth("access_token")
@@ -93,7 +89,7 @@ export class TicketController {
   }
 
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer", "checkin_staff")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(200)
   @Post("checkin")
@@ -104,7 +100,6 @@ export class TicketController {
     @Body("location") location?: string,
     @Body("deviceInfo") deviceInfo?: string
   ) {
-    const adMinId = user.userId;
     const ipAddress = resolveClientIp(req);
 
     return this.ticketService.checkInTicket(
@@ -112,7 +107,7 @@ export class TicketController {
       location ?? "",
       deviceInfo ?? "",
       ipAddress,
-      adMinId
+      user
     );
   }
 
@@ -129,20 +124,26 @@ export class TicketController {
   }
 
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(200)
   @Get("checkin-history/:ticketCode")
-  async getCheckInHistory(@Param("ticketCode") ticketCode: string) {
-    return this.ticketService.getCheckInHistory(ticketCode);
+  async getCheckInHistory(
+    @Param("ticketCode") ticketCode: string,
+    @CurrentUser() user: JwtPayload
+  ) {
+    return this.ticketService.getCheckInHistory(ticketCode, user);
   }
 
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @HttpCode(200)
   @Get("admin/all-tickets")
-  async getAllTickets(@Query() query: QueryTicketDto) {
-    return this.ticketService.getAllTickets(query);
+  async getAllTickets(
+    @Query() query: QueryTicketDto,
+    @CurrentUser() user: JwtPayload
+  ) {
+    return this.ticketService.getAllTickets(query, user);
   }
 }

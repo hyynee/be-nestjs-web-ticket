@@ -43,6 +43,8 @@ import { MetricsService } from "@src/metrics/metrics.service";
 import { AuditService } from "@src/audit/audit.service";
 import { AuditAction } from "@src/schemas/audit-log.schema";
 import { UploadService } from "@src/upload/upload.service";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import {
   BookingCreatePayload,
   BookingCreateResult,
@@ -75,7 +77,8 @@ export class BookingService {
     private readonly paymentService: PaymentService,
     private readonly metricsService: MetricsService,
     private readonly auditService: AuditService,
-    private readonly uploadService: UploadService
+    private readonly uploadService: UploadService,
+    private readonly eventOwnershipService: EventOwnershipService
   ) {}
 
   private assertObjectId(value: string, label: string): void {
@@ -119,7 +122,10 @@ export class BookingService {
     return `BK${year}${month}${day}${timestamp}${random}`;
   }
 
-  private generateBookingListCacheKey(query: QueryBookingDto): string {
+  private generateBookingListCacheKey(
+    query: QueryBookingDto,
+    scopeKey: string
+  ): string {
     const {
       eventId,
       search,
@@ -130,7 +136,7 @@ export class BookingService {
       sortBy,
       sortOrder,
     } = query;
-    return `bookings:list:event=${eventId || "all"}:search=${search || ""}:status=${status || "all"}:payment=${paymentStatus || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+    return `bookings:list:scope=${scopeKey}:event=${eventId || "all"}:search=${search || ""}:status=${status || "all"}:payment=${paymentStatus || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
   }
 
   private escapeRegex(value: string): string {
@@ -1106,7 +1112,8 @@ export class BookingService {
   ]);
 
   async getAllBookings(
-    query: QueryBookingDto
+    query: QueryBookingDto,
+    currentUser: JwtPayload
   ): Promise<PaginatedResponse<Booking>> {
     const {
       eventId,
@@ -1126,7 +1133,44 @@ export class BookingService {
         `Invalid sortBy field. Allowed: ${[...BookingService.ALLOWED_BOOKING_SORT_FIELDS].join(", ")}`
       );
     }
-    const cacheKey = this.generateBookingListCacheKey(query);
+
+    // Ownership gate MUST run before any cache read/write below — otherwise an
+    // organizer could get a cache hit for data they were never authorized to see.
+    let scopedEventIds: Types.ObjectId[] | undefined;
+    let scopeKey = "admin";
+
+    if (currentUser.role !== "admin") {
+      if (eventId) {
+        await this.eventOwnershipService.assertCanManageEvent(
+          currentUser,
+          eventId
+        );
+        scopeKey = `event:${eventId}`;
+      } else {
+        const managedIds =
+          await this.eventOwnershipService.getManagedEventIds(currentUser);
+        if (managedIds.length === 0) {
+          const totalPages = Math.ceil(0 / limit);
+          return {
+            items: [],
+            meta: {
+              currentPage: page,
+              itemsPerPage: limit,
+              totalItems: 0,
+              totalPages,
+              hasPreviousPage: page > 1,
+              hasNextPage: false,
+            },
+          };
+        }
+        scopedEventIds = managedIds;
+        scopeKey = `user:${currentUser.userId}`;
+      }
+    } else if (eventId) {
+      scopeKey = `event:${eventId}`;
+    }
+
+    const cacheKey = this.generateBookingListCacheKey(query, scopeKey);
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
@@ -1134,6 +1178,7 @@ export class BookingService {
     const filter: FilterQuery<Booking> = { isDeleted: false };
 
     if (eventId) filter.eventId = new Types.ObjectId(eventId);
+    else if (scopedEventIds) filter.eventId = { $in: scopedEventIds };
     if (status) filter.status = status;
     if (paymentStatus) filter.paymentStatus = paymentStatus;
 

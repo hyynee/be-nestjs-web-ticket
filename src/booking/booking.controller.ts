@@ -87,12 +87,15 @@ export class BookingController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("/admin/all-bookings")
   @HttpCode(200)
-  getAllBookings(@Query() query: QueryBookingDto) {
-    return this.bookingService.getAllBookings(query);
+  getAllBookings(
+    @Query() query: QueryBookingDto,
+    @CurrentUser() currentUser: JwtPayload
+  ) {
+    return this.bookingService.getAllBookings(query, currentUser);
   }
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })

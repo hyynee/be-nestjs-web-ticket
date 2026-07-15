@@ -6,6 +6,7 @@ import { MongooseModule } from "@nestjs/mongoose/dist/mongoose.module";
 import { Event, EventSchema } from "@src/schemas/event.schema";
 import { ZoneGateway } from "./zone.gateway";
 import { Area, AreaSchema } from "@src/schemas/area.schema";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { Area, AreaSchema } from "@src/schemas/area.schema";
     ]),
   ],
   controllers: [ZoneController],
-  providers: [ZoneService, ZoneGateway],
+  providers: [ZoneService, ZoneGateway, EventOwnershipService],
   exports: [ZoneService, ZoneGateway],
 })
 export class ZoneModule {}

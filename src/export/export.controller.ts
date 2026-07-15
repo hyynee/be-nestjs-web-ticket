@@ -13,7 +13,7 @@ import type { Response } from "express";
 
 @ApiCookieAuth("access_token")
 @Controller("export")
-@Roles("admin")
+@Roles("admin", "organizer")
 @UseGuards(AuthGuard("jwt"), RolesGuard)
 export class ExportController {
   constructor(private readonly exportService: ExportService) {}
@@ -25,7 +25,7 @@ export class ExportController {
     @CurrentUser() user: JwtPayload,
     @Res() res: Response
   ) {
-    return this.exportService.exportTickets(query, user.userId, res);
+    return this.exportService.exportTickets(query, user, res);
   }
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
@@ -35,6 +35,6 @@ export class ExportController {
     @CurrentUser() user: JwtPayload,
     @Res() res: Response
   ) {
-    return this.exportService.exportCheckInZones(query, user.userId, res);
+    return this.exportService.exportCheckInZones(query, user, res);
   }
 }

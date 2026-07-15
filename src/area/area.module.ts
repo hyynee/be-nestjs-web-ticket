@@ -6,6 +6,7 @@ import { Area, AreaSchema } from "@src/schemas/area.schema";
 import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 import { Booking, BookingSchema } from "@src/schemas/booking.schema";
 import { Event, EventSchema } from "@src/schemas/event.schema";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
 
 @Module({
   imports: [
@@ -17,6 +18,6 @@ import { Event, EventSchema } from "@src/schemas/event.schema";
     ]),
   ],
   controllers: [AreaController],
-  providers: [AreaService],
+  providers: [AreaService, EventOwnershipService],
 })
 export class AreaModule {}

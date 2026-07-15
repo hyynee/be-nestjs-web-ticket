@@ -28,6 +28,8 @@ import { RedisService } from "@src/redis/redis.service";
 import { UploadService } from "@src/upload/upload.service";
 import { AuditService } from "@src/audit/audit.service";
 import { AuditAction } from "@src/schemas/audit-log.schema";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import type {
   TicketBroadcastItem,
   TicketEventWindow,
@@ -78,10 +80,14 @@ export class TicketService {
     private ticketGateway: TicketGateway,
     private readonly redisService: RedisService,
     private readonly uploadService: UploadService,
-    private readonly auditService: AuditService
+    private readonly auditService: AuditService,
+    private readonly eventOwnershipService: EventOwnershipService
   ) {}
 
-  private generateListCacheKey(query: QueryTicketDto): string {
+  private generateListCacheKey(
+    query: QueryTicketDto,
+    scopeKey: string
+  ): string {
     const {
       eventId,
       zoneId,
@@ -94,7 +100,7 @@ export class TicketService {
       sortBy,
       sortOrder,
     } = query;
-    return `tickets:list:event=${eventId || "all"}:zone=${zoneId || "all"}:area=${areaId || "all"}:status=${status || "all"}:ticketCode=${ticketCode || ""}:userId=${userId || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+    return `tickets:list:scope=${scopeKey}:event=${eventId || "all"}:zone=${zoneId || "all"}:area=${areaId || "all"}:status=${status || "all"}:ticketCode=${ticketCode || ""}:userId=${userId || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
   }
 
   private readonly TICKET_LIST_INDEX = "tickets:list:index";
@@ -400,23 +406,32 @@ export class TicketService {
     return ticket;
   }
 
-  async validateTicket(
-    ticketCode: string,
-    requesterUserId: string,
-    requesterRole: string
-  ) {
+  async validateTicket(ticketCode: string, currentUser: JwtPayload) {
     const ticket = await this.ticketModel
       .findOne({ ticketCode, isDeleted: false })
-      .populate("eventId", "startDate endDate timeSlots")
+      .populate(
+        "eventId",
+        "startDate endDate timeSlots createdBy organizerIds staffIds"
+      )
       .exec();
     if (!ticket) {
       throw new BadRequestException("Ticket not found");
     }
 
-    if (
-      requesterRole !== "admin" &&
-      ticket.userId?.toString() !== requesterUserId
-    ) {
+    const isOwnTicket = ticket.userId?.toString() === currentUser.userId;
+    const canCheckIn =
+      isOwnTicket ||
+      (ticket.eventId &&
+        this.eventOwnershipService.hasCheckInAccess(
+          currentUser,
+          ticket.eventId as unknown as {
+            createdBy: Types.ObjectId;
+            organizerIds?: Types.ObjectId[];
+            staffIds?: Types.ObjectId[];
+          }
+        ));
+
+    if (!canCheckIn) {
       throw new ForbiddenException(
         "You are not allowed to validate this ticket"
       );
@@ -489,8 +504,9 @@ export class TicketService {
     location: string,
     deviceInfo: string,
     ipAddress: string,
-    adminId: string
+    currentUser: JwtPayload
   ) {
+    const adminId = currentUser.userId;
     const dbSession = await this.ticketModel.db.startSession();
     let updatedTicket: any = null;
     let ticketId: Types.ObjectId | null = null;
@@ -499,7 +515,10 @@ export class TicketService {
       await dbSession.withTransaction(async () => {
         const ticket = await this.ticketModel
           .findOne({ ticketCode, isDeleted: false })
-          .populate("eventId", "startDate endDate timeSlots")
+          .populate(
+            "eventId",
+            "startDate endDate timeSlots createdBy organizerIds staffIds"
+          )
           .session(dbSession)
           .exec();
 
@@ -510,6 +529,25 @@ export class TicketService {
         }
 
         ticketId = ticket._id as Types.ObjectId;
+
+        if (!ticket.eventId) {
+          throw new BadRequestException("Event not found");
+        }
+
+        if (
+          !this.eventOwnershipService.hasCheckInAccess(
+            currentUser,
+            ticket.eventId as unknown as {
+              createdBy: Types.ObjectId;
+              organizerIds?: Types.ObjectId[];
+              staffIds?: Types.ObjectId[];
+            }
+          )
+        ) {
+          throw new ForbiddenException(
+            "You are not allowed to check in tickets for this event"
+          );
+        }
 
         if (ticket.status !== "valid") {
           const reason =
@@ -536,9 +574,6 @@ export class TicketService {
           throw new BadRequestException(reason);
         }
 
-        if (!ticket.eventId) {
-          throw new BadRequestException("Event not found");
-        }
         const event = ticket.eventId as unknown as TicketEventWindow & {
           timeSlots?: TimeSlotWindow[];
         };
@@ -696,7 +731,7 @@ export class TicketService {
       await this.auditService.record({
         action: AuditAction.TICKET_CHECKIN,
         actorId: adminId,
-        actorRole: "admin",
+        actorRole: currentUser.role,
         ticketId: ticketId
           ? (ticketId as Types.ObjectId).toString()
           : undefined,
@@ -878,14 +913,9 @@ export class TicketService {
 
   // admin
   async getAllTickets(
-    query: QueryTicketDto
+    query: QueryTicketDto,
+    currentUser: JwtPayload
   ): Promise<PaginatedResponse<Ticket>> {
-    const cacheKey = this.generateListCacheKey(query);
-    const cachedRaw = await this.redisService.client
-      .get(cacheKey)
-      .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Ticket>;
-
     const {
       eventId,
       zoneId,
@@ -899,11 +929,54 @@ export class TicketService {
       sortOrder = "desc",
     } = query;
 
+    // Ownership gate MUST run before any cache read/write below — otherwise an
+    // organizer could get a cache hit for data they were never authorized to see.
+    let scopedEventIds: Types.ObjectId[] | undefined;
+    let scopeKey = "admin";
+
+    if (currentUser.role !== "admin") {
+      if (eventId) {
+        await this.eventOwnershipService.assertCanManageEvent(
+          currentUser,
+          eventId
+        );
+        scopeKey = `event:${eventId}`;
+      } else {
+        const managedIds =
+          await this.eventOwnershipService.getManagedEventIds(currentUser);
+        if (managedIds.length === 0) {
+          const totalPages = Math.ceil(0 / limit);
+          return {
+            items: [],
+            meta: {
+              currentPage: page,
+              itemsPerPage: limit,
+              totalItems: 0,
+              totalPages,
+              hasPreviousPage: page > 1,
+              hasNextPage: false,
+            },
+          };
+        }
+        scopedEventIds = managedIds;
+        scopeKey = `user:${currentUser.userId}`;
+      }
+    } else if (eventId) {
+      scopeKey = `event:${eventId}`;
+    }
+
+    const cacheKey = this.generateListCacheKey(query, scopeKey);
+    const cachedRaw = await this.redisService.client
+      .get(cacheKey)
+      .catch(() => null);
+    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Ticket>;
+
     const skip = (page - 1) * limit;
 
     const filter: FilterQuery<Ticket> = { isDeleted: false };
 
     if (eventId) filter.eventId = new Types.ObjectId(eventId);
+    else if (scopedEventIds) filter.eventId = { $in: scopedEventIds };
     if (zoneId) filter.zoneId = new Types.ObjectId(zoneId);
     if (areaId) filter.areaId = new Types.ObjectId(areaId);
     if (userId) filter.userId = new Types.ObjectId(userId);
@@ -1186,7 +1259,7 @@ export class TicketService {
 
   // thống kê vé
   // lấy lịch sử checkin của vé
-  async getCheckInHistory(ticketCode: string) {
+  async getCheckInHistory(ticketCode: string, currentUser: JwtPayload) {
     const ticket = await this.ticketModel
       .findOne({ ticketCode, isDeleted: false })
       .select("_id eventId")
@@ -1196,6 +1269,11 @@ export class TicketService {
     if (!ticket) {
       throw new BadRequestException("Ticket not found");
     }
+
+    await this.eventOwnershipService.assertCanManageEvent(
+      currentUser,
+      (ticket.eventId as Types.ObjectId).toString()
+    );
 
     const [eventResult, logs] = await Promise.all([
       this.ticketModel.aggregate([

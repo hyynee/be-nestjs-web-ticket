@@ -9,6 +9,7 @@ import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 import { TicketGateway } from "./ticket.gateway";
 import { CheckInLog, CheckInLogSchema } from "@src/schemas/checkin-log.schema";
 import { UploadService } from "@src/upload/upload.service";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
 
 @Module({
   imports: [
@@ -20,7 +21,12 @@ import { UploadService } from "@src/upload/upload.service";
       { name: CheckInLog.name, schema: CheckInLogSchema },
     ]),
   ],
-  providers: [TicketService, TicketGateway, UploadService],
+  providers: [
+    TicketService,
+    TicketGateway,
+    UploadService,
+    EventOwnershipService,
+  ],
   controllers: [TicketController],
   exports: [TicketService],
 })

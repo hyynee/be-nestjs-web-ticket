@@ -12,6 +12,8 @@ import { Event, EventStatus } from "@src/schemas/event.schema";
 import { InjectConnection } from "@nestjs/mongoose";
 import { Connection } from "mongoose";
 import { RedisService } from "@src/redis/redis.service";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 
 const ALLOWED_SORT_FIELDS = [
   "createdAt",
@@ -36,7 +38,8 @@ export class AreaService {
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectConnection() private readonly connection: Connection,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    private readonly eventOwnershipService: EventOwnershipService
   ) {}
 
   private readonly AREA_CACHE_TTL_SEC = 30;
@@ -182,7 +185,7 @@ export class AreaService {
   }
 
   async createArea(
-    currentUser: { userId: string },
+    currentUser: JwtPayload,
     createAreaDto: CreateAreaDTO
   ): Promise<Area> {
     const { zoneId, name, description, rowLabel, seatCount, seats } =
@@ -223,6 +226,11 @@ export class AreaService {
           throw new BadRequestException(
             "This zone does not support seats/areas"
           );
+
+        await this.eventOwnershipService.assertCanManageEvent(
+          currentUser,
+          zone.eventId.toString()
+        );
 
         await this.ensureEventModifiable(zone.eventId, session);
 
@@ -370,7 +378,7 @@ export class AreaService {
   }
 
   async softDeleteArea(
-    currentUser: { userId: string },
+    currentUser: JwtPayload,
     id: string,
     dto: SoftDeleteAreaDTO
   ): Promise<Area> {
@@ -390,6 +398,11 @@ export class AreaService {
           .lean();
 
         if (!existing) throw new BadRequestException("Area not found");
+
+        await this.eventOwnershipService.assertCanManageEvent(
+          currentUser,
+          existing.eventId.toString()
+        );
 
         if (dto.isDeleted) {
           const activeCount = await this.bookingModel
@@ -434,7 +447,7 @@ export class AreaService {
   }
 
   async updateArea(
-    currentUser: { userId: string },
+    currentUser: JwtPayload,
     id: string,
     dto: UpdateAreaDTO
   ): Promise<Area> {
@@ -464,6 +477,11 @@ export class AreaService {
         if (!currentArea)
           throw new BadRequestException("Area not found or has been deleted");
 
+        await this.eventOwnershipService.assertCanManageEvent(
+          currentUser,
+          currentArea.eventId.toString()
+        );
+
         const targetZoneId = zoneId
           ? new Types.ObjectId(zoneId)
           : currentArea.zoneId;
@@ -482,6 +500,13 @@ export class AreaService {
           throw new BadRequestException(
             "Cannot move/update area in a zone without seating"
           );
+
+        if (targetZone.eventId.toString() !== currentArea.eventId.toString()) {
+          await this.eventOwnershipService.assertCanManageEvent(
+            currentUser,
+            targetZone.eventId.toString()
+          );
+        }
 
         await this.ensureEventModifiable(targetZone.eventId, session);
 

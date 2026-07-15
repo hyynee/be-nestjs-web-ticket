@@ -5,7 +5,7 @@ import {
   Inject,
   Logger,
 } from "@nestjs/common";
-import { Model, Types } from "mongoose";
+import { FilterQuery, Model, Types } from "mongoose";
 import { InjectModel } from "@nestjs/mongoose";
 import { Event, EventStatus } from "@src/schemas/event.schema";
 import { CreateEventDTO } from "./dto/create-event.dto";
@@ -15,10 +15,14 @@ import { QueryEventDTO } from "./dto/query-event.dto";
 import { Zone } from "@src/schemas/zone.schema";
 import { Area } from "@src/schemas/area.schema";
 import { Booking, BookingStatus } from "@src/schemas/booking.schema";
+import { User } from "@src/schemas/user.schema";
 import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 import { escapeRegex } from "@src/common/utils/regex.utils";
 import { BookingService } from "@src/booking/booking.service";
 import { RedisService } from "@src/redis/redis.service";
+import { EventOwnershipService } from "./event-ownership.service";
+import { AuditService } from "@src/audit/audit.service";
+import { AuditAction } from "@src/schemas/audit-log.schema";
 
 const CANCEL_BATCH_SIZE = 50;
 
@@ -31,9 +35,12 @@ export class EventService {
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly bookingService: BookingService,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    private readonly eventOwnershipService: EventOwnershipService,
+    private readonly auditService: AuditService
   ) {}
 
   // Example: cache event list
@@ -228,6 +235,384 @@ export class EventService {
     return this.eventModel.find({ isDeleted: true }).exec();
   }
 
+  /** Events the current user owns (`createdBy`) or is assigned to as organizer. Admins get the same result as `getEvents`. */
+  async getMyManagedEvents(currentUser: JwtPayload, query: QueryEventDTO) {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+      status,
+    } = query;
+
+    const skip = (page - 1) * limit;
+    const userObjectId = new Types.ObjectId(currentUser.userId);
+
+    const filter: FilterQuery<Event> = { isDeleted: false };
+    const andConditions: FilterQuery<Event>[] = [
+      { $or: [{ createdBy: userObjectId }, { organizerIds: userObjectId }] },
+    ];
+
+    if (search?.trim()) {
+      const escaped = escapeRegex(search.trim());
+      andConditions.push({
+        $or: [
+          { title: { $regex: escaped, $options: "i" } },
+          { description: { $regex: escaped, $options: "i" } },
+          { location: { $regex: escaped, $options: "i" } },
+        ],
+      });
+    }
+
+    if (status) {
+      filter.status = status;
+    }
+    filter.$and = andConditions;
+
+    const sort: Record<string, 1 | -1> = {
+      [sortBy]: sortOrder === "asc" ? 1 : -1,
+    };
+
+    const [events, total] = await Promise.all([
+      this.eventModel
+        .find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .populate("createdBy", "email fullName")
+        .exec(),
+      this.eventModel.countDocuments(filter),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items: events,
+      meta: {
+        currentPage: page,
+        itemsPerPage: limit,
+        totalItems: total,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
+  }
+
+  /** Grants organizer-level management of `eventId` to `targetUserId`. Promotes a plain `user` role to `organizer` so RolesGuard actually lets them in. */
+  async addOrganizerToEvent(
+    currentUser: JwtPayload,
+    eventId: string,
+    targetUserId: string
+  ): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException("Invalid user ID");
+    }
+
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const session = await this.eventModel.db.startSession();
+    let updatedEvent!: Event;
+    let promotedRole = false;
+
+    try {
+      await session.withTransaction(async () => {
+        const event = await this.eventModel
+          .findOne({ _id: eventId, isDeleted: false })
+          .session(session);
+        if (!event) {
+          throw new NotFoundException(`Event with ID ${eventId} not found`);
+        }
+
+        const isAlreadyManager =
+          event.createdBy.toString() === targetUserId ||
+          event.organizerIds.some((id) => id.toString() === targetUserId);
+        if (isAlreadyManager) {
+          throw new BadRequestException(
+            "User already manages this event as owner or organizer"
+          );
+        }
+
+        const targetUser = await this.userModel
+          .findById(targetUserId)
+          .select("_id role isActive")
+          .lean()
+          .session(session);
+        if (!targetUser) {
+          throw new NotFoundException("User not found");
+        }
+        if (targetUser.isActive === false) {
+          throw new BadRequestException(
+            "Cannot assign an inactive user as organizer"
+          );
+        }
+
+        event.organizerIds.push(new Types.ObjectId(targetUserId));
+        await event.save({ session });
+
+        if (targetUser.role !== "admin" && targetUser.role !== "organizer") {
+          await this.userModel.updateOne(
+            { _id: targetUserId },
+            { $set: { role: "organizer" } },
+            { session }
+          );
+          promotedRole = true;
+        }
+
+        updatedEvent = event;
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    if (promotedRole) {
+      await this.redisService.client
+        .del(`auth:user-state:${targetUserId}`)
+        .catch(() => {});
+    }
+
+    await this.invalidateEventCache(eventId);
+
+    await this.auditService.record({
+      action: AuditAction.EVENT_ORGANIZER_ADD,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+      metadata: { targetUserId },
+    });
+
+    return updatedEvent;
+  }
+
+  /** Revokes organizer access to `eventId` from `targetUserId`. The original creator can never be removed through this API. */
+  async removeOrganizerFromEvent(
+    currentUser: JwtPayload,
+    eventId: string,
+    targetUserId: string
+  ): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException("Invalid user ID");
+    }
+
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const event = await this.eventModel.findOne({
+      _id: eventId,
+      isDeleted: false,
+    });
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    if (event.createdBy.toString() === targetUserId) {
+      throw new BadRequestException(
+        "Cannot remove the event owner — transfer ownership is not supported"
+      );
+    }
+
+    const wasOrganizer = event.organizerIds.some(
+      (id) => id.toString() === targetUserId
+    );
+    if (!wasOrganizer) {
+      throw new BadRequestException("User is not an organizer of this event");
+    }
+
+    event.organizerIds = event.organizerIds.filter(
+      (id) => id.toString() !== targetUserId
+    );
+    await event.save();
+    await this.invalidateEventCache(eventId);
+
+    await this.auditService.record({
+      action: AuditAction.EVENT_ORGANIZER_REMOVE,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+      metadata: { targetUserId },
+    });
+
+    return event;
+  }
+
+  /** List of check-in staff assigned to `eventId`, with minimal profile fields. Manager-only (owner/organizer/admin). */
+  async getEventStaff(
+    currentUser: JwtPayload,
+    eventId: string
+  ): Promise<
+    Array<{ _id: Types.ObjectId; email?: string; fullName?: string }>
+  > {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const event = await this.eventModel
+      .findOne({ _id: eventId, isDeleted: false })
+      .select("staffIds")
+      .populate("staffIds", "email fullName")
+      .lean<{
+        staffIds: Array<{
+          _id: Types.ObjectId;
+          email?: string;
+          fullName?: string;
+        }>;
+      }>();
+
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    return event.staffIds ?? [];
+  }
+
+  /** Grants check-in-only access to `eventId` for `targetUserId`. Promotes a plain `user` role to `checkin_staff` so RolesGuard actually lets them in. */
+  async addStaffToEvent(
+    currentUser: JwtPayload,
+    eventId: string,
+    targetUserId: string,
+    notes?: string
+  ): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException("Invalid user ID");
+    }
+
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const session = await this.eventModel.db.startSession();
+    let updatedEvent!: Event;
+    let promotedRole = false;
+
+    try {
+      await session.withTransaction(async () => {
+        const event = await this.eventModel
+          .findOne({ _id: eventId, isDeleted: false })
+          .session(session);
+        if (!event) {
+          throw new NotFoundException(`Event with ID ${eventId} not found`);
+        }
+
+        const isAlreadyStaff = event.staffIds.some(
+          (id) => id.toString() === targetUserId
+        );
+        if (isAlreadyStaff) {
+          throw new BadRequestException(
+            "User is already check-in staff for this event"
+          );
+        }
+
+        const targetUser = await this.userModel
+          .findById(targetUserId)
+          .select("_id role isActive")
+          .lean()
+          .session(session);
+        if (!targetUser) {
+          throw new NotFoundException("User not found");
+        }
+        if (targetUser.isActive === false) {
+          throw new BadRequestException(
+            "Cannot assign an inactive user as check-in staff"
+          );
+        }
+
+        event.staffIds.push(new Types.ObjectId(targetUserId));
+        await event.save({ session });
+
+        if (targetUser.role === "user") {
+          await this.userModel.updateOne(
+            { _id: targetUserId },
+            { $set: { role: "checkin_staff" } },
+            { session }
+          );
+          promotedRole = true;
+        }
+
+        updatedEvent = event;
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    if (promotedRole) {
+      await this.redisService.client
+        .del(`auth:user-state:${targetUserId}`)
+        .catch(() => {});
+    }
+
+    await this.invalidateEventCache(eventId);
+
+    await this.auditService.record({
+      action: AuditAction.EVENT_STAFF_ADD,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+      reason: notes,
+      metadata: { targetUserId },
+    });
+
+    return updatedEvent;
+  }
+
+  /** Revokes check-in access to `eventId` from `targetUserId`. */
+  async removeStaffFromEvent(
+    currentUser: JwtPayload,
+    eventId: string,
+    targetUserId: string
+  ): Promise<Event> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
+    }
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException("Invalid user ID");
+    }
+
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, eventId);
+
+    const event = await this.eventModel.findOne({
+      _id: eventId,
+      isDeleted: false,
+    });
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    const wasStaff = event.staffIds.some(
+      (id) => id.toString() === targetUserId
+    );
+    if (!wasStaff) {
+      throw new BadRequestException(
+        "User is not check-in staff for this event"
+      );
+    }
+
+    event.staffIds = event.staffIds.filter(
+      (id) => id.toString() !== targetUserId
+    );
+    await event.save();
+    await this.invalidateEventCache(eventId);
+
+    await this.auditService.record({
+      action: AuditAction.EVENT_STAFF_REMOVE,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      eventId,
+      metadata: { targetUserId },
+    });
+
+    return event;
+  }
+
   private async invalidateEventCache(eventId: string): Promise<void> {
     try {
       await this.cacheManager.del(`event:details:${eventId}`);
@@ -299,6 +684,8 @@ export class EventService {
         `Event with ID ${id} not found or has been deleted`
       );
     }
+
+    await this.eventOwnershipService.assertCanManageEvent(currentUser, id);
 
     if (eventData.timeSlots !== undefined) {
       const effectiveStart = eventData.startDate ?? existingEvent.startDate;

@@ -17,6 +17,7 @@ import { BookingScheduler } from "./booking.scheduler";
 import { ZoneModule } from "@src/zone/zone.module";
 import { PaymentModule } from "@src/payment/payment.module";
 import { UploadModule } from "@src/upload/upload.module";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
 
 @Module({
   imports: [
@@ -34,7 +35,7 @@ import { UploadModule } from "@src/upload/upload.module";
     UploadModule,
   ],
   controllers: [BookingController],
-  providers: [BookingService, BookingScheduler],
+  providers: [BookingService, BookingScheduler, EventOwnershipService],
   exports: [BookingService],
 })
 export class BookingModule {}

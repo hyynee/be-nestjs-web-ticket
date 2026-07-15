@@ -9,6 +9,8 @@ import { ExportTicketDto } from "./dto/export-ticket.dto";
 import { Response } from "express";
 import { exportCSV, exportExcel } from "@src/helper/export.helper";
 import { ExportCheckInDto } from "./dto/export-checkin.dto";
+import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 
 type ExportCell = string | number | boolean | null;
 type ExportRow = Record<string, ExportCell>;
@@ -43,7 +45,8 @@ export class ExportService {
   constructor(
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Zone.name) private zoneModel: Model<Zone>,
-    @Inject(QueueService) private readonly queueService: QueueService
+    @Inject(QueueService) private readonly queueService: QueueService,
+    private readonly eventOwnershipService: EventOwnershipService
   ) {}
   private async exportByFormat(
     data: ExportRow[],
@@ -196,12 +199,16 @@ export class ExportService {
 
   async exportCheckInZones(
     dto: ExportCheckInDto,
-    requestedByUserId: string,
+    currentUser: JwtPayload,
     res: Response
   ) {
+    await this.eventOwnershipService.assertCanManageEvent(
+      currentUser,
+      dto.eventId
+    );
     await this.queueService.addJob({
       type: "export-checkin-zones",
-      payload: { dto, requestedByUserId },
+      payload: { dto, requestedByUserId: currentUser.userId },
       requestedAt: new Date().toISOString(),
     });
     return res.status(202).json({
@@ -212,12 +219,16 @@ export class ExportService {
 
   async exportTickets(
     dto: ExportTicketDto,
-    requestedByUserId: string,
+    currentUser: JwtPayload,
     res: Response
   ) {
+    await this.eventOwnershipService.assertCanManageEvent(
+      currentUser,
+      dto.eventId
+    );
     await this.queueService.addJob({
       type: "export-tickets",
-      payload: { dto, requestedByUserId },
+      payload: { dto, requestedByUserId: currentUser.userId },
       requestedAt: new Date().toISOString(),
     });
     return res.status(202).json({

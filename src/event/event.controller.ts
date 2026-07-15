@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -20,6 +21,8 @@ import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
 import { QueryEventDTO } from "./dto/query-event.dto";
 import { CancelEventDto } from "./dto/cancel-event.dto";
+import { AssignOrganizerDto } from "./dto/assign-organizer.dto";
+import { AssignStaffDto } from "./dto/assign-staff.dto";
 import { OptionalJwtAuthGuard } from "@src/guards/optional.guard";
 import { Throttle } from "@nestjs/throttler";
 
@@ -53,6 +56,20 @@ export class EventController {
     return this.eventService.getDeletedEvents();
   }
 
+  // Must stay ahead of `@Get(":id")` below — both are single-segment GET
+  // routes under /event, and Nest/Express match in registration order.
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Get("my-managed-events")
+  async getMyManagedEvents(
+    @CurrentUser() currentUser: JwtPayload,
+    @Query() query: QueryEventDTO
+  ) {
+    return this.eventService.getMyManagedEvents(currentUser, query);
+  }
+
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id")
   async getEventById(@Param("id") id: string) {
@@ -61,7 +78,7 @@ export class EventController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("create")
   async createEvent(
@@ -73,7 +90,7 @@ export class EventController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
-  @Roles("admin")
+  @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("update/:id")
   async updateEvent(
@@ -82,6 +99,75 @@ export class EventController {
     @Body() updateEventDTO: UpdateEventDTO
   ) {
     return this.eventService.updateEvent(currentUser, id, updateEventDTO);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Post(":id/organizers")
+  async assignOrganizer(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string,
+    @Body() dto: AssignOrganizerDto
+  ) {
+    return this.eventService.addOrganizerToEvent(currentUser, id, dto.userId);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Delete(":id/organizers/:userId")
+  async removeOrganizer(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string,
+    @Param("userId") userId: string
+  ) {
+    return this.eventService.removeOrganizerFromEvent(currentUser, id, userId);
+  }
+
+  @Throttle({ medium: { limit: 60, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Get(":id/staff")
+  async getEventStaff(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string
+  ) {
+    return this.eventService.getEventStaff(currentUser, id);
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Post(":id/staff")
+  async assignStaff(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string,
+    @Body() dto: AssignStaffDto
+  ) {
+    return this.eventService.addStaffToEvent(
+      currentUser,
+      id,
+      dto.userId,
+      dto.notes
+    );
+  }
+
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiCookieAuth("access_token")
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Delete(":id/staff/:userId")
+  async removeStaff(
+    @CurrentUser() currentUser: JwtPayload,
+    @Param("id") id: string,
+    @Param("userId") userId: string
+  ) {
+    return this.eventService.removeStaffFromEvent(currentUser, id, userId);
   }
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
