@@ -882,13 +882,8 @@ describe("BookingService", () => {
         sort: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(bookings),
       });
-      bookingModel
-        .find()
-        .populate()
-        .sort()
-        .skip()
-        .limit.mockResolvedValue(bookings);
       bookingModel.countDocuments.mockResolvedValue(1);
 
       const result = await service.getMyBookings(userId, "confirmed", 2, 5);
@@ -909,13 +904,8 @@ describe("BookingService", () => {
         sort: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(bookings),
       });
-      bookingModel
-        .find()
-        .populate()
-        .sort()
-        .skip()
-        .limit.mockResolvedValue(bookings);
       bookingModel.countDocuments.mockResolvedValue(1);
 
       const result = await service.getMyBookings(userId);
@@ -923,12 +913,52 @@ describe("BookingService", () => {
       expect(result.success).toBe(true);
       expect(result.items).toHaveLength(1);
     });
+
+    it("overlays the booking's snapshot onto the populated eventId/zoneId/areaId, so a renamed event/zone doesn't rewrite booking history", async () => {
+      const mockRedisClient = (service as any).redisService.client;
+      mockRedisClient.get.mockResolvedValue(null);
+
+      const bookings = [
+        {
+          _id: new Types.ObjectId(),
+          status: "confirmed",
+          eventId: { title: "Live title (renamed since booking)" },
+          zoneId: { name: "Live zone (renamed since booking)" },
+          areaId: { name: "Live area" },
+          snapshot: {
+            eventTitle: "Original title at booking time",
+            location: "Original location",
+            eventStartDate: new Date("2029-01-01"),
+            eventEndDate: new Date("2029-01-02"),
+            zoneName: "Original zone name",
+            areaName: "Original area name",
+          },
+        },
+      ];
+      bookingModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(bookings),
+      });
+      bookingModel.countDocuments.mockResolvedValue(1);
+
+      const result = await service.getMyBookings(userId);
+
+      expect(result.items[0].eventId.title).toBe(
+        "Original title at booking time"
+      );
+      expect(result.items[0].zoneId.name).toBe("Original zone name");
+      expect(result.items[0].areaId.name).toBe("Original area name");
+    });
   });
 
   describe("getBookingByCode", () => {
     const makePopulateChain = (resolvedValue: any) => {
       const q = Object.assign(Promise.resolve(resolvedValue), {
         populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(resolvedValue),
         exec: jest.fn().mockResolvedValue(resolvedValue),
       });
       return q;
@@ -959,6 +989,28 @@ describe("BookingService", () => {
       const result = await service.getBookingByCode("", "BK002");
 
       expect(result.success).toBe(true);
+    });
+
+    it("overlays the booking's snapshot onto the populated eventId/zoneId/areaId", async () => {
+      const bookingDoc = {
+        _id: new Types.ObjectId(),
+        bookingCode: "BK001",
+        eventId: { title: "Live title (renamed since booking)" },
+        zoneId: { name: "Live zone (renamed since booking)" },
+        snapshot: {
+          eventTitle: "Original title at booking time",
+          location: "Original location",
+          eventStartDate: new Date("2029-01-01"),
+          eventEndDate: new Date("2029-01-02"),
+          zoneName: "Original zone name",
+        },
+      };
+      bookingModel.findOne.mockReturnValue(makePopulateChain(bookingDoc));
+
+      const result = await service.getBookingByCode(userId, "BK001");
+
+      expect(result.data.eventId.title).toBe("Original title at booking time");
+      expect(result.data.zoneId.name).toBe("Original zone name");
     });
   });
 
@@ -1524,6 +1576,33 @@ describe("BookingService", () => {
           paymentStatus: "paid",
         })
       );
+    });
+
+    it("overlays each booking's snapshot onto its aggregated eventId/zoneId", async () => {
+      const mockRedisClient = (service as any).redisService.client;
+      mockRedisClient.get.mockResolvedValue(null);
+      bookingModel.aggregate.mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          eventId: { title: "Live title (renamed since booking)" },
+          zoneId: { name: "Live zone (renamed since booking)" },
+          snapshot: {
+            eventTitle: "Original title at booking time",
+            location: "Original location",
+            eventStartDate: new Date("2029-01-01"),
+            eventEndDate: new Date("2029-01-02"),
+            zoneName: "Original zone name",
+          },
+        },
+      ]);
+      bookingModel.countDocuments.mockResolvedValue(1);
+
+      const result = await service.getAllBookings(baseQuery as any, adminUser);
+
+      expect(result.items[0].eventId.title).toBe(
+        "Original title at booking time"
+      );
+      expect(result.items[0].zoneId.name).toBe("Original zone name");
     });
 
     it("applies search filter when search term is provided", async () => {

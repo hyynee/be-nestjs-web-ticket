@@ -2535,20 +2535,15 @@ describe("TicketService – getTicketByCode", () => {
     );
   });
 
+  const makeGetTicketByCodeChain = (resolvedValue: any) => ({
+    populate: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockReturnThis(),
+    exec: jest.fn().mockResolvedValue(resolvedValue),
+  });
+
   it("returns ticket when found", async () => {
     const ticketDoc = { _id: new Types.ObjectId(), ticketCode: "TK123" };
-    const execChain = { exec: jest.fn().mockResolvedValue(ticketDoc) };
-    const chainable = {
-      populate: jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          populate: jest.fn().mockReturnValue(execChain),
-          exec: jest.fn().mockResolvedValue(ticketDoc),
-        }),
-        exec: jest.fn().mockResolvedValue(ticketDoc),
-      }),
-      exec: jest.fn().mockResolvedValue(ticketDoc),
-    };
-    ticketModel.findOne.mockReturnValue(chainable);
+    ticketModel.findOne.mockReturnValue(makeGetTicketByCodeChain(ticketDoc));
 
     const result = await (service as any).getTicketByCode(
       new Types.ObjectId().toString(),
@@ -2559,18 +2554,7 @@ describe("TicketService – getTicketByCode", () => {
   });
 
   it("throws BadRequestException when ticket not found", async () => {
-    const execChain = { exec: jest.fn().mockResolvedValue(null) };
-    const chainable = {
-      populate: jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          populate: jest.fn().mockReturnValue(execChain),
-          exec: jest.fn().mockResolvedValue(null),
-        }),
-        exec: jest.fn().mockResolvedValue(null),
-      }),
-      exec: jest.fn().mockResolvedValue(null),
-    };
-    ticketModel.findOne.mockReturnValue(chainable);
+    ticketModel.findOne.mockReturnValue(makeGetTicketByCodeChain(null));
 
     await expect(
       (service as any).getTicketByCode(
@@ -2578,6 +2562,37 @@ describe("TicketService – getTicketByCode", () => {
         "INVALID"
       )
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it("prefers the booking's snapshot over the live-populated event/zone/area when present", async () => {
+    const ticketDoc = {
+      _id: new Types.ObjectId(),
+      ticketCode: "TK123",
+      eventId: { title: "Live title", location: "Live location" },
+      zoneId: { name: "Live zone" },
+      areaId: { name: "Live area" },
+      bookingId: {
+        snapshot: {
+          eventTitle: "Snapshot title",
+          location: "Snapshot location",
+          eventStartDate: new Date("2029-01-01T00:00:00.000Z"),
+          eventEndDate: new Date("2029-01-02T00:00:00.000Z"),
+          zoneName: "Snapshot zone",
+          areaName: "Snapshot area",
+        },
+      },
+    };
+    ticketModel.findOne.mockReturnValue(makeGetTicketByCodeChain(ticketDoc));
+
+    const result = await (service as any).getTicketByCode(
+      new Types.ObjectId().toString(),
+      "TK123"
+    );
+
+    expect(result.eventId.title).toBe("Snapshot title");
+    expect(result.eventId.location).toBe("Snapshot location");
+    expect(result.zoneId.name).toBe("Snapshot zone");
+    expect(result.areaId.name).toBe("Snapshot area");
   });
 });
 

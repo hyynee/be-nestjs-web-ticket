@@ -1330,7 +1330,10 @@ describe("PaymentService – createCheckoutSession extended", () => {
     bookingCode: "BK001",
     status: BookingStatus.PENDING,
     paymentStatus: PaymentStatus.UNPAID,
-    expiresAt: new Date(Date.now() + 30 * 60_000),
+    // Must clear PaymentService.STRIPE_MIN_EXPIRES_IN_MS (31 min) — mirrors
+    // the real BOOKING_EXPIRY_MS (40 min) so a freshly created booking is
+    // valid to check out, same as in production.
+    expiresAt: new Date(Date.now() + 40 * 60_000),
     quantity: 2,
     seats: [],
     pricePerTicket: 500_000,
@@ -1447,6 +1450,49 @@ describe("PaymentService – createCheckoutSession extended", () => {
       "https://checkout.stripe.com/pay/cs_live_test_123"
     );
     expect(result.message).toBe("Checkout session created successfully");
+  });
+
+  it("uses the booking's snapshot (not the live-populated event/zone) for the Stripe product name when present", async () => {
+    const booking = {
+      ...makeValidBooking(),
+      snapshot: {
+        eventTitle: "Original title at booking time",
+        location: "Original location",
+        eventStartDate: new Date("2029-01-01"),
+        eventEndDate: new Date("2029-01-02"),
+        zoneName: "Original zone name",
+        pricePerTicket: 500_000,
+        currency: "VND",
+      },
+    };
+    bookingModel.findOne.mockReturnValue(makeChain(booking));
+    mockStripe.checkout.sessions.create.mockResolvedValue({
+      id: "cs_snapshot_test",
+      url: "https://checkout.stripe.com/pay/cs_snapshot_test",
+    });
+
+    await service.createCheckoutSession(userId, "BK001");
+
+    const createCall = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(createCall.line_items[0].price_data.product_data.name).toBe(
+      "Original title at booking time - Original zone name"
+    );
+  });
+
+  it("falls back to the live-populated event/zone for the Stripe product name when no snapshot exists", async () => {
+    const booking = makeValidBooking();
+    bookingModel.findOne.mockReturnValue(makeChain(booking));
+    mockStripe.checkout.sessions.create.mockResolvedValue({
+      id: "cs_fallback_test",
+      url: "https://checkout.stripe.com/pay/cs_fallback_test",
+    });
+
+    await service.createCheckoutSession(userId, "BK001");
+
+    const createCall = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(createCall.line_items[0].price_data.product_data.name).toBe(
+      "Concert - Zone A"
+    );
   });
 
   it("stores the session ID in Redis after creation", async () => {

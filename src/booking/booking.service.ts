@@ -89,6 +89,51 @@ export class BookingService {
     }
   }
 
+  /**
+   * Overlays a booking's immutable snapshot onto its (live-populated)
+   * eventId/zoneId/areaId so every read path returns historically accurate
+   * data automatically — callers keep reading booking.eventId.title etc.,
+   * they just get what was true at booking time instead of today's value.
+   * No-op for bookings created before the snapshot field existed, and
+   * degrades gracefully if the referenced event/zone/area no longer exists
+   * (populate left it null) by synthesizing a minimal object from the
+   * snapshot instead of leaving it null.
+   */
+  private applyBookingSnapshot(booking: any): any {
+    const snapshot = booking?.snapshot;
+    if (!snapshot) return booking;
+
+    booking.eventId =
+      booking.eventId && typeof booking.eventId === "object"
+        ? {
+            ...booking.eventId,
+            title: snapshot.eventTitle,
+            location: snapshot.location,
+            startDate: snapshot.eventStartDate,
+            endDate: snapshot.eventEndDate,
+          }
+        : {
+            title: snapshot.eventTitle,
+            location: snapshot.location,
+            startDate: snapshot.eventStartDate,
+            endDate: snapshot.eventEndDate,
+          };
+
+    booking.zoneId =
+      booking.zoneId && typeof booking.zoneId === "object"
+        ? { ...booking.zoneId, name: snapshot.zoneName }
+        : { name: snapshot.zoneName };
+
+    if (snapshot.areaName) {
+      booking.areaId =
+        booking.areaId && typeof booking.areaId === "object"
+          ? { ...booking.areaId, name: snapshot.areaName }
+          : { name: snapshot.areaName };
+    }
+
+    return booking;
+  }
+
   private async emitZoneTicketUpdate(zoneId: Types.ObjectId | string) {
     const zone = await this.zoneModel
       .findById(zoneId)
@@ -613,12 +658,13 @@ export class BookingService {
         .populate("areaId", "name rowLabel")
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       this.bookingModel.countDocuments(filter),
     ]);
     const result = {
       success: true,
-      items: bookings,
+      items: bookings.map((b) => this.applyBookingSnapshot(b)),
       meta: {
         currentPage: Number(page),
         itemsPerPage: Number(limit),
@@ -657,7 +703,8 @@ export class BookingService {
       .findOne(query)
       .populate("eventId", "title startDate endDate location thumbnail")
       .populate("zoneId", "name price hasSeating")
-      .populate("areaId", "name rowLabel");
+      .populate("areaId", "name rowLabel")
+      .lean();
 
     if (!booking) {
       throw new NotFoundException("Booking không tồn tại");
@@ -665,7 +712,7 @@ export class BookingService {
 
     return {
       success: true,
-      data: booking,
+      data: this.applyBookingSnapshot(booking),
     };
   }
 
@@ -1284,7 +1331,7 @@ export class BookingService {
     ]);
     const totalPages = Math.ceil(total / limit);
     const result: PaginatedResponse<Booking> = {
-      items: bookings,
+      items: bookings.map((b: any) => this.applyBookingSnapshot(b)),
       meta: {
         currentPage: page,
         itemsPerPage: limit,

@@ -1222,7 +1222,14 @@ describe("C — Thanh toán cho giao dịch đã paid / đã finalized", () => {
     });
 
     it("C1-3: throws ConflictException khi lock không lấy được và không có session cache", async () => {
-      const booking = validPendingBooking();
+      // Override expiresAt: validPendingBooking()'s default (30 min) is
+      // below PaymentService.STRIPE_MIN_EXPIRES_IN_MS (31 min), which would
+      // make createCheckoutSession reject for the wrong reason before ever
+      // reaching the lock-conflict path this test actually exercises.
+      const booking = {
+        ...validPendingBooking(),
+        expiresAt: new Date(Date.now() + 40 * 60_000),
+      };
       const { service, redisClient } = await buildPaymentService({
         bookingModel: {
           findOne: jest.fn().mockReturnValue(makeChain(booking)),
@@ -1238,7 +1245,11 @@ describe("C — Thanh toán cho giao dịch đã paid / đã finalized", () => {
     });
 
     it("C1-4: trả về URL cũ khi session đã tồn tại trong cache và còn 'open'", async () => {
-      const booking = validPendingBooking();
+      // See C1-3 note — needs expiresAt safely above STRIPE_MIN_EXPIRES_IN_MS.
+      const booking = {
+        ...validPendingBooking(),
+        expiresAt: new Date(Date.now() + 40 * 60_000),
+      };
       const { service, redisClient } = await buildPaymentService({
         bookingModel: {
           findOne: jest.fn().mockReturnValue(makeChain(booking)),
@@ -1266,7 +1277,11 @@ describe("C — Thanh toán cho giao dịch đã paid / đã finalized", () => {
     });
 
     it("C1-5: tạo session mới khi session cũ đã expired (retrieve throw)", async () => {
-      const booking = validPendingBooking();
+      // See C1-3 note — needs expiresAt safely above STRIPE_MIN_EXPIRES_IN_MS.
+      const booking = {
+        ...validPendingBooking(),
+        expiresAt: new Date(Date.now() + 40 * 60_000),
+      };
       const newSession = {
         id: "cs_new",
         url: "https://checkout.stripe.com/new",

@@ -461,12 +461,20 @@ export class PaymentService {
       );
     }
 
+    // Prefer the booking's immutable snapshot for the customer-facing
+    // product name — this text becomes part of the permanent Stripe
+    // transaction record, so it should reflect what the customer actually
+    // booked, not whatever the event/zone have been renamed to since.
+    const productName = booking.snapshot
+      ? `${booking.snapshot.eventTitle} - ${booking.snapshot.zoneName}`
+      : `${event.title} - ${zone.name}`;
+
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [
       {
         price_data: {
           currency: "vnd",
           product_data: {
-            name: `${event.title} - ${zone.name}`,
+            name: productName,
             description:
               booking.seats.length > 0
                 ? `Ghế: ${booking.seats.join(", ")}`
@@ -535,6 +543,9 @@ export class PaymentService {
     }
 
     const event = booking.eventId as unknown as BookingEventSummary;
+    // Same rationale as the Stripe flow — prefer the immutable snapshot for
+    // customer-facing/record-keeping text.
+    const eventTitle = booking.snapshot?.eventTitle ?? event.title;
 
     const request = new paypalSdk.orders.OrdersCreateRequest();
     request.prefer("return=representation");
@@ -554,7 +565,7 @@ export class PaymentService {
       purchase_units: [
         {
           reference_id: booking.bookingCode,
-          description: `Ticket for ${event.title}`,
+          description: `Ticket for ${eventTitle}`,
           amount: {
             currency_code: "USD",
             value: amountUSD,
@@ -585,7 +596,7 @@ export class PaymentService {
           $set: {
             userId: new Types.ObjectId(userId),
             paypalOrderId: order.id,
-            metadata: { bookingCode, eventTitle: event.title, amountUSD },
+            metadata: { bookingCode, eventTitle, amountUSD },
           },
           $setOnInsert: {
             eventId: this.toObjectId(

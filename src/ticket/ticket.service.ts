@@ -399,10 +399,40 @@ export class TicketService {
       .populate("eventId", "title location startDate endDate")
       .populate("zoneId", "name")
       .populate("areaId", "name")
+      .populate("bookingId", "snapshot")
+      .lean()
       .exec();
     if (!ticket) {
       throw new BadRequestException("Ticket not found");
     }
+
+    // Prefer the booking's immutable snapshot (facts as of booking time)
+    // over the live-populated Event/Zone/Area — a ticket viewed long after
+    // an event was renamed/rescheduled should still show what the customer
+    // actually booked. Ticket itself has no snapshot of its own; it's
+    // reached through bookingId.
+    const snapshot = (ticket as any).bookingId?.snapshot;
+    if (snapshot) {
+      if (ticket.eventId && typeof ticket.eventId === "object") {
+        Object.assign(ticket.eventId, {
+          title: snapshot.eventTitle,
+          location: snapshot.location,
+          startDate: snapshot.eventStartDate,
+          endDate: snapshot.eventEndDate,
+        });
+      }
+      if (ticket.zoneId && typeof ticket.zoneId === "object") {
+        Object.assign(ticket.zoneId, { name: snapshot.zoneName });
+      }
+      if (
+        snapshot.areaName &&
+        ticket.areaId &&
+        typeof ticket.areaId === "object"
+      ) {
+        Object.assign(ticket.areaId, { name: snapshot.areaName });
+      }
+    }
+
     return ticket;
   }
 
