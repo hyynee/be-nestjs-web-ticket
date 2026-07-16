@@ -1,21 +1,32 @@
-import { Test, TestingModule } from "@nestjs/testing";
 import { Reflector } from "@nestjs/core";
-import { EventController } from "./event.controller";
-import { EventService } from "./event.service";
 import { AuthGuard } from "@nestjs/passport";
+import { Test, TestingModule } from "@nestjs/testing";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
+import { ROLES_KEY } from "@src/common/decorators/roles.decorator";
 import { OptionalJwtAuthGuard } from "@src/guards/optional.guard";
 import { RolesGuard } from "@src/guards/role.guard";
-import { ROLES_KEY } from "@src/common/decorators/roles.decorator";
-import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
-import { CreateEventDTO } from "./dto/create-event.dto";
-import { UpdateEventDTO } from "./dto/update-event.dto";
-import { QueryEventDTO } from "./dto/query-event.dto";
+import { EventCommandService } from "./application/event-command.service";
+import { EventLifecycleService } from "./application/event-lifecycle.service";
+import { EventMemberService } from "./application/event-member.service";
+import { EventQueryService } from "./application/event-query.service";
+import { EventLifecycleController } from "./controllers/event-lifecycle.controller";
+import { EventManagementController } from "./controllers/event-management.controller";
+import { EventMemberController } from "./controllers/event-member.controller";
+import { EventQueryController } from "./controllers/event-query.controller";
 import { CancelEventDto } from "./dto/cancel-event.dto";
-import { AssignOrganizerDto } from "./dto/assign-organizer.dto";
+import { CreateEventDTO } from "./dto/create-event.dto";
+import { QueryEventDTO } from "./dto/query-event.dto";
+import { UpdateEventDTO } from "./dto/update-event.dto";
 
-describe("EventController", () => {
-  let controller: EventController;
-  let eventService: jest.Mocked<EventService>;
+describe("Event controllers", () => {
+  let queryController: EventQueryController;
+  let managementController: EventManagementController;
+  let memberController: EventMemberController;
+  let lifecycleController: EventLifecycleController;
+  let queryService: jest.Mocked<EventQueryService>;
+  let commandService: jest.Mocked<EventCommandService>;
+  let memberService: jest.Mocked<EventMemberService>;
+  let lifecycleService: jest.Mocked<EventLifecycleService>;
 
   const mockUser: JwtPayload = {
     userId: "admin-id",
@@ -23,40 +34,57 @@ describe("EventController", () => {
     iat: 0,
     exp: 0,
   };
-
   const mockEventId = "507f1f77bcf86cd799439011";
   const eventsResult = {
     items: [{ id: "e1", title: "Concert" }],
     meta: { totalItems: 1 },
   };
-  const zonesResult = [{ name: "VIP", price: 100 }];
-  const singleEvent = { id: mockEventId, title: "Concert", isDeleted: false };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [EventController],
+      controllers: [
+        EventQueryController,
+        EventManagementController,
+        EventMemberController,
+        EventLifecycleController,
+      ],
       providers: [
         {
-          provide: EventService,
+          provide: EventQueryService,
           useValue: {
             getEvents: jest.fn(),
             getEventZones: jest.fn(),
             getDeletedEvents: jest.fn(),
             getActiveEventById: jest.fn(),
+            getMyManagedEvents: jest.fn(),
+          },
+        },
+        {
+          provide: EventCommandService,
+          useValue: {
             createEvent: jest.fn(),
             updateEvent: jest.fn(),
             deleteEvent: jest.fn(),
             restoreEvent: jest.fn(),
-            cancelEventWithRefund: jest.fn(),
-            getMyManagedEvents: jest.fn(),
+          },
+        },
+        {
+          provide: EventMemberService,
+          useValue: {
             addOrganizerToEvent: jest.fn(),
             removeOrganizerFromEvent: jest.fn(),
             getEventStaff: jest.fn(),
             addStaffToEvent: jest.fn(),
             removeStaffFromEvent: jest.fn(),
+          },
+        },
+        {
+          provide: EventLifecycleService,
+          useValue: {
             publishEvent: jest.fn(),
             unpublishEvent: jest.fn(),
             endEvent: jest.fn(),
+            cancelEventWithRefund: jest.fn(),
           },
         },
       ],
@@ -69,457 +97,207 @@ describe("EventController", () => {
       .useValue({ canActivate: () => true })
       .compile();
 
-    controller = module.get<EventController>(EventController);
-    eventService = module.get(EventService);
+    queryController = module.get(EventQueryController);
+    managementController = module.get(EventManagementController);
+    memberController = module.get(EventMemberController);
+    lifecycleController = module.get(EventLifecycleController);
+    queryService = module.get(EventQueryService);
+    commandService = module.get(EventCommandService);
+    memberService = module.get(EventMemberService);
+    lifecycleService = module.get(EventLifecycleService);
   });
 
   afterEach(() => jest.clearAllMocks());
 
-  describe("getEvents", () => {
-    it("returns paginated events", async () => {
-      eventService.getEvents.mockResolvedValue(eventsResult);
+  it("delegates query endpoints to EventQueryService", async () => {
+    const query = { page: 1, limit: 10 } as QueryEventDTO;
+    const zones = [{ name: "VIP", price: 100 }];
+    queryService.getEvents.mockResolvedValue(eventsResult as any);
+    queryService.getEventZones.mockResolvedValue(zones as any);
+    queryService.getDeletedEvents.mockResolvedValue([
+      { id: mockEventId },
+    ] as any);
+    queryService.getActiveEventById.mockResolvedValue({
+      id: mockEventId,
+    } as any);
+    queryService.getMyManagedEvents.mockResolvedValue(eventsResult as any);
 
-      const query: QueryEventDTO = { page: 1, limit: 10 } as QueryEventDTO;
-      const result = await controller.getEvents(query, mockUser);
-
-      expect(eventService.getEvents).toHaveBeenCalledWith(query, mockUser);
-      expect(result).toEqual(eventsResult);
+    await expect(queryController.getEvents(query, mockUser)).resolves.toBe(
+      eventsResult
+    );
+    await expect(
+      queryController.getEventZones(mockEventId, mockUser)
+    ).resolves.toBe(zones);
+    await expect(queryController.getDeletedEvents()).resolves.toEqual([
+      { id: mockEventId },
+    ]);
+    await expect(queryController.getEventById(mockEventId)).resolves.toEqual({
+      id: mockEventId,
     });
+    await expect(
+      queryController.getMyManagedEvents(mockUser, query)
+    ).resolves.toBe(eventsResult);
 
-    it("works without a user (optional auth)", async () => {
-      eventService.getEvents.mockResolvedValue(eventsResult);
-
-      const query: QueryEventDTO = { page: 1, limit: 10 } as QueryEventDTO;
-      const result = await controller.getEvents(query, undefined);
-
-      expect(eventService.getEvents).toHaveBeenCalledWith(query, undefined);
-      expect(result).toEqual(eventsResult);
-    });
-
-    it("passes search and filter query params to service", async () => {
-      const query: QueryEventDTO = {
-        page: 1,
-        limit: 20,
-        search: "rock",
-        sortBy: "startDate",
-        sortOrder: "asc",
-        status: "active",
-      } as QueryEventDTO;
-      eventService.getEvents.mockResolvedValue(eventsResult);
-
-      await controller.getEvents(query, mockUser);
-
-      expect(eventService.getEvents).toHaveBeenCalledWith(query, mockUser);
-    });
+    expect(queryService.getEvents).toHaveBeenCalledWith(query, mockUser);
+    expect(queryService.getEventZones).toHaveBeenCalledWith(
+      mockEventId,
+      mockUser
+    );
+    expect(queryService.getMyManagedEvents).toHaveBeenCalledWith(
+      mockUser,
+      query
+    );
   });
 
-  describe("getEventZones", () => {
-    it("returns zones for an event", async () => {
-      eventService.getEventZones.mockResolvedValue(zonesResult);
+  it("delegates management endpoints to EventCommandService", async () => {
+    const createDto = { title: "New Event" } as CreateEventDTO;
+    const updateDto = { title: "Updated" } as UpdateEventDTO;
+    commandService.createEvent.mockResolvedValue({ id: mockEventId } as any);
+    commandService.updateEvent.mockResolvedValue({ id: mockEventId } as any);
+    commandService.deleteEvent.mockResolvedValue({ id: mockEventId } as any);
+    commandService.restoreEvent.mockResolvedValue({ id: mockEventId } as any);
 
-      const result = await controller.getEventZones(mockEventId, mockUser);
+    await managementController.createEvent(mockUser, createDto);
+    await managementController.updateEvent(mockUser, mockEventId, updateDto);
+    await managementController.deleteEvent(mockEventId);
+    await managementController.restoreEvent(mockEventId);
 
-      expect(eventService.getEventZones).toHaveBeenCalledWith(
-        mockEventId,
-        mockUser
-      );
-      expect(result).toEqual(zonesResult);
-    });
-
-    it("works without a user (optional auth)", async () => {
-      eventService.getEventZones.mockResolvedValue(zonesResult);
-
-      const result = await controller.getEventZones(mockEventId, undefined);
-
-      expect(eventService.getEventZones).toHaveBeenCalledWith(
-        mockEventId,
-        undefined
-      );
-      expect(result).toEqual(zonesResult);
-    });
+    expect(commandService.createEvent).toHaveBeenCalledWith(
+      mockUser,
+      createDto
+    );
+    expect(commandService.updateEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId,
+      updateDto
+    );
+    expect(commandService.deleteEvent).toHaveBeenCalledWith(mockEventId);
+    expect(commandService.restoreEvent).toHaveBeenCalledWith(mockEventId);
   });
 
-  describe("getDeletedEvents", () => {
-    it("returns deleted events", async () => {
-      const deleted = [{ id: mockEventId, isDeleted: true }];
-      eventService.getDeletedEvents.mockResolvedValue(deleted);
+  it("delegates member endpoints to EventMemberService", async () => {
+    const dto = { userId: "507f1f77bcf86cd799439099", notes: "Gate A" };
+    memberService.addOrganizerToEvent.mockResolvedValue({
+      id: mockEventId,
+    } as any);
+    memberService.removeOrganizerFromEvent.mockResolvedValue({
+      id: mockEventId,
+    } as any);
+    memberService.getEventStaff.mockResolvedValue([{ id: dto.userId }] as any);
+    memberService.addStaffToEvent.mockResolvedValue({ id: mockEventId } as any);
+    memberService.removeStaffFromEvent.mockResolvedValue({
+      id: mockEventId,
+    } as any);
 
-      const result = await controller.getDeletedEvents();
+    await memberController.addOrganizer(mockUser, mockEventId, dto);
+    await memberController.removeOrganizer(mockUser, mockEventId, dto.userId);
+    await memberController.getEventStaff(mockUser, mockEventId);
+    await memberController.addStaff(mockUser, mockEventId, dto);
+    await memberController.removeStaff(mockUser, mockEventId, dto.userId);
 
-      expect(eventService.getDeletedEvents).toHaveBeenCalled();
-      expect(result).toEqual(deleted);
-    });
+    expect(memberService.addOrganizerToEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId,
+      dto.userId
+    );
+    expect(memberService.removeOrganizerFromEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId,
+      dto.userId
+    );
+    expect(memberService.getEventStaff).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId
+    );
+    expect(memberService.addStaffToEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId,
+      dto.userId,
+      dto.notes
+    );
+    expect(memberService.removeStaffFromEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId,
+      dto.userId
+    );
   });
 
-  describe("getEventById", () => {
-    it("returns active event by id", async () => {
-      eventService.getActiveEventById.mockResolvedValue(singleEvent);
+  it("delegates lifecycle endpoints to EventLifecycleService", async () => {
+    const cancelDto: CancelEventDto = { reason: "Weather issue" };
+    lifecycleService.publishEvent.mockResolvedValue({ id: mockEventId } as any);
+    lifecycleService.unpublishEvent.mockResolvedValue({
+      id: mockEventId,
+    } as any);
+    lifecycleService.endEvent.mockResolvedValue({ id: mockEventId } as any);
+    lifecycleService.cancelEventWithRefund.mockResolvedValue({
+      event: { id: mockEventId },
+      totalBookings: 0,
+      cancelled: 0,
+      failed: [],
+    } as any);
 
-      const result = await controller.getEventById(mockEventId);
+    await lifecycleController.publishEvent(mockUser, mockEventId);
+    await lifecycleController.unpublishEvent(mockUser, mockEventId);
+    await lifecycleController.endEvent(mockUser, mockEventId);
+    await lifecycleController.cancelEvent(mockEventId, mockUser, cancelDto);
 
-      expect(eventService.getActiveEventById).toHaveBeenCalledWith(mockEventId);
-      expect(result).toEqual(singleEvent);
-    });
+    expect(lifecycleService.publishEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId
+    );
+    expect(lifecycleService.unpublishEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId
+    );
+    expect(lifecycleService.endEvent).toHaveBeenCalledWith(
+      mockUser,
+      mockEventId
+    );
+    expect(lifecycleService.cancelEventWithRefund).toHaveBeenCalledWith(
+      mockEventId,
+      mockUser.userId,
+      cancelDto.reason
+    );
   });
 
-  describe("createEvent", () => {
-    it("creates an event with current user and DTO", async () => {
-      const dto: CreateEventDTO = {
-        title: "New Event",
-        startDate: new Date("2030-01-01"),
-        endDate: new Date("2030-01-02"),
-        location: "HCM",
-      } as CreateEventDTO;
-      const created = { id: "new-id", ...dto };
-      eventService.createEvent.mockResolvedValue(created);
-
-      const result = await controller.createEvent(mockUser, dto);
-
-      expect(eventService.createEvent).toHaveBeenCalledWith(mockUser, dto);
-      expect(result).toEqual(created);
-    });
-  });
-
-  describe("updateEvent", () => {
-    it("updates an event with current user, id, and DTO", async () => {
-      const dto: UpdateEventDTO = { title: "Updated" };
-      const updated = { id: mockEventId, title: "Updated" };
-      eventService.updateEvent.mockResolvedValue(updated);
-
-      const result = await controller.updateEvent(mockUser, mockEventId, dto);
-
-      expect(eventService.updateEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId,
-        dto
-      );
-      expect(result).toEqual(updated);
-    });
-  });
-
-  describe("publishEvent", () => {
-    it("publishes an event by id", async () => {
-      const published = { id: mockEventId, status: "active" };
-      eventService.publishEvent.mockResolvedValue(published);
-
-      const result = await controller.publishEvent(mockUser, mockEventId);
-
-      expect(eventService.publishEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId
-      );
-      expect(result).toEqual(published);
-    });
-  });
-
-  describe("unpublishEvent", () => {
-    it("unpublishes an event by id", async () => {
-      const unpublished = { id: mockEventId, status: "inactive" };
-      eventService.unpublishEvent.mockResolvedValue(unpublished);
-
-      const result = await controller.unpublishEvent(mockUser, mockEventId);
-
-      expect(eventService.unpublishEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId
-      );
-      expect(result).toEqual(unpublished);
-    });
-  });
-
-  describe("endEvent", () => {
-    it("ends an event by id", async () => {
-      const ended = { id: mockEventId, status: "ended" };
-      eventService.endEvent.mockResolvedValue(ended);
-
-      const result = await controller.endEvent(mockUser, mockEventId);
-
-      expect(eventService.endEvent).toHaveBeenCalledWith(mockUser, mockEventId);
-      expect(result).toEqual(ended);
-    });
-  });
-
-  describe("deleteEvent", () => {
-    it("soft-deletes an event by id", async () => {
-      const deleted = { id: mockEventId, isDeleted: true };
-      eventService.deleteEvent.mockResolvedValue(deleted);
-
-      const result = await controller.deleteEvent(mockEventId);
-
-      expect(eventService.deleteEvent).toHaveBeenCalledWith(mockEventId);
-      expect(result).toEqual(deleted);
-    });
-  });
-
-  describe("restoreEvent", () => {
-    it("restores a deleted event by id", async () => {
-      const restored = { id: mockEventId, isDeleted: false };
-      eventService.restoreEvent.mockResolvedValue(restored);
-
-      const result = await controller.restoreEvent(mockEventId);
-
-      expect(eventService.restoreEvent).toHaveBeenCalledWith(mockEventId);
-      expect(result).toEqual(restored);
-    });
-  });
-
-  describe("cancelEvent", () => {
-    it("cancels an event with refund", async () => {
-      const dto: CancelEventDto = { reason: "Weather issue" };
-      const cancellationResult = { message: "Event cancelled with refund" };
-      eventService.cancelEventWithRefund.mockResolvedValue(cancellationResult);
-
-      const result = await controller.cancelEvent(mockEventId, mockUser, dto);
-
-      expect(eventService.cancelEventWithRefund).toHaveBeenCalledWith(
-        mockEventId,
-        mockUser.userId,
-        dto.reason
-      );
-      expect(result).toEqual(cancellationResult);
-    });
-
-    it("cancels an event without a reason", async () => {
-      const dto: CancelEventDto = {};
-      eventService.cancelEventWithRefund.mockResolvedValue({
-        message: "Cancelled",
-      });
-
-      await controller.cancelEvent(mockEventId, mockUser, dto);
-    });
-  });
-
-  describe("getMyManagedEvents", () => {
-    it("returns events managed by the current user", async () => {
-      eventService.getMyManagedEvents.mockResolvedValue(eventsResult);
-      const query: QueryEventDTO = { page: 1, limit: 10 } as QueryEventDTO;
-
-      const result = await controller.getMyManagedEvents(mockUser, query);
-
-      expect(eventService.getMyManagedEvents).toHaveBeenCalledWith(
-        mockUser,
-        query
-      );
-      expect(result).toEqual(eventsResult);
-    });
-  });
-
-  describe("assignOrganizer", () => {
-    it("delegates to addOrganizerToEvent with the target userId", async () => {
-      const dto: AssignOrganizerDto = {
-        userId: "507f1f77bcf86cd799439099",
-      };
-      const updated = { id: mockEventId, organizerIds: [dto.userId] };
-      eventService.addOrganizerToEvent.mockResolvedValue(updated);
-
-      const result = await controller.assignOrganizer(
-        mockUser,
-        mockEventId,
-        dto
-      );
-
-      expect(eventService.addOrganizerToEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId,
-        dto.userId
-      );
-      expect(result).toEqual(updated);
-    });
-  });
-
-  describe("removeOrganizer", () => {
-    it("delegates to removeOrganizerFromEvent", async () => {
-      const targetUserId = "507f1f77bcf86cd799439099";
-      const updated = { id: mockEventId, organizerIds: [] };
-      eventService.removeOrganizerFromEvent.mockResolvedValue(updated);
-
-      const result = await controller.removeOrganizer(
-        mockUser,
-        mockEventId,
-        targetUserId
-      );
-
-      expect(eventService.removeOrganizerFromEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId,
-        targetUserId
-      );
-      expect(result).toEqual(updated);
-    });
-  });
-
-  describe("getEventStaff", () => {
-    it("delegates to eventService.getEventStaff", async () => {
-      const staff = [{ _id: "u1", email: "a@b.com" }];
-      eventService.getEventStaff.mockResolvedValue(staff as any);
-
-      const result = await controller.getEventStaff(mockUser, mockEventId);
-
-      expect(eventService.getEventStaff).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId
-      );
-      expect(result).toEqual(staff);
-    });
-  });
-
-  describe("assignStaff", () => {
-    it("delegates to addStaffToEvent with userId and notes", async () => {
-      const dto = { userId: "507f1f77bcf86cd799439099", notes: "Gate A" };
-      const updated = { id: mockEventId, staffIds: [dto.userId] };
-      eventService.addStaffToEvent.mockResolvedValue(updated as any);
-
-      const result = await controller.assignStaff(mockUser, mockEventId, dto);
-
-      expect(eventService.addStaffToEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId,
-        dto.userId,
-        dto.notes
-      );
-      expect(result).toEqual(updated);
-    });
-  });
-
-  describe("removeStaff", () => {
-    it("delegates to removeStaffFromEvent", async () => {
-      const targetUserId = "507f1f77bcf86cd799439099";
-      const updated = { id: mockEventId, staffIds: [] };
-      eventService.removeStaffFromEvent.mockResolvedValue(updated as any);
-
-      const result = await controller.removeStaff(
-        mockUser,
-        mockEventId,
-        targetUserId
-      );
-
-      expect(eventService.removeStaffFromEvent).toHaveBeenCalledWith(
-        mockUser,
-        mockEventId,
-        targetUserId
-      );
-      expect(result).toEqual(updated);
-    });
-  });
-
-  describe("role metadata", () => {
+  it("keeps route role metadata equivalent after controller split", () => {
     const reflector = new Reflector();
 
-    it("allows both admin and organizer to create/update events and manage organizers/staff", () => {
-      expect(reflector.get(ROLES_KEY, controller.createEvent)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.updateEvent)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.assignOrganizer)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.removeOrganizer)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.getMyManagedEvents)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.getEventStaff)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.assignStaff)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.removeStaff)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-    });
-
-    it("opens publish/unpublish/end lifecycle actions to admin and organizer", () => {
-      expect(reflector.get(ROLES_KEY, controller.publishEvent)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.unpublishEvent)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.endEvent)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-    });
-
-    it("keeps destructive event actions admin-only", () => {
-      expect(reflector.get(ROLES_KEY, controller.deleteEvent)).toEqual([
-        "admin",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.restoreEvent)).toEqual([
-        "admin",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.cancelEvent)).toEqual([
-        "admin",
-      ]);
-    });
-  });
-
-  describe("error propagation", () => {
-    it("propagates errors from getEvents", async () => {
-      eventService.getEvents.mockRejectedValue(new Error("Service error"));
-      await expect(
-        controller.getEvents({} as QueryEventDTO, mockUser)
-      ).rejects.toThrow("Service error");
-    });
-
-    it("propagates errors from getEventZones", async () => {
-      eventService.getEventZones.mockRejectedValue(new Error("Not found"));
-      await expect(
-        controller.getEventZones("bad-id", mockUser)
-      ).rejects.toThrow("Not found");
-    });
-
-    it("propagates errors from createEvent", async () => {
-      eventService.createEvent.mockRejectedValue(
-        new Error("Validation failed")
-      );
-      await expect(
-        controller.createEvent(mockUser, {} as CreateEventDTO)
-      ).rejects.toThrow("Validation failed");
-    });
-
-    it("propagates errors from updateEvent", async () => {
-      eventService.updateEvent.mockRejectedValue(new Error("Event not found"));
-      await expect(
-        controller.updateEvent(mockUser, "nonexistent", {} as UpdateEventDTO)
-      ).rejects.toThrow("Event not found");
-    });
-
-    it("propagates errors from deleteEvent", async () => {
-      eventService.deleteEvent.mockRejectedValue(new Error("Not found"));
-      await expect(controller.deleteEvent("bad-id")).rejects.toThrow(
-        "Not found"
-      );
-    });
-
-    it("propagates errors from restoreEvent", async () => {
-      eventService.restoreEvent.mockRejectedValue(new Error("Not found"));
-      await expect(controller.restoreEvent("bad-id")).rejects.toThrow(
-        "Not found"
-      );
-    });
-
-    it("propagates errors from cancelEvent", async () => {
-      eventService.cancelEventWithRefund.mockRejectedValue(
-        new Error("Already cancelled")
-      );
-      await expect(
-        controller.cancelEvent(mockEventId, mockUser, {} as CancelEventDto)
-      ).rejects.toThrow("Already cancelled");
-    });
+    expect(reflector.get(ROLES_KEY, managementController.createEvent)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(reflector.get(ROLES_KEY, managementController.updateEvent)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(reflector.get(ROLES_KEY, memberController.addOrganizer)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(reflector.get(ROLES_KEY, memberController.removeOrganizer)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(reflector.get(ROLES_KEY, lifecycleController.publishEvent)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(
+      reflector.get(ROLES_KEY, lifecycleController.unpublishEvent)
+    ).toEqual(["admin", "organizer"]);
+    expect(reflector.get(ROLES_KEY, lifecycleController.endEvent)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(reflector.get(ROLES_KEY, managementController.deleteEvent)).toEqual([
+      "admin",
+    ]);
+    expect(reflector.get(ROLES_KEY, managementController.restoreEvent)).toEqual(
+      ["admin"]
+    );
+    expect(reflector.get(ROLES_KEY, lifecycleController.cancelEvent)).toEqual([
+      "admin",
+    ]);
   });
 });

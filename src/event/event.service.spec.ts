@@ -14,6 +14,15 @@ import { Area } from "@src/schemas/area.schema";
 import { Booking } from "@src/schemas/booking.schema";
 import { User } from "@src/schemas/user.schema";
 import { AuditService } from "@src/audit/audit.service";
+import { EventCacheService } from "./infrastructure/cache/event-cache.service";
+import { EventRepository } from "./infrastructure/persistence/event.repository";
+import { EventPresenter } from "./presenters/event.presenter";
+import { EventPublishPolicy } from "./domain/policies/event-publish.policy";
+import { EventTimeSlotPolicy } from "./domain/policies/event-time-slot.policy";
+import { EventCommandService } from "./application/event-command.service";
+import { EventLifecycleService } from "./application/event-lifecycle.service";
+import { EventMemberService } from "./application/event-member.service";
+import { EventQueryService } from "./application/event-query.service";
 
 describe("EventService", () => {
   let service: EventService;
@@ -130,6 +139,15 @@ describe("EventService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EventService,
+        EventQueryService,
+        EventCommandService,
+        EventMemberService,
+        EventLifecycleService,
+        EventRepository,
+        EventCacheService,
+        EventPresenter,
+        EventPublishPolicy,
+        EventTimeSlotPolicy,
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },
         { provide: getModelToken(Area.name), useValue: areaModel },

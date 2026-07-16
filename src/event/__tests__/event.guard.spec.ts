@@ -44,6 +44,15 @@ import { MetricsService } from "@src/metrics/metrics.service";
 import { AuditService } from "@src/audit/audit.service";
 import { UploadService } from "@src/upload/upload.service";
 import { SLOT_SOLD_KEY_PREFIX } from "@src/booking/booking.constants";
+import { EventCacheService } from "../infrastructure/cache/event-cache.service";
+import { EventRepository } from "../infrastructure/persistence/event.repository";
+import { EventPresenter } from "../presenters/event.presenter";
+import { EventPublishPolicy } from "../domain/policies/event-publish.policy";
+import { EventTimeSlotPolicy } from "../domain/policies/event-time-slot.policy";
+import { EventCommandService } from "../application/event-command.service";
+import { EventLifecycleService } from "../application/event-lifecycle.service";
+import { EventMemberService } from "../application/event-member.service";
+import { EventQueryService } from "../application/event-query.service";
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 const HOUR_MS = 60 * 60 * 1000;
@@ -113,6 +122,15 @@ describe("Admin Safety Guard — EventService.updateEvent slot deletion", () => 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EventService,
+        EventQueryService,
+        EventCommandService,
+        EventMemberService,
+        EventLifecycleService,
+        EventRepository,
+        EventCacheService,
+        EventPresenter,
+        EventPublishPolicy,
+        EventTimeSlotPolicy,
         { provide: getModelToken(Event.name), useValue: eventModel },
         {
           provide: getModelToken(Zone.name),
