@@ -1,6 +1,5 @@
 import { Module } from "@nestjs/common";
 import { AuthService } from "./auth.service";
-import { AuthController } from "./auth.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { UserSchema } from "@src/schemas/user.schema";
 import { JwtModule } from "@nestjs/jwt";
@@ -15,6 +14,18 @@ import { SessionSchema } from "@src/schemas/session.schema";
 import { EventsModule } from "@src/events/events.module";
 import { TwoFactorModule } from "@src/two-factor/two-factor.module";
 import { ConfigService } from "@nestjs/config";
+import { AuthAccountService } from "./application/auth-account.service";
+import { AuthLoginService } from "./application/auth-login.service";
+import { AuthPasswordService } from "./application/auth-password.service";
+import { AuthSessionService } from "./application/auth-session.service";
+import { AuthUserQueryService } from "./application/auth-user-query.service";
+import { AuthUserCacheService } from "./infrastructure/cache/auth-user-cache.service";
+import { AuthCookieService } from "./infrastructure/http/auth-cookie.service";
+import { AuthTokenService } from "./infrastructure/security/auth-token.service";
+import { AuthPresenter } from "./presenters/auth.presenter";
+import { AuthAccountController } from "./controllers/auth-account.controller";
+import { AuthOAuthController } from "./controllers/auth-oauth.controller";
+import { AuthSessionController } from "./controllers/auth-session.controller";
 
 @Module({
   imports: [
@@ -44,7 +55,24 @@ import { ConfigService } from "@nestjs/config";
     MailModule,
     TwoFactorModule,
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, GoogleStrategy],
+  controllers: [
+    AuthAccountController,
+    AuthOAuthController,
+    AuthSessionController,
+  ],
+  providers: [
+    AuthService,
+    AuthAccountService,
+    AuthLoginService,
+    AuthPasswordService,
+    AuthSessionService,
+    AuthUserQueryService,
+    AuthUserCacheService,
+    AuthCookieService,
+    AuthTokenService,
+    AuthPresenter,
+    JwtStrategy,
+    GoogleStrategy,
+  ],
 })
 export class AuthModule {}

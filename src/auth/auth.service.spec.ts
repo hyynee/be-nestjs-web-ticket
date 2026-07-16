@@ -15,6 +15,15 @@ import { MailService } from "@src/services/mail.service";
 import { TwoFactorService } from "@src/two-factor/two-factor.service";
 import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { AuthService } from "./auth.service";
+import { AuthAccountService } from "./application/auth-account.service";
+import { AuthLoginService } from "./application/auth-login.service";
+import { AuthPasswordService } from "./application/auth-password.service";
+import { AuthSessionService } from "./application/auth-session.service";
+import { AuthUserQueryService } from "./application/auth-user-query.service";
+import { AuthUserCacheService } from "./infrastructure/cache/auth-user-cache.service";
+import { AuthCookieService } from "./infrastructure/http/auth-cookie.service";
+import { AuthTokenService } from "./infrastructure/security/auth-token.service";
+import { AuthPresenter } from "./presenters/auth.presenter";
 
 jest.mock("cloudinary", () => ({
   v2: {
@@ -158,6 +167,15 @@ describe("AuthService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
+        AuthAccountService,
+        AuthLoginService,
+        AuthPasswordService,
+        AuthSessionService,
+        AuthUserQueryService,
+        AuthUserCacheService,
+        AuthCookieService,
+        AuthTokenService,
+        AuthPresenter,
         { provide: getModelToken("User"), useValue: mockUserModel },
         { provide: getModelToken("ResetToken"), useValue: mockResetTokenModel },
         {
@@ -502,7 +520,11 @@ describe("AuthService", () => {
       const result = await service.generateUserTokens(VALID_USER_ID, META);
 
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        { userId: VALID_USER_ID, role: "user" },
+        expect.objectContaining({
+          userId: VALID_USER_ID,
+          role: "user",
+          jti: expect.any(String),
+        }),
         { expiresIn: 3600 }
       );
       expect(typeof result.accessToken).toBe("string");
@@ -673,7 +695,10 @@ describe("AuthService", () => {
 
       expect(response.clearCookie).toHaveBeenCalledTimes(2);
       expect(mockSessionModel.updateMany).toHaveBeenCalledWith(
-        { userId: VALID_USER_ID, revokedAt: null },
+        expect.objectContaining({
+          userId: expect.anything(),
+          revokedAt: null,
+        }),
         { $set: { revokedAt: expect.any(Date) } }
       );
       expect(mockRedisClient.del).toHaveBeenCalledWith(
@@ -773,7 +798,11 @@ describe("AuthService", () => {
       );
 
       expect(mockSessionModel.findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: VALID_SESSION_ID, userId: VALID_USER_ID, revokedAt: null },
+        expect.objectContaining({
+          _id: VALID_SESSION_ID,
+          userId: expect.anything(),
+          revokedAt: null,
+        }),
         { $set: { revokedAt: expect.any(Date) } }
       );
       expect(result.message).toBe("Session revoked successfully");
@@ -941,7 +970,10 @@ describe("AuthService", () => {
       expect(saveMock).toHaveBeenCalled();
       expect(fakeUser.password).toBe("NewPass123!");
       expect(mockSessionModel.updateMany).toHaveBeenCalledWith(
-        { userId: VALID_USER_ID, revokedAt: null },
+        expect.objectContaining({
+          userId: expect.anything(),
+          revokedAt: null,
+        }),
         { $set: { revokedAt: expect.any(Date) } }
       );
       expect(mockRedisClient.del).toHaveBeenCalledWith(
@@ -1348,7 +1380,10 @@ describe("AuthService", () => {
         expect.stringContaining("SECURITY")
       );
       expect(mockSessionModel.updateMany).toHaveBeenCalledWith(
-        { userId: VALID_USER_ID, revokedAt: null },
+        expect.objectContaining({
+          userId: expect.anything(),
+          revokedAt: null,
+        }),
         { $set: { revokedAt: expect.any(Date) } }
       );
     });

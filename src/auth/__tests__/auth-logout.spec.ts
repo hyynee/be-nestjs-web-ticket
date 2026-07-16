@@ -10,6 +10,15 @@ import { UserEventsService } from "@src/events/user-event.services";
 import { MailService } from "@src/services/mail.service";
 import { RedisService } from "@src/redis/redis.service";
 import { TwoFactorService } from "@src/two-factor/two-factor.service";
+import { AuthAccountService } from "../application/auth-account.service";
+import { AuthLoginService } from "../application/auth-login.service";
+import { AuthPasswordService } from "../application/auth-password.service";
+import { AuthSessionService } from "../application/auth-session.service";
+import { AuthUserQueryService } from "../application/auth-user-query.service";
+import { AuthUserCacheService } from "../infrastructure/cache/auth-user-cache.service";
+import { AuthCookieService } from "../infrastructure/http/auth-cookie.service";
+import { AuthTokenService } from "../infrastructure/security/auth-token.service";
+import { AuthPresenter } from "../presenters/auth.presenter";
 
 const mockRedisClient: {
   set: jest.Mock;
@@ -49,6 +58,15 @@ describe("AuthService.logout — CRITICAL-9", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
+        AuthAccountService,
+        AuthLoginService,
+        AuthPasswordService,
+        AuthSessionService,
+        AuthUserQueryService,
+        AuthUserCacheService,
+        AuthCookieService,
+        AuthTokenService,
+        AuthPresenter,
         {
           provide: JwtService,
           useValue: { verify: jest.fn(), sign: jest.fn(), decode: jest.fn() },
