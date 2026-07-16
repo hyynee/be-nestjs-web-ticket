@@ -18,6 +18,10 @@ const RELEASE_SCRIPT = `
   end
 `;
 
+interface ExpireBookingsBatchResult {
+  expired: number;
+}
+
 @Injectable()
 export class BookingScheduler {
   private readonly logger = new Logger(BookingScheduler.name);
@@ -28,7 +32,7 @@ export class BookingScheduler {
   ) {}
 
   @Cron("*/1 * * * *")
-  async handleExpireBookings() {
+  async handleExpireBookings(): Promise<void> {
     const lockValue = uuidv4();
     const acquired = await this.redisService.client
       .set(EXPIRE_LOCK_KEY, lockValue, { NX: true, EX: EXPIRE_LOCK_TTL_SEC })
@@ -50,7 +54,7 @@ export class BookingScheduler {
     try {
       // Loop until batch is not full (no more pending expirations)
       let totalExpired = 0;
-      let batchResult: any;
+      let batchResult: ExpireBookingsBatchResult;
       do {
         batchResult = await this.bookingService.expirePendingBookings();
         totalExpired += batchResult?.expired ?? 0;
@@ -79,7 +83,7 @@ export class BookingScheduler {
   }
 
   @Cron("0 2 * * *")
-  async handleCleanupOldBookings() {
+  async handleCleanupOldBookings(): Promise<void> {
     const lockValue = uuidv4();
     const acquired = await this.redisService.client
       .set(CLEANUP_LOCK_KEY, lockValue, { NX: true, EX: CLEANUP_LOCK_TTL_SEC })

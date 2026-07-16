@@ -83,6 +83,27 @@ describe("ZoneService", () => {
     expect(service).toBeDefined();
   });
 
+  const zoneSource = (overrides: Record<string, unknown> = {}) => ({
+    _id: new Types.ObjectId(),
+    eventId: new Types.ObjectId(),
+    name: "VIP",
+    price: 100,
+    capacity: 50,
+    currentTotalSeats: 0,
+    soldCount: 0,
+    confirmedSoldCount: 0,
+    hasSeating: false,
+    ...overrides,
+  });
+
+  const zoneAreaSource = (overrides: Record<string, unknown> = {}) => ({
+    _id: new Types.ObjectId(),
+    name: "A1",
+    seats: [],
+    seatCount: 0,
+    ...overrides,
+  });
+
   // ─── getAllActiveZones ────────────────────────────────────────────────
 
   describe("getAllActiveZones", () => {
@@ -103,7 +124,8 @@ describe("ZoneService", () => {
     });
 
     it("queries DB with filters when cache misses", async () => {
-      const zones = [{ _id: new Types.ObjectId(), name: "VIP" }];
+      const eventId = new Types.ObjectId().toString();
+      const zones = [zoneSource({ eventId: new Types.ObjectId(eventId) })];
       mockZoneModel.find.mockReturnValue({
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
@@ -115,14 +137,18 @@ describe("ZoneService", () => {
         exec: jest.fn().mockResolvedValue(1),
       });
 
-      const eventId = new Types.ObjectId().toString();
       const result = await service.getAllActiveZones({
         eventId,
         page: 1,
         limit: 10,
       } as any);
 
-      expect(result.items).toEqual(zones);
+      expect(result.items[0]).toEqual(
+        expect.objectContaining({
+          eventId,
+          name: "VIP",
+        })
+      );
       expect(result.meta.totalItems).toBe(1);
       expect(mockZoneModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -164,7 +190,7 @@ describe("ZoneService", () => {
     it("returns paginated results with correct meta", async () => {
       const zones = Array(5)
         .fill(null)
-        .map(() => ({ _id: new Types.ObjectId() }));
+        .map(() => zoneSource());
       mockZoneModel.find.mockReturnValue({
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
@@ -269,7 +295,7 @@ describe("ZoneService", () => {
 
     it("falls through to DB when Redis cache get fails", async () => {
       mockRedisClient.get.mockRejectedValueOnce(new Error("Redis down"));
-      const zones = [{ _id: new Types.ObjectId(), name: "VIP" }];
+      const zones = [zoneSource({ name: "VIP" })];
       mockZoneModel.find.mockReturnValue({
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
@@ -283,13 +309,13 @@ describe("ZoneService", () => {
 
       const result = await service.getAllActiveZones({} as any);
 
-      expect(result.items).toEqual(zones);
+      expect(result.items[0]).toEqual(expect.objectContaining({ name: "VIP" }));
       expect(mockZoneModel.find).toHaveBeenCalled();
     });
 
     it("continues when Redis cache set fails after query", async () => {
       mockRedisClient.get.mockResolvedValueOnce(null);
-      const zones = [{ _id: new Types.ObjectId(), name: "VIP" }];
+      const zones = [zoneSource({ name: "VIP" })];
       mockZoneModel.find.mockReturnValue({
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
@@ -304,7 +330,7 @@ describe("ZoneService", () => {
 
       const result = await service.getAllActiveZones({} as any);
 
-      expect(result.items).toEqual(zones);
+      expect(result.items[0]).toEqual(expect.objectContaining({ name: "VIP" }));
     });
   });
 
@@ -326,14 +352,20 @@ describe("ZoneService", () => {
 
     it("returns zone with areas via aggregate", async () => {
       const zoneId = new Types.ObjectId().toString();
-      const expected = {
+      const expected = zoneSource({
         _id: new Types.ObjectId(zoneId),
         name: "VIP",
-        areas: [{ name: "A1" }],
-      };
+        areas: [zoneAreaSource({ name: "A1" })],
+      });
       mockZoneModel.aggregate.mockResolvedValueOnce([expected]);
       const result = await service.getZoneWithAreas(zoneId);
-      expect(result).toEqual(expected);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: zoneId,
+          name: "VIP",
+          areas: [expect.objectContaining({ name: "A1" })],
+        })
+      );
     });
   });
 
@@ -355,16 +387,16 @@ describe("ZoneService", () => {
     });
 
     it("queries DB and caches result when cache misses", async () => {
-      const zone = { _id: new Types.ObjectId(), name: "VIP" };
+      const zone = zoneSource({ name: "VIP" });
       mockZoneModel.findOne.mockResolvedValueOnce(zone);
 
       const zoneId = new Types.ObjectId().toString();
       const result = await service.getZoneById(zoneId);
 
-      expect(result).toEqual(zone);
+      expect(result).toEqual(expect.objectContaining({ name: "VIP" }));
       expect(mockRedisClient.set).toHaveBeenCalledWith(
-        `zone:detail:${zoneId}`,
-        JSON.stringify(zone),
+        `zone:detail:v1:${zoneId}`,
+        JSON.stringify(result),
         { EX: 30 }
       );
     });
@@ -378,23 +410,23 @@ describe("ZoneService", () => {
 
     it("falls through to DB when Redis cache get fails", async () => {
       mockRedisClient.get.mockRejectedValueOnce(new Error("Redis down"));
-      const zone = { _id: new Types.ObjectId(), name: "VIP" };
+      const zone = zoneSource({ name: "VIP" });
       mockZoneModel.findOne.mockResolvedValueOnce(zone);
 
       const result = await service.getZoneById(new Types.ObjectId().toString());
 
-      expect(result).toEqual(zone);
+      expect(result).toEqual(expect.objectContaining({ name: "VIP" }));
     });
 
     it("continues when Redis cache set fails after DB query", async () => {
       mockRedisClient.get.mockResolvedValueOnce(null);
-      const zone = { _id: new Types.ObjectId(), name: "VIP" };
+      const zone = zoneSource({ name: "VIP" });
       mockZoneModel.findOne.mockResolvedValueOnce(zone);
       mockRedisClient.set.mockRejectedValueOnce(new Error("Redis down"));
 
       const result = await service.getZoneById(new Types.ObjectId().toString());
 
-      expect(result).toEqual(zone);
+      expect(result).toEqual(expect.objectContaining({ name: "VIP" }));
     });
   });
 
@@ -479,7 +511,13 @@ describe("ZoneService", () => {
     it("successfully creates a zone and invalidates cache", async () => {
       mockActiveEvent();
       mockZoneModel.findOne.mockResolvedValueOnce(null);
-      const savedZone = { _id: new Types.ObjectId(), name: "VIP" };
+      const savedZone = zoneSource({
+        eventId: new Types.ObjectId(validEventId),
+        name: "VIP",
+        price: 100,
+        capacity: 50,
+        hasSeating: false,
+      });
       const instance = { save: jest.fn().mockResolvedValue(savedZone) };
       mockZoneModel.mockImplementationOnce(() => instance);
       const invalidateSpy = jest
@@ -488,7 +526,14 @@ describe("ZoneService", () => {
 
       const result = await service.createZone(currentUser, dto as any);
 
-      expect(result.save).toBeDefined();
+      expect(result).toEqual(
+        expect.objectContaining({
+          eventId: validEventId,
+          name: "VIP",
+          price: 100,
+          capacity: 50,
+        })
+      );
       expect(invalidateSpy).toHaveBeenCalled();
     });
 
@@ -496,7 +541,15 @@ describe("ZoneService", () => {
       mockActiveEvent();
       mockZoneModel.findOne.mockResolvedValueOnce(null);
       const instance = {
-        save: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }),
+        save: jest.fn().mockResolvedValue(
+          zoneSource({
+            eventId: new Types.ObjectId(validEventId),
+            name: "VIP",
+            price: 100,
+            capacity: 50,
+            hasSeating: false,
+          })
+        ),
       };
       mockZoneModel.mockImplementationOnce(() => instance);
 
@@ -529,6 +582,12 @@ describe("ZoneService", () => {
     const currentZone = {
       _id: new Types.ObjectId(validZoneId),
       eventId: new Types.ObjectId(validEventId),
+      name: "VIP",
+      price: 100,
+      capacity: 50,
+      currentTotalSeats: 0,
+      soldCount: 0,
+      confirmedSoldCount: 0,
       hasSeating: true,
     };
 
@@ -615,10 +674,16 @@ describe("ZoneService", () => {
         name: "VVIP",
       } as any);
 
-      expect(result).toEqual(updatedZone);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: validZoneId,
+          eventId: validEventId,
+          name: "VVIP",
+        })
+      );
       expect(invalidateSpy).toHaveBeenCalled();
       expect(mockRedisClient.del).toHaveBeenCalledWith(
-        `zone:detail:${validZoneId}`
+        `zone:detail:v1:${validZoneId}`
       );
     });
 
@@ -698,7 +763,13 @@ describe("ZoneService", () => {
         description: "Updated",
       } as any);
 
-      expect(result).toEqual(updatedZone);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: validZoneId,
+          eventId: validEventId,
+          description: "Updated",
+        })
+      );
     });
 
     it("passes when disabling seating with no active areas", async () => {
@@ -790,7 +861,13 @@ describe("ZoneService", () => {
         }),
       });
       mockZoneModel.findOne.mockResolvedValueOnce(null);
-      const savedZone = { _id: new Types.ObjectId(), name: "VIP" };
+      const savedZone = zoneSource({
+        eventId: new Types.ObjectId(validEventId),
+        name: "VIP",
+        price: 100,
+        capacity: 50,
+        hasSeating: false,
+      });
       const instance = { save: jest.fn().mockResolvedValue(savedZone) };
       mockZoneModel.mockImplementationOnce(() => instance);
       jest
@@ -982,10 +1059,12 @@ describe("ZoneService", () => {
 
       await (service as any).invalidateZoneCache();
 
-      expect(mockRedisClient.sMembers).toHaveBeenCalledWith("zones:list:index");
+      expect(mockRedisClient.sMembers).toHaveBeenCalledWith(
+        "zones:list:index:v1"
+      );
       expect(mockRedisClient.del).toHaveBeenCalledWith([
         ...listKeys,
-        "zones:list:index",
+        "zones:list:index:v1",
       ]);
     });
 

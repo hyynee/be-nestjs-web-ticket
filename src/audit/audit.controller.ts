@@ -16,13 +16,18 @@ export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
   @Get()
-  findAll(@Query() query: QueryAuditLogDto) {
+  findAll(
+    @Query() query: QueryAuditLogDto
+  ): ReturnType<AuditService["findAll"]> {
     return this.auditService.findAll(query);
   }
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Get("export")
-  async export(@Query() query: QueryAuditLogDto, @Res() res: Response) {
+  async export(
+    @Query() query: QueryAuditLogDto,
+    @Res() res: Response
+  ): Promise<void> {
     const csv = await this.auditService.exportCsv(query);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
@@ -33,7 +38,7 @@ export class AuditController {
   }
 
   @Get(":id")
-  findById(@Param("id") id: string) {
+  findById(@Param("id") id: string): ReturnType<AuditService["findById"]> {
     return this.auditService.findById(id);
   }
 }

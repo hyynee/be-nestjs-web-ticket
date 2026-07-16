@@ -60,7 +60,7 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
-  onModuleInit() {
+  onModuleInit(): void {
     collectDefaultMetrics({ register: this.registry });
   }
 

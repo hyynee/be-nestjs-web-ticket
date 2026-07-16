@@ -1,13 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
-import { Connection } from "mongoose";
+import { ClientSession, Connection } from "mongoose";
 
 @Injectable()
 export class TransactionHelper {
   constructor(@InjectConnection() private readonly connection: Connection) {}
 
   async runInTransaction<T>(
-    callback: (session: any) => Promise<T>
+    callback: (session: ClientSession) => Promise<T>
   ): Promise<T> {
     const session = await this.connection.startSession();
     session.startTransaction();

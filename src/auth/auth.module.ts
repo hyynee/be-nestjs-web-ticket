@@ -4,7 +4,6 @@ import { AuthController } from "./auth.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import { UserSchema } from "@src/schemas/user.schema";
 import { JwtModule } from "@nestjs/jwt";
-import { ResponseModule } from "@src/common/reponse/response.module";
 import { PassportModule } from "@nestjs/passport";
 import { JwtStrategy } from "@src/strategy/jwt.strategy";
 import { GoogleStrategy } from "@src/strategy/google.strategy";
@@ -41,7 +40,6 @@ import { ConfigService } from "@nestjs/config";
 
     PassportModule,
     LockLoginModule,
-    ResponseModule,
     EventsModule,
     MailModule,
     TwoFactorModule,

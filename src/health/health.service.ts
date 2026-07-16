@@ -64,6 +64,13 @@ export class HealthService {
     private readonly configService: ConfigService
   ) {}
 
+  private readinessResult(
+    status: ReadinessResult["status"],
+    checks: ReadinessChecks
+  ): ReadinessResult {
+    return { status, checks };
+  }
+
   async checkReadiness(): Promise<ReadinessResult> {
     const [mongo, redis, queue, config] = await Promise.all([
       this.checkMongo(),
@@ -77,7 +84,7 @@ export class HealthService {
       ? "ready"
       : "unavailable";
 
-    return { status, checks };
+    return this.readinessResult(status, checks);
   }
 
   private async checkMongo(): Promise<DependencyCheckStatus> {

@@ -38,7 +38,9 @@ export class TwoFactorController {
     status: 409,
     description: "2FA đã được bật, cần disable trước",
   })
-  async setup(@CurrentUser() currentUser: JwtPayload) {
+  async setup(
+    @CurrentUser() currentUser: JwtPayload
+  ): ReturnType<TwoFactorService["setup"]> {
     return this.twoFactorService.setup(currentUser.userId);
   }
 
@@ -50,7 +52,7 @@ export class TwoFactorController {
   async verify(
     @CurrentUser() currentUser: JwtPayload,
     @Body() dto: VerifyTwoFactorDto
-  ) {
+  ): ReturnType<TwoFactorService["confirmSetup"]> {
     return this.twoFactorService.confirmSetup(currentUser.userId, dto.otp);
   }
 
@@ -64,7 +66,7 @@ export class TwoFactorController {
   async disable(
     @CurrentUser() currentUser: JwtPayload,
     @Body() dto: VerifyTwoFactorDto
-  ) {
+  ): ReturnType<TwoFactorService["disable"]> {
     return this.twoFactorService.disable(currentUser.userId, dto.otp);
   }
 
@@ -76,7 +78,7 @@ export class TwoFactorController {
   async regenerateRecoveryCodes(
     @CurrentUser() currentUser: JwtPayload,
     @Body() dto: VerifyTwoFactorDto
-  ) {
+  ): ReturnType<TwoFactorService["regenerateRecoveryCodes"]> {
     return this.twoFactorService.regenerateRecoveryCodes(
       currentUser.userId,
       dto.otp

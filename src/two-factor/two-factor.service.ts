@@ -31,6 +31,14 @@ export interface TwoFactorSetupResult {
   recoveryCodes: string[];
 }
 
+export interface TwoFactorMessageResult {
+  message: string;
+}
+
+export interface TwoFactorRecoveryCodesResult {
+  recoveryCodes: string[];
+}
+
 @Injectable()
 export class TwoFactorService {
   constructor(
@@ -68,6 +76,28 @@ export class TwoFactorService {
     return { raw, hashed };
   }
 
+  private toSetupResult(input: {
+    secret: string;
+    otpauthUrl: string;
+    qrCodeDataUrl: string;
+    recoveryCodes: string[];
+  }): TwoFactorSetupResult {
+    return {
+      secret: input.secret,
+      otpauthUrl: input.otpauthUrl,
+      qrCodeDataUrl: input.qrCodeDataUrl,
+      recoveryCodes: input.recoveryCodes,
+    };
+  }
+
+  private message(message: string): TwoFactorMessageResult {
+    return { message };
+  }
+
+  private recoveryCodes(codes: string[]): TwoFactorRecoveryCodesResult {
+    return { recoveryCodes: codes };
+  }
+
   /** Starts (or restarts, if never confirmed) 2FA setup: generates a fresh TOTP secret + recovery codes. */
   async setup(userId: string): Promise<TwoFactorSetupResult> {
     const user = await this.userModel
@@ -92,14 +122,19 @@ export class TwoFactorService {
     user.twoFactorRecoveryCodes = hashed;
     await user.save();
 
-    return { secret, otpauthUrl, qrCodeDataUrl, recoveryCodes: raw };
+    return this.toSetupResult({
+      secret,
+      otpauthUrl,
+      qrCodeDataUrl,
+      recoveryCodes: raw,
+    });
   }
 
   /** Confirms setup by checking one real OTP from the freshly-scanned secret, then activates 2FA. */
   async confirmSetup(
     userId: string,
     otp: string
-  ): Promise<{ message: string }> {
+  ): Promise<TwoFactorMessageResult> {
     const user = await this.userModel
       .findById(userId)
       .select(SECRET_SELECT_FIELDS);
@@ -126,10 +161,10 @@ export class TwoFactorService {
     await user.save();
     this.logger.info(`auth.2fa_enabled — userId=${userId}`);
 
-    return { message: "Two-factor authentication enabled successfully" };
+    return this.message("Two-factor authentication enabled successfully");
   }
 
-  async disable(userId: string, otp: string): Promise<{ message: string }> {
+  async disable(userId: string, otp: string): Promise<TwoFactorMessageResult> {
     const user = await this.userModel
       .findById(userId)
       .select(SECRET_SELECT_FIELDS);
@@ -151,13 +186,13 @@ export class TwoFactorService {
     await user.save();
     this.logger.info(`auth.2fa_disabled — userId=${userId}`);
 
-    return { message: "Two-factor authentication disabled successfully" };
+    return this.message("Two-factor authentication disabled successfully");
   }
 
   async regenerateRecoveryCodes(
     userId: string,
     otp: string
-  ): Promise<{ recoveryCodes: string[] }> {
+  ): Promise<TwoFactorRecoveryCodesResult> {
     const user = await this.userModel
       .findById(userId)
       .select(SECRET_SELECT_FIELDS);
@@ -178,7 +213,7 @@ export class TwoFactorService {
     await user.save();
     this.logger.info(`auth.2fa_recovery_codes_regenerated — userId=${userId}`);
 
-    return { recoveryCodes: raw };
+    return this.recoveryCodes(raw);
   }
 
   /** Used at login time, once the password has already been verified — checks TOTP first, falls back to a recovery code (single-use). */

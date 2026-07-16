@@ -1,18 +1,23 @@
 import * as ExcelJS from "exceljs";
+import type { Response } from "express";
 
 import { Parser } from "json2csv";
 
-export function exportCSV(data: any[], fields: string[]): string {
+export type ExportCellValue = string | number | boolean | Date | null;
+export type ExportRow = Record<string, ExportCellValue>;
+export type ExportColumn = Partial<ExcelJS.Column>;
+
+export function exportCSV(data: ExportRow[], fields: string[]): string {
   const parser = new Parser({ fields });
   return parser.parse(data);
 }
 
 export async function exportExcel(
-  data: any[],
-  columns: any[],
-  res: any,
+  data: ExportRow[],
+  columns: ExportColumn[],
+  res: Response,
   fileName: string
-) {
+): Promise<void> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(fileName);
 

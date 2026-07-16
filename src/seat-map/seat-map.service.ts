@@ -42,6 +42,10 @@ export interface SeatMapZone {
   areas?: SeatMapArea[];
 }
 
+export interface SeatMapSeatCommandResult {
+  seats: SeatMapSeat[];
+}
+
 type AreaLean = {
   _id: Types.ObjectId;
   eventId: Types.ObjectId;
@@ -226,10 +230,14 @@ export class SeatMapService {
     }
   }
 
+  private seatCommandResult(seats: SeatMapSeat[]): SeatMapSeatCommandResult {
+    return { seats };
+  }
+
   async blockSeats(
     currentUser: JwtPayload,
     dto: BlockSeatsDto
-  ): Promise<{ seats: SeatMapSeat[] }> {
+  ): Promise<SeatMapSeatCommandResult> {
     const area = await this.resolveAreaForMutation(dto.zoneId, dto.areaId);
     await this.eventOwnershipService.assertCanManageEvent(
       currentUser,
@@ -248,7 +256,7 @@ export class SeatMapService {
       }
     }
 
-    // A seat re-blocked without expiresAt must clear any previous expiry —
+    // A seat re-blocked without expiresAt must clear the previous expiry —
     // $set with an undefined value is stripped by the Mongo driver before
     // it ever reaches the server, silently leaving the old expiresAt (and
     // the TTL cleanup that goes with it) in place, so this is $unset, not
@@ -304,13 +312,13 @@ export class SeatMapService {
       seats,
     });
 
-    return { seats };
+    return this.seatCommandResult(seats);
   }
 
   async unblockSeats(
     currentUser: JwtPayload,
     dto: UnblockSeatsDto
-  ): Promise<{ seats: SeatMapSeat[] }> {
+  ): Promise<SeatMapSeatCommandResult> {
     const area = await this.resolveAreaForMutation(dto.zoneId, dto.areaId);
     await this.eventOwnershipService.assertCanManageEvent(
       currentUser,
@@ -343,6 +351,6 @@ export class SeatMapService {
       seats,
     });
 
-    return { seats };
+    return this.seatCommandResult(seats);
   }
 }

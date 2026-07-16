@@ -6,9 +6,8 @@ import { NextFunction, Request, Response } from "express";
 export class RedisContextMiddleware implements NestMiddleware {
   constructor(private readonly redisService: RedisService) {}
 
-  use(req: Request, _res: Response, next: NextFunction) {
-    const request = req as any;
-    request.redisUserTokenCache = this.redisService.client;
+  use(req: Request, _res: Response, next: NextFunction): void {
+    req.redisUserTokenCache = this.redisService.client;
     next();
   }
 }

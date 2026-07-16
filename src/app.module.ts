@@ -47,6 +47,7 @@ import { CurrencyModule } from "./currency/currency.module";
 import { AuditModule } from "./audit/audit.module";
 import { HealthModule } from "./health/health.module";
 import { AiccModule } from "./aicc/aicc.module";
+import { ApiResponseInterceptor } from "./common/http/api-response.interceptor";
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -142,6 +143,10 @@ import { AiccModule } from "./aicc/aicc.module";
     {
       provide: APP_INTERCEPTOR,
       useClass: MetricsInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ApiResponseInterceptor,
     },
   ],
 })

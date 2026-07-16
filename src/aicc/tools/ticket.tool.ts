@@ -5,6 +5,7 @@ import { Booking } from "@src/schemas/booking.schema";
 import { Ticket } from "@src/schemas/ticket.schema";
 import {
   AiccSensitiveLookupAccess,
+  TicketLookupArgs,
   TicketLookupResult,
 } from "./aicc-tool.types";
 
@@ -35,11 +36,7 @@ export class AiccTicketTool {
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>
   ) {}
 
-  async lookupTicket(args: {
-    ticketCode?: string;
-    bookingCode?: string;
-    access?: AiccSensitiveLookupAccess;
-  }): Promise<TicketLookupResult> {
+  async lookupTicket(args: TicketLookupArgs): Promise<TicketLookupResult> {
     const filter: FilterQuery<Ticket> = { isDeleted: false };
     if (!this.hasAccess(args.access)) {
       return { found: false };
@@ -58,17 +55,17 @@ export class AiccTicketTool {
           ...this.buildBookingAccessFilter(args.access),
         })
         .select("_id")
-        .lean()
+        .lean<{ _id: Types.ObjectId }>()
         .exec();
       if (!booking) {
         return { found: false };
       }
-      filter.bookingId = (booking as { _id: Types.ObjectId })._id;
+      filter.bookingId = booking._id;
     } else {
       return { found: false };
     }
 
-    const ticket = (await this.ticketModel
+    const ticket = await this.ticketModel
       .findOne(filter)
       .select(
         "ticketCode status checkedInAt seatNumber eventId zoneId areaId bookingId"
@@ -78,8 +75,8 @@ export class AiccTicketTool {
       .populate("zoneId", "name")
       .populate("areaId", "name")
       .populate("bookingId", "bookingCode")
-      .lean()
-      .exec()) as unknown as PopulatedTicketLean | null;
+      .lean<PopulatedTicketLean>()
+      .exec();
 
     if (!ticket) {
       return { found: false };

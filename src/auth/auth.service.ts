@@ -52,6 +52,8 @@ type GoogleProfile = {
   picture?: string;
 };
 
+const AUTH_USER_RESPONSE_SCHEMA_VERSION = "v1";
+
 /** IP/User-Agent captured from the incoming request, attached to the session record created/rotated for that request. */
 export interface SessionRequestMeta {
   ipAddress?: string;
@@ -68,6 +70,58 @@ export interface SessionSummary {
   isCurrent: boolean;
 }
 
+export interface AuthMessageResult {
+  message: string;
+}
+
+export interface AuthTokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface TwoFactorRequiredResult {
+  status: "requires2fa";
+  twoFactorToken: string;
+}
+
+export type LoginResult = AuthMessageResult | TwoFactorRequiredResult;
+export type CurrentUserResult = Request["currentUser"];
+
+interface AuthUserSource {
+  _id?: Types.ObjectId | string;
+  id?: string;
+  email?: string;
+  fullName?: string;
+  phoneNumber?: string;
+  role?: string;
+  isVerified?: boolean;
+  isActive?: boolean;
+  twoFactorEnabled?: boolean;
+  avatarPublicId?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+interface ActiveAuthUser {
+  _id: Types.ObjectId | string;
+  role: string;
+  isActive: boolean;
+}
+
+export interface AuthUserProfile {
+  id: string;
+  email?: string;
+  fullName?: string;
+  phoneNumber?: string;
+  role?: string;
+  isVerified: boolean;
+  isActive: boolean;
+  twoFactorEnabled: boolean;
+  avatarUrl: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
 type SessionLean = {
   _id: Types.ObjectId;
   refreshTokenHash: string;
@@ -77,6 +131,30 @@ type SessionLean = {
   createdAt: Date;
   expiresAt: Date;
 };
+
+interface PasswordSelectableQuery {
+  select(fields: string): unknown;
+}
+
+interface ObjectSerializableDocument {
+  toObject(): Record<string, unknown>;
+}
+
+function hasSelect(value: unknown): value is PasswordSelectableQuery {
+  if (!value || typeof value !== "object" || !("select" in value)) {
+    return false;
+  }
+
+  return typeof value.select === "function";
+}
+
+function hasToObject(value: unknown): value is ObjectSerializableDocument {
+  if (!value || typeof value !== "object" || !("toObject" in value)) {
+    return false;
+  }
+
+  return typeof value.toObject === "function";
+}
 
 @Injectable()
 export class AuthService {
@@ -97,7 +175,7 @@ export class AuthService {
     private readonly twoFactorService: TwoFactorService
   ) {}
   private generateCacheKeyForUser(userId: string): string {
-    return `user:details:${userId}`;
+    return `user:details:${AUTH_USER_RESPONSE_SCHEMA_VERSION}:${userId}`;
   }
   private async invalidateUserCache(userId: string): Promise<void> {
     const cacheKey = this.generateCacheKeyForUser(userId);
@@ -115,11 +193,8 @@ export class AuthService {
     return `auth:2fa-pending:${token}`;
   }
 
-  private withPassword(query: any) {
-    if (query && typeof query.select === "function") {
-      return query.select("+password");
-    }
-    return query;
+  private withPassword<TQuery>(query: TQuery): TQuery {
+    return hasSelect(query) ? (query.select("+password") as TQuery) : query;
   }
 
   private isCookieSecure(): boolean {
@@ -185,6 +260,21 @@ export class AuthService {
     res.clearCookie("refresh_token", clearOptions);
   }
 
+  private authMessage(message: string): AuthMessageResult {
+    return { message };
+  }
+
+  private twoFactorRequired(twoFactorToken: string): TwoFactorRequiredResult {
+    return { status: "requires2fa", twoFactorToken };
+  }
+
+  private authTokenPair(
+    accessToken: string,
+    refreshToken: string
+  ): AuthTokenPair {
+    return { accessToken, refreshToken };
+  }
+
   private async revokeAllUserSessions(
     userId: string | Types.ObjectId
   ): Promise<void> {
@@ -196,7 +286,7 @@ export class AuthService {
 
   private async getActiveUserOrThrow(
     userId: string | Types.ObjectId
-  ): Promise<User> {
+  ): Promise<ActiveAuthUser> {
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new UnauthorizedException("User not found");
@@ -207,14 +297,14 @@ export class AuthService {
     return user;
   }
 
-  private issueAccessToken(user: User): string {
+  private issueAccessToken(user: ActiveAuthUser): string {
     return this.jwtService.sign(
       { userId: user._id.toString(), role: user.role },
       { expiresIn: ACCESS_TOKEN_TTL_SECONDS }
     );
   }
 
-  /** Creates a brand-new session (one per device/login) — does not touch any other session the user has. */
+  /** Creates a brand-new session per device/login and leaves other user sessions untouched. */
   private async createSession(
     userId: Types.ObjectId,
     meta: SessionRequestMeta
@@ -246,7 +336,37 @@ export class AuthService {
     return crypto.createHash("sha256").update(rawToken).digest("hex");
   }
 
-  async register(data: RegisterDTO): Promise<Record<string, unknown>> {
+  private toAuthUserProfile(user: AuthUserSource): AuthUserProfile | null {
+    const userId = user._id?.toString() ?? user.id;
+    if (!userId) {
+      return null;
+    }
+
+    const avatarUrl = user.avatarPublicId
+      ? cloudinary.url(user.avatarPublicId, {
+          type: "private",
+          sign_url: true,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          secure: true,
+        })
+      : null;
+
+    return {
+      id: userId,
+      email: user.email,
+      fullName: user.fullName,
+      phoneNumber: user.phoneNumber,
+      role: user.role,
+      isVerified: user.isVerified ?? false,
+      isActive: user.isActive ?? true,
+      twoFactorEnabled: user.twoFactorEnabled ?? false,
+      avatarUrl,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+  }
+
+  async register(data: RegisterDTO): Promise<AuthUserProfile> {
     const { email, password, confirmPassword, fullName } = data;
     if (password !== confirmPassword) {
       throw new BadRequestException("Passwords do not match");
@@ -295,20 +415,17 @@ export class AuthService {
       createdUser.fullName
     );
 
-    if (typeof (createdUser as any).toObject !== "function") {
-      return createdUser as unknown as Record<string, unknown>;
+    const source = hasToObject(createdUser)
+      ? (createdUser.toObject() as AuthUserSource)
+      : (createdUser as AuthUserSource);
+    const profile = this.toAuthUserProfile(source);
+    if (!profile) {
+      throw new ServiceUnavailableException("Created user profile is invalid");
     }
-
-    const createdUserObject = (createdUser as any).toObject() as Record<
-      string,
-      unknown
-    >;
-    const { password: _password, ...sanitizedUser } = createdUserObject;
-    void _password;
-    return sanitizedUser;
+    return profile;
   }
 
-  async verifyEmail(data: VerifyEmailDto): Promise<{ message: string }> {
+  async verifyEmail(data: VerifyEmailDto): Promise<AuthMessageResult> {
     const tokenHash = this.hashToken(data.token);
 
     const session = await this.emailVerificationTokenModel.db.startSession();
@@ -358,14 +475,13 @@ export class AuthService {
     await this.invalidateUserCache(verifiedUserId!);
     this.logger.info(`auth.email_verified — userId=${verifiedUserId}`);
 
-    return { message: "Email verified successfully." };
+    return this.authMessage("Email verified successfully.");
   }
 
-  async resendVerificationEmail(email: string): Promise<{ message: string }> {
-    const genericResponse = {
-      message:
-        "If that email address is registered and not yet verified, we have sent a new verification link to it.",
-    };
+  async resendVerificationEmail(email: string): Promise<AuthMessageResult> {
+    const genericResponse = this.authMessage(
+      "If that email address is registered and not yet verified, we have sent a new verification link to it."
+    );
 
     const user = await this.userModel.findOne({ email });
     if (!user || user.isVerified) {
@@ -405,9 +521,7 @@ export class AuthService {
     data: LoginDTO,
     meta: SessionRequestMeta,
     res: Response
-  ): Promise<
-    { message: string } | { status: "requires2fa"; twoFactorToken: string }
-  > {
+  ): Promise<LoginResult> {
     const { email, password } = data;
     const ip = meta.ipAddress || "unknown";
     const user = await this.withPassword(this.userModel.findOne({ email }));
@@ -431,14 +545,14 @@ export class AuthService {
       const twoFactorToken = await this.createTwoFactorPendingLogin(
         user._id.toString()
       );
-      return { status: "requires2fa", twoFactorToken };
+      return this.twoFactorRequired(twoFactorToken);
     }
 
     // Tạo token + session mới (không đụng session của thiết bị khác)
     const tokens = await this.generateUserTokens(user._id, meta);
 
     this.setTokenCookies(res, tokens);
-    return { message: "Logged in successfully" };
+    return this.authMessage("Logged in successfully");
   }
 
   private async createTwoFactorPendingLogin(userId: string): Promise<string> {
@@ -457,7 +571,7 @@ export class AuthService {
     otp: string,
     meta: SessionRequestMeta,
     res: Response
-  ): Promise<{ message: string }> {
+  ): Promise<AuthMessageResult> {
     if (!twoFactorToken || !UUID_V4_REGEX.test(twoFactorToken)) {
       throw new UnauthorizedException("Invalid or expired login session");
     }
@@ -480,10 +594,13 @@ export class AuthService {
 
     const tokens = await this.generateUserTokens(userId, meta);
     this.setTokenCookies(res, tokens);
-    return { message: "Logged in successfully" };
+    return this.authMessage("Logged in successfully");
   }
 
-  async loginWithGoogle(profile: GoogleProfile, meta: SessionRequestMeta = {}) {
+  async loginWithGoogle(
+    profile: GoogleProfile,
+    meta: SessionRequestMeta = {}
+  ): Promise<AuthTokenPair> {
     const { email, name } = profile;
     if (!email) {
       throw new BadRequestException(
@@ -508,7 +625,7 @@ export class AuthService {
     profile: GoogleProfile | undefined,
     meta: SessionRequestMeta,
     res: Response
-  ) {
+  ): Promise<void> {
     if (!profile) {
       throw new BadRequestException(
         "Invalid Google profile: profile is required"
@@ -524,48 +641,42 @@ export class AuthService {
     res.redirect(redirectTarget);
   }
 
-  status() {
-    return { message: "Logged in successfully" };
+  status(): AuthMessageResult {
+    return this.authMessage("Logged in successfully");
   }
 
-  getCurrentUser(req: any) {
+  getCurrentUser(req: Request): CurrentUserResult {
     return req.currentUser;
   }
 
   private readonly USER_CACHE_TTL_SEC = 300;
 
-  async getUserById(id: string) {
+  async getUserById(id: string): Promise<AuthUserProfile | null> {
     const cacheKey = this.generateCacheKeyForUser(id);
     const raw = await this.redisService.client.get(cacheKey).catch(() => null);
-    let user: User | null = raw ? (JSON.parse(raw) as User) : null;
+    let user: AuthUserSource | null = raw
+      ? (JSON.parse(raw) as AuthUserSource)
+      : null;
     if (!user) {
-      user = await this.userModel.findById(id).select("-password").lean<User>();
+      user = await this.userModel
+        .findById(id)
+        .select(
+          "email fullName phoneNumber role isVerified isActive twoFactorEnabled avatarPublicId createdAt updatedAt"
+        )
+        .lean<AuthUserSource>();
       if (!user) return null;
       await this.redisService.client
         .set(cacheKey, JSON.stringify(user), { EX: this.USER_CACHE_TTL_SEC })
         .catch(() => {});
     }
-    const avatarUrl = user.avatarPublicId
-      ? cloudinary.url(user.avatarPublicId, {
-          type: "private",
-          sign_url: true,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-          secure: true,
-        })
-      : null;
-    const { avatarPublicId, ...profile } = user;
-    void avatarPublicId;
-    return {
-      ...profile,
-      avatarUrl,
-    };
+    return this.toAuthUserProfile(user);
   }
 
   async refreshToken(
     refreshToken: string,
     meta: SessionRequestMeta,
     res: Response
-  ) {
+  ): Promise<AuthMessageResult> {
     if (!refreshToken) {
       throw new BadRequestException("Refresh token is required");
     }
@@ -640,7 +751,7 @@ export class AuthService {
       .catch(() => {});
 
     this.setTokenCookies(res, { accessToken, refreshToken: newRefreshToken });
-    return { message: "Token refreshed successfully" };
+    return this.authMessage("Token refreshed successfully");
   }
 
   private async blacklistAccessTokenFromRequest(req: Request): Promise<void> {
@@ -684,12 +795,16 @@ export class AuthService {
   }
 
   /** Logs out the current device only — other sessions the user has elsewhere stay active. */
-  async logout(refreshToken: string | undefined, res: Response, req: Request) {
+  async logout(
+    refreshToken: string | undefined,
+    res: Response,
+    req: Request
+  ): Promise<AuthMessageResult> {
     this.clearTokenCookies(res);
     await this.blacklistAccessTokenFromRequest(req);
 
     if (!refreshToken || !UUID_V4_REGEX.test(refreshToken)) {
-      return { message: "Logged out successfully" };
+      return this.authMessage("Logged out successfully");
     }
 
     const tokenHash = this.hashToken(refreshToken);
@@ -702,7 +817,7 @@ export class AuthService {
       await this.invalidateUserCache(session.userId.toString());
     }
 
-    return { message: "Logged out successfully" };
+    return this.authMessage("Logged out successfully");
   }
 
   /** Revokes every session the user has (all devices) and clears the caller's own cookies. */
@@ -710,13 +825,13 @@ export class AuthService {
     userId: string,
     res: Response,
     req: Request
-  ): Promise<{ message: string }> {
+  ): Promise<AuthMessageResult> {
     this.clearTokenCookies(res);
     await this.blacklistAccessTokenFromRequest(req);
     await this.revokeAllUserSessions(userId);
     await this.invalidateUserCache(userId);
     this.logger.info(`auth.logout_all — userId=${userId}`);
-    return { message: "Logged out from all devices successfully" };
+    return this.authMessage("Logged out from all devices successfully");
   }
 
   /** Lists the caller's active (non-revoked, non-expired) sessions — never exposes the token hash itself. */
@@ -748,7 +863,7 @@ export class AuthService {
   async revokeSession(
     userId: string,
     sessionId: string
-  ): Promise<{ message: string }> {
+  ): Promise<AuthMessageResult> {
     if (!Types.ObjectId.isValid(sessionId)) {
       throw new BadRequestException("Invalid session id");
     }
@@ -765,24 +880,27 @@ export class AuthService {
     this.logger.info(
       `auth.session_revoked — userId=${userId} sessionId=${sessionId}`
     );
-    return { message: "Session revoked successfully" };
+    return this.authMessage("Session revoked successfully");
   }
 
   async generateUserTokens(
     userId: string | Types.ObjectId,
     meta: SessionRequestMeta = {}
-  ): Promise<{ accessToken: string; refreshToken: string }> {
+  ): Promise<AuthTokenPair> {
     const user = await this.getActiveUserOrThrow(userId);
     const accessToken = this.issueAccessToken(user);
     const refreshToken = await this.createSession(
       user._id as Types.ObjectId,
       meta
     );
-    return { accessToken, refreshToken };
+    return this.authTokenPair(accessToken, refreshToken);
   }
 
   // changePassword
-  async changePassword(userId: string, data: ChangePasswordDTO) {
+  async changePassword(
+    userId: string,
+    data: ChangePasswordDTO
+  ): Promise<AuthMessageResult> {
     const { oldPassword, newPassword } = data;
     const user = await this.withPassword(this.userModel.findById(userId));
     if (!user) {
@@ -798,14 +916,13 @@ export class AuthService {
       this.revokeAllUserSessions(userId),
       this.invalidateUserCache(userId),
     ]);
-    return { message: "Password changed successfully" };
+    return this.authMessage("Password changed successfully");
   }
 
-  async forgotPassword(email: string): Promise<{ message: string }> {
-    const genericResponse = {
-      message:
-        "If that email address is in our system, we have sent a password reset link to it.",
-    };
+  async forgotPassword(email: string): Promise<AuthMessageResult> {
+    const genericResponse = this.authMessage(
+      "If that email address is in our system, we have sent a password reset link to it."
+    );
 
     const user = await this.userModel.findOne({ email });
     if (!user) {
@@ -839,7 +956,7 @@ export class AuthService {
     return genericResponse;
   }
 
-  async resetPassword(data: ResetPasswordDto) {
+  async resetPassword(data: ResetPasswordDto): Promise<AuthMessageResult> {
     const { resetToken, newPassword, confirmPassword } = data;
 
     if (newPassword !== confirmPassword) {
@@ -878,8 +995,8 @@ export class AuthService {
     await user.save();
     await this.revokeAllUserSessions(user._id.toString());
     await this.invalidateUserCache(user.id.toString());
-    return {
-      message: "Password has been reset successfully. Please login again.",
-    };
+    return this.authMessage(
+      "Password has been reset successfully. Please login again."
+    );
   }
 }

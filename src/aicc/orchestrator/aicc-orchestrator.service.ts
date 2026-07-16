@@ -13,7 +13,9 @@ import { AiccTicketTool } from "../tools/ticket.tool";
 import { AiccKnowledgeTool } from "../tools/knowledge.tool";
 import {
   AiccExecutedToolCall,
+  AiccToolArgs,
   AiccToolName,
+  AiccToolResult,
   AvailabilityResult,
   BookingStatusExplanationResult,
   BookingLookupResult,
@@ -27,6 +29,7 @@ import {
   PaymentLookupResult,
   SearchEventsResult,
   TicketLookupResult,
+  ToolFailureResult,
 } from "../tools/aicc-tool.types";
 import { AiccIntent } from "./aicc-intents";
 import { outcomeForIntent, phaseForIntent } from "./aicc-state-machine";
@@ -64,6 +67,9 @@ export interface AiccHandoffRequest {
   summary: string;
   metadata: Record<string, unknown>;
 }
+
+type ToolRunResult<TResult extends AiccToolResult> =
+  TResult | ToolFailureResult;
 
 @Injectable()
 export class AiccOrchestratorService {
@@ -113,7 +119,7 @@ export class AiccOrchestratorService {
           input,
           AiccToolName.GET_EVENT_DETAIL,
           { eventId: entities.objectId },
-          () => this.eventTool.getEventDetail(entities.objectId!)
+          () => this.eventTool.getEventDetail({ eventId: entities.objectId! })
         );
         toolCalls.push(result.call);
         reply = this.replyForEventDetail(result.result);
@@ -253,7 +259,7 @@ export class AiccOrchestratorService {
           AiccKnowledgeCategory.PAYMENT_POLICY
         );
         toolCalls.push(knowledge.call);
-        if (!knowledge.result.belowThreshold) {
+        if (!this.isKnowledgeBelowThreshold(knowledge.result)) {
           reply = this.replyForKnowledge(knowledge.result);
         }
       }
@@ -273,7 +279,7 @@ export class AiccOrchestratorService {
         );
         toolCalls.push(knowledge.call);
         reply = this.replyForKnowledge(knowledge.result);
-        if (knowledge.result.belowThreshold) {
+        if (this.isKnowledgeBelowThreshold(knowledge.result)) {
           handoffRequest = this.buildHandoffRequest({
             reason: AiccHandoffReason.CHECKIN_ISSUE,
             priority: AiccHandoffPriority.NORMAL,
@@ -345,7 +351,7 @@ export class AiccOrchestratorService {
       );
       toolCalls.push(knowledge.call);
       reply = this.replyForKnowledge(knowledge.result);
-      if (knowledge.result.belowThreshold) {
+      if (this.isKnowledgeBelowThreshold(knowledge.result)) {
         handoffRequest = this.buildHandoffRequest({
           reason: AiccHandoffReason.REFUND,
           priority: AiccHandoffPriority.HIGH,
@@ -362,7 +368,7 @@ export class AiccOrchestratorService {
         AiccKnowledgeCategory.FAQ
       );
       toolCalls.push(knowledge.call);
-      if (!knowledge.result.belowThreshold) {
+      if (!this.isKnowledgeBelowThreshold(knowledge.result)) {
         reply = this.replyForKnowledge(knowledge.result);
       } else if ((input.previousUnknownCount ?? 0) >= 1) {
         handoffRequest = this.buildHandoffRequest({
@@ -418,12 +424,15 @@ export class AiccOrchestratorService {
     return Boolean(access?.userId);
   }
 
-  private async runTool<TResult extends Record<string, unknown>>(
+  private async runTool<TResult extends AiccToolResult>(
     input: AiccOrchestratorInput,
     toolName: AiccToolName,
-    args: Record<string, unknown>,
+    args: AiccToolArgs,
     handler: () => Promise<TResult>
-  ): Promise<{ call: AiccExecutedToolCall; result: TResult }> {
+  ): Promise<{
+    call: AiccExecutedToolCall;
+    result: ToolRunResult<TResult>;
+  }> {
     const startedAt = Date.now();
     try {
       const result = await handler();
@@ -444,10 +453,10 @@ export class AiccOrchestratorService {
       this.logger.warn(
         `AICC tool failed: sessionId=${input.sessionId}, tool=${toolName}, error=${errorCode}`
       );
-      const result = {
+      const result: ToolFailureResult = {
         errorCode,
         message: "Tool execution failed",
-      } as unknown as TResult;
+      };
       return {
         result,
         call: {
@@ -468,7 +477,10 @@ export class AiccOrchestratorService {
     input: AiccOrchestratorInput,
     query: string,
     category: AiccKnowledgeCategory
-  ): Promise<{ call: AiccExecutedToolCall; result: KnowledgeSearchResult }> {
+  ): Promise<{
+    call: AiccExecutedToolCall;
+    result: ToolRunResult<KnowledgeSearchResult>;
+  }> {
     return this.runTool(
       input,
       AiccToolName.SEARCH_KNOWLEDGE,
@@ -684,37 +696,52 @@ export class AiccOrchestratorService {
     return "all";
   }
 
-  private replyForEventSearch(result: Record<string, unknown>): string {
-    const typed = result as SearchEventsResult;
-    if (!typed.events?.length) {
+  private isToolFailure(result: AiccToolResult): result is ToolFailureResult {
+    return "errorCode" in result;
+  }
+
+  private isKnowledgeBelowThreshold(
+    result: KnowledgeSearchResult | ToolFailureResult
+  ): boolean {
+    return this.isToolFailure(result) || result.belowThreshold;
+  }
+
+  private replyForEventSearch(
+    result: SearchEventsResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result)) {
+      return "Mình chưa thể tìm sự kiện ngay lúc này. Bạn thử lại sau giúp mình nhé.";
+    }
+    if (!result.events.length) {
       return "Mình chưa tìm thấy sự kiện phù hợp. Bạn thử gửi tên sự kiện hoặc thời gian mong muốn nhé.";
     }
-    const lines = typed.events
+    const lines = result.events
       .slice(0, 3)
       .map(
         (event, index) =>
           `${index + 1}. ${event.title} - ${this.formatDate(event.startDate)} tại ${event.location}`
       );
-    return `Mình tìm thấy ${typed.events.length} sự kiện phù hợp:\n${lines.join(
+    return `Mình tìm thấy ${result.events.length} sự kiện phù hợp:\n${lines.join(
       "\n"
     )}\nBạn muốn xem chi tiết sự kiện nào?`;
   }
 
-  private replyForEventDetail(result: Record<string, unknown>): string {
-    const typed = result as GetEventDetailResult;
-    if (!typed.event) {
+  private replyForEventDetail(
+    result: GetEventDetailResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result) || !result.event) {
       return "Mình chưa tìm thấy sự kiện này. Bạn kiểm tra lại mã sự kiện giúp mình nhé.";
     }
-    const zones = typed.zones
+    const zones = result.zones
       .slice(0, 3)
       .map(
         (zone) =>
           `${zone.name}: ${zone.price.toLocaleString("vi-VN")} VND, còn khoảng ${zone.availableTickets} vé`
       );
-    return `${typed.event.title} diễn ra từ ${this.formatDate(
-      typed.event.startDate
-    )} đến ${this.formatDate(typed.event.endDate)} tại ${
-      typed.event.location
+    return `${result.event.title} diễn ra từ ${this.formatDate(
+      result.event.startDate
+    )} đến ${this.formatDate(result.event.endDate)} tại ${
+      result.event.location
     }. ${
       zones.length
         ? `Một số khu vực vé: ${zones.join("; ")}.`
@@ -722,19 +749,27 @@ export class AiccOrchestratorService {
     }`;
   }
 
-  private replyForAvailability(result: Record<string, unknown>): string {
-    const typed = result as AvailabilityResult;
-    return typed.message;
+  private replyForAvailability(
+    result: AvailabilityResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result)) {
+      return "Mình chưa kiểm tra được tình trạng vé ngay lúc này.";
+    }
+    return result.message;
   }
 
-  private replyForCheckoutContext(result: Record<string, unknown>): string {
-    const typed = result as CheckoutContextResult;
-    if (!typed.canCheckout) {
-      if (typed.reason === "EVENT_NOT_BOOKABLE") {
+  private replyForCheckoutContext(
+    result: CheckoutContextResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result)) {
+      return "Mình chưa thể tạo lối tắt checkout ngay lúc này. Bạn thử lại sau giúp mình nhé.";
+    }
+    if (!result.canCheckout) {
+      if (result.reason === "EVENT_NOT_BOOKABLE") {
         return "Sự kiện này hiện không thể mua vé. Bạn có thể chọn sự kiện khác đang mở bán.";
       }
-      if (typed.reason === "SOLD_OUT") {
-        const suggestions = typed.suggestedZones
+      if (result.reason === "SOLD_OUT") {
+        const suggestions = result.suggestedZones
           ?.slice(0, 3)
           .map((zone) => `${zone.name} còn khoảng ${zone.availableTickets} vé`)
           .join("; ");
@@ -742,46 +777,52 @@ export class AiccOrchestratorService {
           ? `Khu vực bạn chọn chưa đủ vé. Một số lựa chọn khác: ${suggestions}.`
           : "Khu vực này hiện đã hết vé.";
       }
-      if (typed.reason === "ZONE_NOT_FOUND") {
+      if (result.reason === "ZONE_NOT_FOUND") {
         return "Mình chưa tìm thấy khu vực vé này. Bạn chọn lại zone giúp mình nhé.";
       }
       return "Mình chưa thể tạo lối tắt checkout với thông tin hiện tại. Bạn kiểm tra lại sự kiện/khu vực vé giúp mình nhé.";
     }
 
-    const total = typed.estimatedTotal?.toLocaleString("vi-VN") ?? "0";
-    const zone = typed.suggestedZones?.find(
-      (item) => item.id === typed.selection.zoneId
+    const total = result.estimatedTotal?.toLocaleString("vi-VN") ?? "0";
+    const zone = result.suggestedZones?.find(
+      (item) => item.id === result.selection.zoneId
     );
-    return `${typed.event?.title ?? "Sự kiện này"} ${
+    return `${result.event?.title ?? "Sự kiện này"} ${
       zone ? `zone ${zone.name} ` : ""
-    }còn vé cho ${typed.selection.quantity} vé. Tổng tạm tính khoảng ${total} VND.`;
+    }còn vé cho ${result.selection.quantity} vé. Tổng tạm tính khoảng ${total} VND.`;
   }
 
-  private replyForBooking(result: Record<string, unknown>): string {
-    const typed = result as BookingLookupResult;
-    if (!typed.found || !typed.booking) {
+  private replyForBooking(
+    result: BookingLookupResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result) || !result.found || !result.booking) {
       return "Mình chưa tìm thấy booking tương ứng. Bạn gửi mã booking, email hoặc số điện thoại đặt vé giúp mình nhé.";
     }
-    const booking = typed.booking;
+    const booking = result.booking;
     return `Booking ${booking.bookingCode} đang ở trạng thái ${booking.status}, thanh toán ${booking.paymentStatus}, số lượng ${booking.quantity}, tổng ${booking.totalPrice.toLocaleString(
       "vi-VN"
     )} VND${booking.event ? ` cho sự kiện ${booking.event.title}` : ""}.`;
   }
 
-  private replyForBookingExplanation(result: Record<string, unknown>): string {
-    const typed = result as BookingStatusExplanationResult;
-    if (!typed.found) {
-      return typed.explanation;
+  private replyForBookingExplanation(
+    result: BookingStatusExplanationResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result)) {
+      return "Mình chưa kiểm tra được trạng thái booking ngay lúc này.";
     }
-    return `Booking ${typed.bookingCode} đang ở trạng thái ${typed.status}, thanh toán ${typed.paymentStatus}. ${typed.explanation}`;
+    if (!result.found) {
+      return result.explanation;
+    }
+    return `Booking ${result.bookingCode} đang ở trạng thái ${result.status}, thanh toán ${result.paymentStatus}. ${result.explanation}`;
   }
 
-  private replyForPayment(result: Record<string, unknown>): string {
-    const typed = result as PaymentLookupResult;
-    if (!typed.found || !typed.payment) {
+  private replyForPayment(
+    result: PaymentLookupResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result) || !result.found || !result.payment) {
       return "Mình chưa tìm thấy giao dịch thanh toán. Bạn gửi mã booking hoặc mã giao dịch để mình kiểm tra tiếp nhé.";
     }
-    const payment = typed.payment;
+    const payment = result.payment;
     return `Giao dịch hiện ở trạng thái ${payment.status}, số tiền ${payment.amount.toLocaleString(
       "vi-VN"
     )} ${payment.currency.toUpperCase()}${
@@ -791,32 +832,42 @@ export class AiccOrchestratorService {
     }.`;
   }
 
-  private replyForPaymentExplanation(result: Record<string, unknown>): string {
-    const typed = result as PaymentStatusExplanationResult;
-    if (!typed.found) {
-      return typed.explanation;
+  private replyForPaymentExplanation(
+    result: PaymentStatusExplanationResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result)) {
+      return "Mình chưa kiểm tra được trạng thái thanh toán ngay lúc này.";
     }
-    return `Giao dịch hiện ở trạng thái ${typed.status}. ${typed.explanation}`;
+    if (!result.found) {
+      return result.explanation;
+    }
+    return `Giao dịch hiện ở trạng thái ${result.status}. ${result.explanation}`;
   }
 
-  private replyForTicket(result: Record<string, unknown>): string {
-    const typed = result as TicketLookupResult;
-    if (!typed.found || !typed.ticket) {
+  private replyForTicket(
+    result: TicketLookupResult | ToolFailureResult
+  ): string {
+    if (this.isToolFailure(result) || !result.found || !result.ticket) {
       return "Mình chưa tìm thấy vé tương ứng. Bạn gửi mã vé hoặc mã booking giúp mình nhé.";
     }
-    const ticket = typed.ticket;
+    const ticket = result.ticket;
     return `Vé ${ticket.ticketCode} đang ở trạng thái ${ticket.status}${
       ticket.event ? ` cho sự kiện ${ticket.event.title}` : ""
     }${ticket.checkedInAt ? `, đã check-in lúc ${this.formatDate(ticket.checkedInAt)}` : ""}.`;
   }
 
-  private replyForKnowledge(result: Record<string, unknown>): string {
-    const typed = result as KnowledgeSearchResult;
-    if (typed.belowThreshold || typed.documents.length === 0) {
+  private replyForKnowledge(
+    result: KnowledgeSearchResult | ToolFailureResult
+  ): string {
+    if (
+      this.isToolFailure(result) ||
+      result.belowThreshold ||
+      result.documents.length === 0
+    ) {
       return "Mình chưa có thông tin chắc chắn trong kho kiến thức hiện tại. Mình sẽ chuyển yêu cầu này cho nhân viên để kiểm tra chính xác hơn.";
     }
 
-    const [document] = typed.documents;
+    const [document] = result.documents;
     return `Theo tài liệu "${document.title}" v${document.version}: ${document.contentSnippet}`;
   }
 
@@ -833,32 +884,9 @@ export class AiccOrchestratorService {
     return "Mình là trợ lý hỗ trợ vé sự kiện. Bạn có thể hỏi về sự kiện, booking, thanh toán, vé QR hoặc check-in.";
   }
 
-  private paymentHandoffRequest(
-    userMessage: string,
-    result: Record<string, unknown>,
-    entities: ExtractedEntities
-  ): AiccHandoffRequest | undefined {
-    const typed = result as PaymentLookupResult;
-    if (!typed.found || !typed.payment) {
-      return undefined;
-    }
-
-    if (["failed", "canceled"].includes(typed.payment.status)) {
-      return this.buildHandoffRequest({
-        reason: AiccHandoffReason.PAYMENT_ISSUE,
-        priority: AiccHandoffPriority.HIGH,
-        userMessage,
-        details: `Tool lookup_payment trả status=${typed.payment.status}, amount=${typed.payment.amount} ${typed.payment.currency}. Cần admin kiểm tra và liên hệ khách nếu khách đã bị trừ tiền.`,
-        metadata: { ...entities, paymentStatus: typed.payment.status },
-      });
-    }
-
-    return undefined;
-  }
-
   private ticketHandoffRequest(
     userMessage: string,
-    result: Record<string, unknown>,
+    result: TicketLookupResult | ToolFailureResult,
     entities: ExtractedEntities,
     intent: AiccIntent
   ): AiccHandoffRequest | undefined {
@@ -866,8 +894,7 @@ export class AiccOrchestratorService {
       return undefined;
     }
 
-    const typed = result as TicketLookupResult;
-    if (!typed.found || !typed.ticket) {
+    if (this.isToolFailure(result) || !result.found || !result.ticket) {
       return this.buildHandoffRequest({
         reason: AiccHandoffReason.CHECKIN_ISSUE,
         priority: AiccHandoffPriority.NORMAL,
@@ -878,13 +905,13 @@ export class AiccOrchestratorService {
       });
     }
 
-    if (["used", "cancelled", "expired"].includes(typed.ticket.status)) {
+    if (["used", "cancelled", "expired"].includes(result.ticket.status)) {
       return this.buildHandoffRequest({
         reason: AiccHandoffReason.CHECKIN_ISSUE,
         priority: AiccHandoffPriority.HIGH,
         userMessage,
-        details: `Tool lookup_ticket trả ticket=${typed.ticket.ticketCode}, status=${typed.ticket.status}. Cần nhân viên kiểm tra tình huống check-in.`,
-        metadata: { ...entities, ticketStatus: typed.ticket.status },
+        details: `Tool lookup_ticket trả ticket=${result.ticket.ticketCode}, status=${result.ticket.status}. Cần nhân viên kiểm tra tình huống check-in.`,
+        metadata: { ...entities, ticketStatus: result.ticket.status },
       });
     }
 
@@ -900,10 +927,9 @@ export class AiccOrchestratorService {
   }
 
   private actionForCheckoutContext(
-    result: Record<string, unknown>
+    result: CheckoutContextResult | ToolFailureResult
   ): CheckoutAction | undefined {
-    const typed = result as CheckoutContextResult;
-    if (!typed.canCheckout) {
+    if (this.isToolFailure(result) || !result.canCheckout) {
       return undefined;
     }
 
@@ -911,39 +937,38 @@ export class AiccOrchestratorService {
       type: "open_checkout",
       label: "Tiếp tục thanh toán",
       payload: {
-        ...typed.selection,
-        estimatedTotal: typed.estimatedTotal,
-        checkoutDeepLink: typed.checkoutDeepLink,
+        ...result.selection,
+        estimatedTotal: result.estimatedTotal,
+        checkoutDeepLink: result.checkoutDeepLink,
       },
     };
   }
 
   private actionForBookingExplanation(
-    result: Record<string, unknown>
+    result: BookingStatusExplanationResult | ToolFailureResult
   ): CheckoutAction | undefined {
-    const typed = result as BookingStatusExplanationResult;
-    if (!typed.found || !typed.bookingCode) {
+    if (this.isToolFailure(result) || !result.found || !result.bookingCode) {
       return undefined;
     }
-    if (typed.nextAction === "pay_now") {
+    if (result.nextAction === "pay_now") {
       return {
         type: "open_checkout",
         label: "Thanh toán booking",
-        payload: { bookingCode: typed.bookingCode },
+        payload: { bookingUrl: `/booking/${result.bookingCode}` },
       };
     }
-    if (typed.nextAction === "view_ticket") {
+    if (result.nextAction === "view_ticket") {
       return {
         type: "open_tickets",
         label: "Xem vé",
-        payload: { bookingCode: typed.bookingCode },
+        payload: { bookingUrl: `/booking/${result.bookingCode}` },
       };
     }
-    if (typed.nextAction === "wait_payment") {
+    if (result.nextAction === "wait_payment") {
       return {
         type: "open_booking",
         label: "Xem booking",
-        payload: { bookingCode: typed.bookingCode },
+        payload: { bookingUrl: `/booking/${result.bookingCode}` },
       };
     }
     return undefined;
@@ -951,25 +976,24 @@ export class AiccOrchestratorService {
 
   private paymentExplanationHandoffRequest(
     userMessage: string,
-    result: Record<string, unknown>,
+    result: PaymentStatusExplanationResult | ToolFailureResult,
     entities: ExtractedEntities
   ): AiccHandoffRequest | undefined {
-    const typed = result as PaymentStatusExplanationResult;
-    if (!typed.shouldHandoff) {
+    if (this.isToolFailure(result) || !result.shouldHandoff) {
       return undefined;
     }
 
     return this.buildHandoffRequest({
       reason:
-        typed.handoffReason === "refund"
+        result.handoffReason === "refund"
           ? AiccHandoffReason.REFUND
           : AiccHandoffReason.PAYMENT_ISSUE,
       priority: AiccHandoffPriority.HIGH,
       userMessage,
       details: `Tool explain_payment_status trả status=${
-        typed.status ?? "unknown"
+        result.status ?? "unknown"
       }. Cần nhân viên kiểm tra giao dịch.`,
-      metadata: { ...entities, paymentStatus: typed.status },
+      metadata: { ...entities, paymentStatus: result.status },
     });
   }
 

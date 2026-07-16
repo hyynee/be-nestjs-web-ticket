@@ -12,7 +12,7 @@ import { UnblockSeatsDto } from "./dto/unblock-seats.dto";
 
 // Seat maps are public read data (a visitor picks seats before logging in),
 // so these two live on the existing public "event"/"zone" prefixes without
-// any auth guard, same as event/zone browsing endpoints.
+// an auth guard, same as event/zone browsing endpoints.
 
 @ApiTags("SeatMap")
 @Controller("event")
@@ -21,7 +21,9 @@ export class EventSeatMapController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id/seat-map")
-  getEventSeatMap(@Param("id") id: string) {
+  getEventSeatMap(
+    @Param("id") id: string
+  ): ReturnType<SeatMapService["getEventSeatMap"]> {
     return this.seatMapService.getEventSeatMap(id);
   }
 }
@@ -33,7 +35,9 @@ export class ZoneSeatMapController {
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id/seat-map")
-  getZoneSeatMap(@Param("id") id: string) {
+  getZoneSeatMap(
+    @Param("id") id: string
+  ): ReturnType<SeatMapService["getZoneSeatMap"]> {
     return this.seatMapService.getZoneSeatMap(id);
   }
 }
@@ -48,7 +52,10 @@ export class SeatMapController {
   @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("block")
-  blockSeats(@CurrentUser() user: JwtPayload, @Body() dto: BlockSeatsDto) {
+  blockSeats(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: BlockSeatsDto
+  ): ReturnType<SeatMapService["blockSeats"]> {
     return this.seatMapService.blockSeats(user, dto);
   }
 
@@ -57,7 +64,10 @@ export class SeatMapController {
   @Roles("admin", "organizer")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Post("unblock")
-  unblockSeats(@CurrentUser() user: JwtPayload, @Body() dto: UnblockSeatsDto) {
+  unblockSeats(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UnblockSeatsDto
+  ): ReturnType<SeatMapService["unblockSeats"]> {
     return this.seatMapService.unblockSeats(user, dto);
   }
 }

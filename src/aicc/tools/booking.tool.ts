@@ -8,7 +8,9 @@ import {
 } from "@src/schemas/booking.schema";
 import {
   AiccSensitiveLookupAccess,
+  BookingLookupArgs,
   BookingLookupResult,
+  BookingStatusExplanationArgs,
   BookingStatusExplanationResult,
 } from "./aicc-tool.types";
 
@@ -48,12 +50,7 @@ export class AiccBookingTool {
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>
   ) {}
 
-  async lookupBooking(args: {
-    bookingCode?: string;
-    email?: string;
-    phone?: string;
-    access?: AiccSensitiveLookupAccess;
-  }): Promise<BookingLookupResult> {
+  async lookupBooking(args: BookingLookupArgs): Promise<BookingLookupResult> {
     const filter: FilterQuery<Booking> = { isDeleted: false };
     if (!this.applyAccessFilter(filter, args.access)) {
       return { found: false };
@@ -69,7 +66,7 @@ export class AiccBookingTool {
       return { found: false };
     }
 
-    const booking = (await this.bookingModel
+    const booking = await this.bookingModel
       .findOne(filter)
       .select(
         "bookingCode status paymentStatus quantity totalPrice expiresAt eventId zoneId areaId snapshot"
@@ -78,8 +75,8 @@ export class AiccBookingTool {
       .populate("eventId", "title startDate endDate location thumbnail status")
       .populate("zoneId", "name price")
       .populate("areaId", "name rowLabel")
-      .lean()
-      .exec()) as unknown as PopulatedBookingLean | null;
+      .lean<PopulatedBookingLean>()
+      .exec();
 
     if (!booking) {
       return { found: false };
@@ -137,10 +134,9 @@ export class AiccBookingTool {
     };
   }
 
-  async explainBookingStatus(args: {
-    bookingCode: string;
-    access?: AiccSensitiveLookupAccess;
-  }): Promise<BookingStatusExplanationResult> {
+  async explainBookingStatus(
+    args: BookingStatusExplanationArgs
+  ): Promise<BookingStatusExplanationResult> {
     const result = await this.lookupBooking({
       bookingCode: args.bookingCode,
       access: args.access,

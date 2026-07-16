@@ -26,7 +26,9 @@ export class StatisticalController {
   @Roles("admin")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiOperation({ summary: "Get hot events based on revenue" })
-  async getHotEventsByRevenue() {
+  async getHotEventsByRevenue(): ReturnType<
+    StatisticalService["getHotEventsByRevenue"]
+  > {
     return this.statisticalService.getHotEventsByRevenue();
   }
   @Throttle({ medium: { limit: 120, ttl: 60000 } })
@@ -36,7 +38,7 @@ export class StatisticalController {
   @ApiOperation({ summary: "Get top selling events" })
   async getTopSellingEvents(
     @Query("by") by: "tickets" | "revenue" = "tickets"
-  ) {
+  ): ReturnType<StatisticalService["getTopSellingEvents"]> {
     return this.statisticalService.getTopSellingEvents(by);
   }
 
@@ -79,7 +81,7 @@ export class StatisticalController {
   async getRevenueStatisticsByEvent(
     @Param("eventId") eventId: string,
     @CurrentUser() currentUser: JwtPayload
-  ) {
+  ): ReturnType<StatisticalService["getRevenueStatisticsByEvent"]> {
     return this.statisticalService.getRevenueStatisticsByEvent(
       eventId,
       currentUser
@@ -90,7 +92,9 @@ export class StatisticalController {
   @Roles("admin")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiOperation({ summary: "Get top potential customers" })
-  async getTopPotentialCustomers() {
+  async getTopPotentialCustomers(): ReturnType<
+    StatisticalService["getTopPotentialCustomers"]
+  > {
     return this.statisticalService.getTopPotentialCustomers();
   }
 
@@ -102,7 +106,7 @@ export class StatisticalController {
   async getCheckInZones(
     @Param("eventId") eventId: string,
     @CurrentUser() currentUser: JwtPayload
-  ) {
+  ): ReturnType<StatisticalService["getCheckInZones"]> {
     return this.statisticalService.getCheckInZones(eventId, currentUser);
   }
 }

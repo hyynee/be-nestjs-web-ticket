@@ -247,7 +247,7 @@ describe("Admin Safety Guard — EventService.updateEvent slot deletion", () => 
 
     // Slot A removed, only slot B remains
     expect(result.timeSlots).toHaveLength(1);
-    expect(result.timeSlots[0]._id.toString()).toBe(slotB._id.toString());
+    expect(result.timeSlots[0].id).toBe(slotB._id.toString());
     expect(bookingModel.countDocuments).toHaveBeenCalledWith(
       expect.objectContaining({ timeSlotId: slotA._id })
     );

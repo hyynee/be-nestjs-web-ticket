@@ -33,13 +33,15 @@ export class AreaController {
   createArea(
     @CurrentUser() currentUser: JwtPayload,
     @Body() createAreaDto: CreateAreaDTO
-  ) {
+  ): ReturnType<AreaService["createArea"]> {
     return this.areaService.createArea(currentUser, createAreaDto);
   }
 
   @Throttle({ medium: { limit: 120, ttl: 60000 } })
   @Get()
-  getAllAreas(@Query() query: QueryAreaDto) {
+  getAllAreas(
+    @Query() query: QueryAreaDto
+  ): ReturnType<AreaService["getAllAreas"]> {
     return this.areaService.getAllAreas(query);
   }
 
@@ -52,7 +54,7 @@ export class AreaController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Body() dto: SoftDeleteAreaDTO
-  ) {
+  ): ReturnType<AreaService["softDeleteArea"]> {
     return this.areaService.softDeleteArea(currentUser, id, dto);
   }
 
@@ -65,7 +67,7 @@ export class AreaController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Body() dto: UpdateAreaDTO
-  ) {
+  ): ReturnType<AreaService["updateArea"]> {
     return this.areaService.updateArea(currentUser, id, dto);
   }
 
@@ -74,7 +76,7 @@ export class AreaController {
   @Roles("admin")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("/:id")
-  getAreaById(@Param("id") id: string) {
+  getAreaById(@Param("id") id: string): ReturnType<AreaService["getAreaById"]> {
     return this.areaService.getAreaById(id);
   }
 }

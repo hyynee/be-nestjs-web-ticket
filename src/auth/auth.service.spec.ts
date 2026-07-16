@@ -243,7 +243,16 @@ describe("AuthService", () => {
       expect(mockUserEventsService.emitUserRegistered).toHaveBeenCalledWith(
         fakeUser
       );
-      expect(result).toBe(fakeUser);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_USER_ID,
+          email: VALID_EMAIL,
+          isActive: true,
+          isVerified: false,
+        })
+      );
+      expect(result).not.toHaveProperty("save");
+      expect(result).not.toHaveProperty("password");
     });
 
     it("creates an email verification token and emits the verification event", async () => {
@@ -645,7 +654,7 @@ describe("AuthService", () => {
       );
       expect(mockSessionModel.updateMany).not.toHaveBeenCalled();
       expect(mockRedisClient.del).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`
+        `user:details:v1:${VALID_USER_ID}`
       );
       expect(result.message).toBe("Logged out successfully");
     });
@@ -668,7 +677,7 @@ describe("AuthService", () => {
         { $set: { revokedAt: expect.any(Date) } }
       );
       expect(mockRedisClient.del).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`
+        `user:details:v1:${VALID_USER_ID}`
       );
       expect(result.message).toBe("Logged out from all devices successfully");
     });
@@ -936,7 +945,7 @@ describe("AuthService", () => {
         { $set: { revokedAt: expect.any(Date) } }
       );
       expect(mockRedisClient.del).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`
+        `user:details:v1:${VALID_USER_ID}`
       );
       expect(result.message).toContain("reset successfully");
     });
@@ -1029,7 +1038,7 @@ describe("AuthService", () => {
         expect.objectContaining({ new: true, session: expect.anything() })
       );
       expect(mockRedisClient.del).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`
+        `user:details:v1:${VALID_USER_ID}`
       );
       expect(result.message).toContain("verified");
     });
@@ -1136,7 +1145,7 @@ describe("AuthService", () => {
       expect(saveMock).toHaveBeenCalled();
       expect(fakeUser.password).toBe("NewPass123!");
       expect(mockRedisClient.del).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`
+        `user:details:v1:${VALID_USER_ID}`
       );
       expect(result.message).toBe("Password changed successfully");
     });
@@ -1155,7 +1164,7 @@ describe("AuthService", () => {
       const result = await service.getUserById(VALID_USER_ID);
 
       expect(mockRedisClient.get).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`
+        `user:details:v1:${VALID_USER_ID}`
       );
       expect(mockUserModel.findById).not.toHaveBeenCalled();
       expect(result).toBeDefined();
@@ -1190,7 +1199,7 @@ describe("AuthService", () => {
       const result = await service.getUserById(VALID_USER_ID);
 
       expect(mockRedisClient.set).toHaveBeenCalledWith(
-        `user:details:${VALID_USER_ID}`,
+        `user:details:v1:${VALID_USER_ID}`,
         JSON.stringify(dbUser),
         { EX: 300 }
       );

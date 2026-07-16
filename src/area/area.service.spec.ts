@@ -112,6 +112,16 @@ describe("AreaService", () => {
     session: jest.fn().mockResolvedValue(resolved),
   });
 
+  const areaSource = (overrides: Record<string, unknown> = {}) => ({
+    _id: new Types.ObjectId(VALID_ID),
+    eventId: new Types.ObjectId(VALID_ID),
+    zoneId: new Types.ObjectId(VALID_ZONE_ID),
+    name: "VIP",
+    seats: [],
+    seatCount: 0,
+    ...overrides,
+  });
+
   // ================= createArea =================
   describe("createArea", () => {
     const baseDto = {
@@ -168,7 +178,7 @@ describe("AreaService", () => {
         currentTotalSeats: 3,
       });
       mockAreaModel.create.mockResolvedValueOnce([
-        { _id: new Types.ObjectId(VALID_ID), seats: ["A1"], seatCount: 1 },
+        areaSource({ seats: ["A1"], seatCount: 1 }),
       ]);
 
       await service.createArea(mockUser, {
@@ -243,12 +253,11 @@ describe("AreaService", () => {
         currentTotalSeats: 3,
       });
 
-      const createdArea = {
-        _id: new Types.ObjectId(VALID_ID),
+      const createdArea = areaSource({
         seats: ["A1", "A2", "A3"],
         seatCount: 3,
         zoneId: new Types.ObjectId(VALID_ZONE_ID),
-      };
+      });
       mockAreaModel.create.mockResolvedValueOnce([createdArea]);
 
       const result = await service.createArea(mockUser, {
@@ -275,11 +284,10 @@ describe("AreaService", () => {
         currentTotalSeats: 2,
       });
 
-      const createdArea = {
-        _id: new Types.ObjectId(VALID_ID),
+      const createdArea = areaSource({
         seats: ["X1", "X2"],
         seatCount: 2,
-      };
+      });
       mockAreaModel.create.mockResolvedValueOnce([createdArea]);
 
       const result = await service.createArea(mockUser, {
@@ -412,12 +420,11 @@ describe("AreaService", () => {
         mockEventFindOne({ status: "UPCOMING" })
       );
 
-      const createdArea = {
-        _id: new Types.ObjectId(VALID_ID),
+      const createdArea = areaSource({
         seats: [],
         seatCount: 0,
         zoneId: new Types.ObjectId(VALID_ZONE_ID),
-      };
+      });
       mockAreaModel.create.mockResolvedValueOnce([createdArea]);
 
       const result = await service.createArea(mockUser, baseDto);
@@ -448,7 +455,7 @@ describe("AreaService", () => {
     });
 
     it("should fetch from DB if cache miss", async () => {
-      const area = { _id: VALID_ID };
+      const area = areaSource();
 
       mockRedisService.client.get.mockResolvedValueOnce(null);
 
@@ -460,12 +467,18 @@ describe("AreaService", () => {
 
       const result = await service.getAreaById(VALID_ID);
 
-      expect(result).toEqual(area);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_ID,
+          eventId: VALID_ID,
+          zoneId: VALID_ZONE_ID,
+        })
+      );
       expect(mockRedisService.client.set).toHaveBeenCalled();
     });
 
     it("should handle redis cache get error gracefully", async () => {
-      const area = { _id: VALID_ID };
+      const area = areaSource();
 
       mockRedisService.client.get.mockRejectedValueOnce(
         new Error("Redis down")
@@ -479,7 +492,13 @@ describe("AreaService", () => {
 
       const result = await service.getAreaById(VALID_ID);
 
-      expect(result).toEqual(area);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_ID,
+          eventId: VALID_ID,
+          zoneId: VALID_ZONE_ID,
+        })
+      );
     });
 
     it("should throw if area not found in DB", async () => {
@@ -512,7 +531,7 @@ describe("AreaService", () => {
     it("should fetch paginated areas", async () => {
       mockRedisService.client.get.mockResolvedValueOnce(null);
 
-      const areas = [{ name: "VIP" }];
+      const areas = [areaSource({ name: "VIP" })];
 
       mockAreaModel.aggregate.mockResolvedValueOnce([
         {
@@ -538,7 +557,7 @@ describe("AreaService", () => {
 
       mockAreaModel.aggregate.mockResolvedValueOnce([
         {
-          data: [{ name: "VIP", description: "Very important" }],
+          data: [areaSource({ name: "VIP", description: "Very important" })],
           count: [{ total: 1 }],
         },
       ]);
@@ -560,7 +579,7 @@ describe("AreaService", () => {
       mockRedisService.client.get.mockResolvedValueOnce(null);
 
       mockAreaModel.aggregate.mockResolvedValueOnce([
-        { data: [{ name: "VIP AREA" }], count: [{ total: 1 }] },
+        { data: [areaSource({ name: "VIP AREA" })], count: [{ total: 1 }] },
       ]);
 
       const result = await service.getAllAreas({
@@ -579,7 +598,7 @@ describe("AreaService", () => {
       mockRedisService.client.get.mockResolvedValueOnce(null);
 
       mockAreaModel.aggregate.mockResolvedValueOnce([
-        { data: [{ name: "VIP" }], count: [{ total: 1 }] },
+        { data: [areaSource({ name: "VIP" })], count: [{ total: 1 }] },
       ]);
 
       await service.getAllAreas({ hasSeating: true } as any);
@@ -641,7 +660,7 @@ describe("AreaService", () => {
       );
 
       mockAreaModel.aggregate.mockResolvedValueOnce([
-        { data: [{ name: "VIP" }], count: [{ total: 1 }] },
+        { data: [areaSource({ name: "VIP" })], count: [{ total: 1 }] },
       ]);
 
       const result = await service.getAllAreas({ page: 1, limit: 10 } as any);
@@ -685,7 +704,14 @@ describe("AreaService", () => {
       hasSeating: true,
     };
 
-    const updatedArea = { _id: idObjectId, name: "PREMIUM" };
+    const updatedArea = areaSource({
+      _id: idObjectId,
+      eventId: currentArea.eventId,
+      zoneId: zoneObjectId,
+      name: "PREMIUM",
+      seatCount: 2,
+      seats: ["A1", "A2"],
+    });
 
     it("should throw if invalid id", async () => {
       await expect(
@@ -841,11 +867,13 @@ describe("AreaService", () => {
         currentTotalSeats: 5,
       });
 
-      const updated = {
+      const updated = areaSource({
         _id: idObjectId,
+        eventId: currentArea.eventId,
+        zoneId: zoneObjectId,
         seatCount: 3,
         seats: ["B1", "B2", "B3"],
-      };
+      });
       mockAreaModel.findOneAndUpdate.mockResolvedValue(updated);
 
       const result = await service.updateArea(mockUser, VALID_ID, {
@@ -853,7 +881,13 @@ describe("AreaService", () => {
         rowLabel: "B",
       } as any);
 
-      expect(result).toEqual(updated);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_ID,
+          seatCount: 3,
+          seats: ["B1", "B2", "B3"],
+        })
+      );
     });
 
     it("should update successfully with name and description", async () => {
@@ -889,7 +923,13 @@ describe("AreaService", () => {
         description: "Updated desc",
       } as any);
 
-      expect(result).toEqual(updatedArea);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_ID,
+          name: "PREMIUM",
+          zoneId: VALID_ZONE_ID,
+        })
+      );
       expect(mockRedisService.client.del).toHaveBeenCalled();
     });
 
@@ -972,18 +1012,21 @@ describe("AreaService", () => {
         .mockResolvedValueOnce({ _id: currentArea.zoneId })
         .mockResolvedValueOnce({ _id: newZoneObjectId });
 
-      mockAreaModel.findOneAndUpdate.mockResolvedValue({
-        _id: idObjectId,
-        zoneId: newZoneObjectId,
-        name: "MOVED",
-      });
+      mockAreaModel.findOneAndUpdate.mockResolvedValue(
+        areaSource({
+          _id: idObjectId,
+          eventId: newTargetZone.eventId,
+          zoneId: newZoneObjectId,
+          name: "MOVED",
+        })
+      );
 
       const result = await service.updateArea(mockUser, VALID_ID, {
         zoneId: newZoneId,
         name: "moved",
       } as any);
 
-      expect(result.zoneId).toEqual(newZoneObjectId);
+      expect(result.zoneId).toEqual(newZoneId);
       expect(mockZoneModel.updateOne).toHaveBeenCalledTimes(1);
       expect(mockZoneModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
     });
@@ -1076,7 +1119,14 @@ describe("AreaService", () => {
         isDeleted: true,
       });
 
-      expect(result).toEqual(area);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_ID,
+          eventId: VALID_ID,
+          zoneId: VALID_ZONE_ID,
+          seatCount: 2,
+        })
+      );
       expect(mockRedisService.client.del).toHaveBeenCalled();
     });
 
@@ -1108,7 +1158,14 @@ describe("AreaService", () => {
         isDeleted: false,
       });
 
-      expect(result).toEqual(area);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: VALID_ID,
+          eventId: VALID_ID,
+          zoneId: VALID_ZONE_ID,
+          seatCount: 2,
+        })
+      );
     });
 
     it("should throw if active bookings exist", async () => {

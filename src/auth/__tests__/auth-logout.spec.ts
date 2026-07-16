@@ -201,7 +201,12 @@ describe("AuthService.logout — CRITICAL-9", () => {
         }),
         { $set: { revokedAt: expect.any(Date) } }
       );
-      expect(mockRedisClient.del).toHaveBeenCalledWith("user:details:user-1");
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        "user:details:v1:user-1"
+      );
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        "auth:user-state:user-1"
+      );
       expect(mockRes.clearCookie).toHaveBeenCalledTimes(2);
     });
 

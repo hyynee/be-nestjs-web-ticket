@@ -5,7 +5,9 @@ import { Booking } from "@src/schemas/booking.schema";
 import { Payment } from "@src/schemas/payment.schema";
 import {
   AiccSensitiveLookupAccess,
+  PaymentLookupArgs,
   PaymentLookupResult,
+  PaymentStatusExplanationArgs,
   PaymentStatusExplanationResult,
 } from "./aicc-tool.types";
 
@@ -29,13 +31,7 @@ export class AiccPaymentTool {
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>
   ) {}
 
-  async lookupPayment(args: {
-    bookingId?: string;
-    bookingCode?: string;
-    paymentIntentId?: string;
-    paypalOrderId?: string;
-    access?: AiccSensitiveLookupAccess;
-  }): Promise<PaymentLookupResult> {
+  async lookupPayment(args: PaymentLookupArgs): Promise<PaymentLookupResult> {
     const filter: FilterQuery<Payment> = { isDeleted: false };
     if (!this.hasAccess(args.access)) {
       return { found: false };
@@ -55,24 +51,24 @@ export class AiccPaymentTool {
           ...this.buildBookingAccessFilter(args.access),
         })
         .select("_id")
-        .lean()
+        .lean<{ _id: Types.ObjectId }>()
         .exec();
       if (!booking) {
         return { found: false };
       }
-      filter.bookingId = (booking as { _id: Types.ObjectId })._id;
+      filter.bookingId = booking._id;
     } else {
       return { found: false };
     }
 
-    const payment = (await this.paymentModel
+    const payment = await this.paymentModel
       .findOne(filter)
       .select(
         "bookingId status amount currency paymentMethod paidAt refundedAt errorMessage metadata"
       )
       .sort({ createdAt: -1 })
-      .lean()
-      .exec()) as unknown as PaymentLean | null;
+      .lean<PaymentLean>()
+      .exec();
 
     if (!payment) {
       return { found: false };
@@ -108,12 +104,9 @@ export class AiccPaymentTool {
     };
   }
 
-  async explainPaymentStatus(args: {
-    bookingCode?: string;
-    paymentIntentId?: string;
-    paypalOrderId?: string;
-    access?: AiccSensitiveLookupAccess;
-  }): Promise<PaymentStatusExplanationResult> {
+  async explainPaymentStatus(
+    args: PaymentStatusExplanationArgs
+  ): Promise<PaymentStatusExplanationResult> {
     const result = await this.lookupPayment(args);
     if (!result.found || !result.payment) {
       return {

@@ -24,7 +24,7 @@ export class ExportController {
     @Query() query: ExportTicketDto,
     @CurrentUser() user: JwtPayload,
     @Res() res: Response
-  ) {
+  ): ReturnType<ExportService["exportTickets"]> {
     return this.exportService.exportTickets(query, user, res);
   }
 
@@ -34,7 +34,7 @@ export class ExportController {
     @Query() query: ExportCheckInDto,
     @CurrentUser() user: JwtPayload,
     @Res() res: Response
-  ) {
+  ): ReturnType<ExportService["exportCheckInZones"]> {
     return this.exportService.exportCheckInZones(query, user, res);
   }
 }

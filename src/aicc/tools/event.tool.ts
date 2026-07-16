@@ -12,8 +12,11 @@ import config from "@src/config/config";
 import { escapeRegex } from "@src/common/utils/regex.utils";
 import {
   AvailabilityResult,
+  AvailabilityArgs,
+  CheckoutContextArgs,
   CheckoutContextResult,
   EventSummary,
+  GetEventDetailArgs,
   GetEventDetailResult,
   SearchEventsArgs,
   SearchEventsResult,
@@ -93,18 +96,21 @@ export class AiccEventTool {
       ];
     }
 
-    const events = (await this.eventModel
+    const events = await this.eventModel
       .find(filter)
       .select("title startDate endDate location thumbnail status")
       .sort({ startDate: 1 })
       .limit(limit)
-      .lean()
-      .exec()) as unknown as EventLean[];
+      .lean<EventLean[]>()
+      .exec();
 
     return { events: events.map((event) => this.toEventSummary(event)) };
   }
 
-  async getEventDetail(eventId: string): Promise<GetEventDetailResult> {
+  async getEventDetail(
+    args: GetEventDetailArgs
+  ): Promise<GetEventDetailResult> {
+    const { eventId } = args;
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("INVALID_EVENT_ID");
     }
@@ -116,19 +122,19 @@ export class AiccEventTool {
         .select(
           "title description startDate endDate location thumbnail status timeSlots"
         )
-        .lean()
+        .lean<EventLean>()
         .exec(),
       this.zoneModel
         .find({ eventId: objectId, isDeleted: false })
         .select("name price capacity soldCount confirmedSoldCount hasSeating")
         .sort({ price: 1, createdAt: 1 })
-        .lean()
+        .lean<ZoneLean[]>()
         .exec(),
       this.areaModel
         .find({ eventId: objectId, isDeleted: false })
         .select("name rowLabel zoneId")
         .sort({ createdAt: 1 })
-        .lean()
+        .lean<AreaLean[]>()
         .exec(),
     ]);
 
@@ -136,20 +142,17 @@ export class AiccEventTool {
       throw new NotFoundException("EVENT_NOT_FOUND");
     }
 
-    const typedEvent = event as unknown as EventLean;
-    const typedZones = zones as unknown as ZoneLean[];
-    const typedAreas = areas as unknown as AreaLean[];
     const areasByZone = new Map<string, AreaLean[]>();
-    typedAreas.forEach((area) => {
+    areas.forEach((area) => {
       const key = area.zoneId.toString();
       areasByZone.set(key, [...(areasByZone.get(key) ?? []), area]);
     });
 
     return {
       event: {
-        ...this.toEventSummary(typedEvent),
-        description: typedEvent.description,
-        timeSlots: (typedEvent.timeSlots ?? []).map((slot) => ({
+        ...this.toEventSummary(event),
+        description: event.description,
+        timeSlots: (event.timeSlots ?? []).map((slot) => ({
           id: slot._id.toString(),
           label: slot.label,
           startTime: slot.startTime.toISOString(),
@@ -157,7 +160,7 @@ export class AiccEventTool {
           capacity: slot.capacity,
         })),
       },
-      zones: typedZones.map((zone) => ({
+      zones: zones.map((zone) => ({
         id: zone._id.toString(),
         name: zone.name,
         price: zone.price,
@@ -172,14 +175,13 @@ export class AiccEventTool {
           rowLabel: area.rowLabel,
         })),
       })),
-      bookable: typedEvent.status === EventStatus.ACTIVE,
+      bookable: event.status === EventStatus.ACTIVE,
     };
   }
 
-  async checkTicketAvailability(args: {
-    eventId: string;
-    zoneId?: string;
-  }): Promise<AvailabilityResult> {
+  async checkTicketAvailability(
+    args: AvailabilityArgs
+  ): Promise<AvailabilityResult> {
     if (!Types.ObjectId.isValid(args.eventId)) {
       throw new BadRequestException("INVALID_EVENT_ID");
     }
@@ -191,12 +193,12 @@ export class AiccEventTool {
     const event = await this.eventModel
       .findOne({ _id: eventObjectId, isDeleted: false })
       .select("status")
-      .lean()
+      .lean<Pick<EventLean, "status">>()
       .exec();
     if (!event) {
       throw new NotFoundException("EVENT_NOT_FOUND");
     }
-    if ((event as unknown as EventLean).status !== EventStatus.ACTIVE) {
+    if (event.status !== EventStatus.ACTIVE) {
       return {
         available: false,
         message: "Sự kiện hiện chưa mở bán hoặc không còn bán vé.",
@@ -211,12 +213,12 @@ export class AiccEventTool {
       zoneFilter._id = new Types.ObjectId(args.zoneId);
     }
 
-    const zones = (await this.zoneModel
+    const zones = await this.zoneModel
       .find(zoneFilter)
       .select("name capacity soldCount")
       .limit(args.zoneId ? 1 : 5)
-      .lean()
-      .exec()) as unknown as ZoneLean[];
+      .lean<ZoneLean[]>()
+      .exec();
 
     if (zones.length === 0) {
       throw new NotFoundException("ZONE_NOT_FOUND");
@@ -238,13 +240,9 @@ export class AiccEventTool {
     };
   }
 
-  async buildCheckoutContext(args: {
-    eventId: string;
-    zoneId?: string;
-    areaId?: string;
-    timeSlotId?: string;
-    quantity: number;
-  }): Promise<CheckoutContextResult> {
+  async buildCheckoutContext(
+    args: CheckoutContextArgs
+  ): Promise<CheckoutContextResult> {
     if (!Types.ObjectId.isValid(args.eventId)) {
       throw new BadRequestException("INVALID_EVENT_ID");
     }
@@ -260,14 +258,13 @@ export class AiccEventTool {
 
     const quantity = Math.min(Math.max(Math.floor(args.quantity), 1), 10);
     const eventObjectId = new Types.ObjectId(args.eventId);
-    const event = (await this.eventModel
+    const event = await this.eventModel
       .findOne({ _id: eventObjectId, isDeleted: false })
       .select("title status endDate timeSlots")
-      .lean()
-      .exec()) as unknown as Pick<
-      EventLean,
-      "_id" | "title" | "status" | "endDate" | "timeSlots"
-    > | null;
+      .lean<
+        Pick<EventLean, "_id" | "title" | "status" | "endDate" | "timeSlots">
+      >()
+      .exec();
 
     const selection = {
       eventId: args.eventId,
@@ -316,15 +313,15 @@ export class AiccEventTool {
       zoneFilter._id = new Types.ObjectId(args.zoneId);
     }
 
-    const zones = (await this.zoneModel
+    const zones = await this.zoneModel
       .find(zoneFilter)
       .select(
         "name price capacity soldCount hasSeating saleStartDate saleEndDate"
       )
       .sort({ price: 1, createdAt: 1 })
       .limit(args.zoneId ? 1 : 5)
-      .lean()
-      .exec()) as unknown as ZoneLean[];
+      .lean<ZoneLean[]>()
+      .exec();
 
     const now = new Date();
     const availableZones = zones

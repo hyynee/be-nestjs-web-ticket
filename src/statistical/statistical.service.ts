@@ -77,6 +77,26 @@ type RevenueGroupResult = {
 
 type DateRangeCondition = { $gte: Date; $lte: Date };
 
+type NetRevenueAccumulator = {
+  $sum: {
+    $subtract: [string, { $ifNull: [string, number] }];
+  };
+};
+
+interface MonthBoundaries {
+  startOfCurrentMonth: Date;
+  startOfNextMonth: Date;
+  startOfPreviousMonth: Date;
+}
+
+interface RevenueStatisticsResult {
+  data: Array<{
+    label: string;
+    revenue: number;
+    count: number;
+  }>;
+}
+
 interface PaymentFilter {
   status?: { $in: string[] };
   isDeleted?: boolean;
@@ -95,21 +115,25 @@ const CACHE_TTL = {
   REVENUE_EVENT: 120,
 } as const;
 
+const STATISTICAL_RESPONSE_SCHEMA_VERSION = "v1";
+const STAT_CACHE_PREFIX = `stat:${STATISTICAL_RESPONSE_SCHEMA_VERSION}`;
+
 const CACHE_KEY = {
-  HOT_EVENTS: "stat:hot-events",
-  TOP_SELLING_TICKETS: "stat:top-selling:tickets",
-  TOP_SELLING_REVENUE: "stat:top-selling:revenue",
-  TOP_CUSTOMERS: "stat:top-customers",
-  OVERVIEW_GLOBAL: "stat:overview:global",
-  overviewEvent: (id: string) => `stat:overview:event:${id}`,
-  checkin: (id: string) => `stat:checkin:${id}`,
+  HOT_EVENTS: `${STAT_CACHE_PREFIX}:hot-events`,
+  TOP_SELLING_TICKETS: `${STAT_CACHE_PREFIX}:top-selling:tickets`,
+  TOP_SELLING_REVENUE: `${STAT_CACHE_PREFIX}:top-selling:revenue`,
+  TOP_CUSTOMERS: `${STAT_CACHE_PREFIX}:top-customers`,
+  OVERVIEW_GLOBAL: `${STAT_CACHE_PREFIX}:overview:global`,
+  overviewEvent: (id: string) => `${STAT_CACHE_PREFIX}:overview:event:${id}`,
+  checkin: (id: string) => `${STAT_CACHE_PREFIX}:checkin:${id}`,
   revenue: (
     eventId: string | undefined,
     from: string,
     to: string,
     groupBy: string
-  ) => `stat:revenue:${eventId ?? "all"}:${from}:${to}:${groupBy}`,
-  revenueEvent: (id: string) => `stat:revenue-event:${id}`,
+  ) =>
+    `${STAT_CACHE_PREFIX}:revenue:${eventId ?? "all"}:${from}:${to}:${groupBy}`,
+  revenueEvent: (id: string) => `${STAT_CACHE_PREFIX}:revenue-event:${id}`,
 } as const;
 
 @Injectable()
@@ -130,7 +154,7 @@ export class StatisticalService {
     "partially_refunded",
   ];
 
-  private netRevenue() {
+  private netRevenue(): NetRevenueAccumulator {
     return {
       $sum: {
         $subtract: ["$amount", { $ifNull: ["$refundAmount", 0] }],
@@ -138,7 +162,7 @@ export class StatisticalService {
     };
   }
 
-  private getMonthBoundaries() {
+  private getMonthBoundaries(): MonthBoundaries {
     const tz = config.APP_TIMEZONE;
     const zone = /^[+-]\d{2}:\d{2}$/.test(tz) ? `UTC${tz}` : tz;
     const now = DateTime.now().setZone(zone);
@@ -272,7 +296,7 @@ export class StatisticalService {
     from: string,
     to: string,
     groupBy: "day" | "month" = "day"
-  ) {
+  ): Promise<RevenueStatisticsResult> {
     return this.withRedisCache(
       CACHE_KEY.revenue(eventId, from, to, groupBy),
       CACHE_TTL.REVENUE,
@@ -283,7 +307,7 @@ export class StatisticalService {
   async getRevenueStatisticsByEvent(
     eventId: string | undefined,
     currentUser: JwtPayload
-  ) {
+  ): Promise<RevenueStatisticsByEventResponseDto> {
     if (!eventId) throw new BadRequestException("Event ID is required");
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID format");
@@ -580,7 +604,7 @@ export class StatisticalService {
     from: string,
     to: string,
     groupBy: "day" | "month"
-  ) {
+  ): Promise<RevenueStatisticsResult> {
     const toDate = new Date(to);
     toDate.setHours(23, 59, 59, 999);
 
@@ -626,7 +650,9 @@ export class StatisticalService {
     return { data };
   }
 
-  private async queryRevenueStatisticsByEvent(eventId: string) {
+  private async queryRevenueStatisticsByEvent(
+    eventId: string
+  ): Promise<RevenueStatisticsByEventResponseDto> {
     const eventFilter: PaymentFilter = {
       eventId: new Types.ObjectId(eventId),
       status: { $in: this.SUCCESS_STATUSES },

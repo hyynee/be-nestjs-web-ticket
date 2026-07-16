@@ -35,7 +35,7 @@ export class BookingController {
   createBooking(
     @CurrentUser() currentUser: JwtPayload,
     @Body() data: CreateBookingDto
-  ) {
+  ): ReturnType<BookingService["createBooking"]> {
     const userId = currentUser.userId;
     return this.bookingService.createBooking(userId, data);
   }
@@ -45,7 +45,9 @@ export class BookingController {
   @UseGuards(AuthGuard("jwt"))
   @Get("/my-bookings")
   @HttpCode(200)
-  getMyBookings(@CurrentUser() currentUser: JwtPayload) {
+  getMyBookings(
+    @CurrentUser() currentUser: JwtPayload
+  ): ReturnType<BookingService["getMyBookings"]> {
     const userId = currentUser.userId;
     return this.bookingService.getMyBookings(userId);
   }
@@ -58,7 +60,7 @@ export class BookingController {
   getBookingByCode(
     @CurrentUser() currentUser: JwtPayload,
     @Param("bookingCode") bookingCode: string
-  ) {
+  ): ReturnType<BookingService["getBookingByCode"]> {
     const userId = currentUser.userId;
     return this.bookingService.getBookingByCode(userId, bookingCode);
   }
@@ -69,7 +71,7 @@ export class BookingController {
   getZoneBookingInfo(
     @Param("eventId") eventId: string,
     @Param("zoneId") zoneId: string
-  ) {
+  ): ReturnType<BookingService["getZoneBookingInfo"]> {
     return this.bookingService.getZoneBookingInfo(eventId, zoneId);
   }
 
@@ -81,7 +83,7 @@ export class BookingController {
   cancelBooking(
     @CurrentUser() currentUser: JwtPayload,
     @Body() dto: CancelBookingDto
-  ) {
+  ): ReturnType<BookingService["cancelBooking"]> {
     const userId = currentUser.userId;
     return this.bookingService.cancelBooking(userId, dto);
   }
@@ -95,7 +97,7 @@ export class BookingController {
   getAllBookings(
     @Query() query: QueryBookingDto,
     @CurrentUser() currentUser: JwtPayload
-  ) {
+  ): ReturnType<BookingService["getAllBookings"]> {
     return this.bookingService.getAllBookings(query, currentUser);
   }
 
@@ -109,7 +111,7 @@ export class BookingController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("bookingId") bookingId: string,
     @Body() dto: AdminCancelBookingDto
-  ) {
+  ): ReturnType<BookingService["adminCancelBooking"]> {
     return this.bookingService.adminCancelBooking(
       bookingId,
       currentUser.userId,

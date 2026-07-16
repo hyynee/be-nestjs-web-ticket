@@ -43,7 +43,7 @@ export class EventOwnershipService {
 
   /**
    * Throws if `user` cannot manage the given event. Admins always pass
-   * without a DB lookup. Use this at the top of any event-scoped mutation
+   * without a DB lookup. Use this at the top of each event-scoped mutation
    * or admin-facing read that organizers should only see for their own events.
    */
   async assertCanManageEvent(user: JwtPayload, eventId: string): Promise<void> {

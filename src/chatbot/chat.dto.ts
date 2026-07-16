@@ -1,6 +1,21 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { IsString, IsOptional, IsNumber, Min, Max } from "class-validator";
 
+export type ChatContext = Record<string, string | number | boolean | null>;
+
+export interface ChatEventSummary {
+  id?: string;
+  title?: string;
+  description?: string;
+  startDate?: Date | string;
+  endDate?: Date | string;
+  location?: string;
+  category?: string;
+  thumbnail?: string;
+  isActiveNow?: boolean;
+  status?: string;
+}
+
 export class ChatRequestDto {
   @ApiProperty({ description: "User message to send to the chatbot" })
   @IsString()
@@ -11,7 +26,7 @@ export class ChatRequestDto {
   sessionId?: string;
 
   @IsOptional()
-  context?: any;
+  context?: ChatContext;
 }
 
 export class EventRecommendationDto {
@@ -27,13 +42,9 @@ export class EventRecommendationDto {
 }
 
 export class ChatResponseDto {
-  success: boolean;
-  data: {
-    message: string;
-    events: any[];
-    intent: string;
-    sessionId: string;
-    timestamp: Date;
-  };
-  error?: string;
+  message: string;
+  events: ChatEventSummary[];
+  intent: string;
+  sessionId: string;
+  timestamp: Date;
 }

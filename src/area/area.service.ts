@@ -1,4 +1,4 @@
-import { Model, Types, ClientSession } from "mongoose";
+import { FilterQuery, Model, Types, ClientSession } from "mongoose";
 import { CreateAreaDTO } from "./dto/create.dto";
 import { InjectModel } from "@nestjs/mongoose";
 import { Area } from "@src/schemas/area.schema";
@@ -22,6 +22,34 @@ const ALLOWED_SORT_FIELDS = [
   "updatedAt",
 ] as const;
 type SortField = (typeof ALLOWED_SORT_FIELDS)[number];
+const AREA_RESPONSE_SCHEMA_VERSION = "v1";
+
+interface AreaViewSource {
+  _id?: Types.ObjectId | string;
+  id?: string;
+  eventId: Types.ObjectId | string;
+  zoneId: Types.ObjectId | string;
+  name: string;
+  description?: string;
+  rowLabel?: string;
+  seatCount?: number;
+  seats?: string[];
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export interface AreaView {
+  id: string;
+  eventId: string;
+  zoneId: string;
+  name: string;
+  description?: string;
+  rowLabel?: string;
+  seatCount: number;
+  seats: string[];
+  createdAt?: Date;
+  updatedAt?: Date;
+}
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,8 +57,8 @@ function escapeRegex(s: string): string {
 
 @Injectable()
 export class AreaService {
-  private readonly CACHE_PREFIX = "areas:list";
-  private readonly SINGLE_CACHE_PREFIX = "area:";
+  private readonly CACHE_PREFIX = `areas:list:${AREA_RESPONSE_SCHEMA_VERSION}`;
+  private readonly SINGLE_CACHE_PREFIX = `area:${AREA_RESPONSE_SCHEMA_VERSION}:`;
 
   constructor(
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
@@ -43,7 +71,7 @@ export class AreaService {
   ) {}
 
   private readonly AREA_CACHE_TTL_SEC = 30;
-  private readonly AREA_LIST_INDEX = "areas:list:index";
+  private readonly AREA_LIST_INDEX = `areas:list:index:${AREA_RESPONSE_SCHEMA_VERSION}`;
 
   private async invalidateAreaCache(areaId: string): Promise<void> {
     try {
@@ -102,6 +130,26 @@ export class AreaService {
   }): number {
     if (area.seats && area.seats.length > 0) return area.seats.length;
     return area.seatCount ?? 0;
+  }
+
+  private toAreaView(area: AreaViewSource): AreaView {
+    const id = area._id?.toString() ?? area.id;
+    if (!id) {
+      throw new BadRequestException("Area ID is missing");
+    }
+
+    return {
+      id,
+      eventId: area.eventId.toString(),
+      zoneId: area.zoneId.toString(),
+      name: area.name,
+      description: area.description,
+      rowLabel: area.rowLabel,
+      seatCount: this.getAreaSeatCount(area),
+      seats: area.seats ?? [],
+      createdAt: area.createdAt,
+      updatedAt: area.updatedAt,
+    };
   }
 
   private async ensureEventModifiable(
@@ -187,7 +235,7 @@ export class AreaService {
   async createArea(
     currentUser: JwtPayload,
     createAreaDto: CreateAreaDTO
-  ): Promise<Area> {
+  ): Promise<AreaView> {
     const { zoneId, name, description, rowLabel, seatCount, seats } =
       createAreaDto;
 
@@ -212,7 +260,7 @@ export class AreaService {
     const session = await this.connection.startSession();
 
     try {
-      let savedArea!: Area & { _id: Types.ObjectId };
+      let savedArea!: AreaView;
 
       await session.withTransaction(async () => {
         const zone = await this.zoneModel
@@ -274,10 +322,10 @@ export class AreaService {
           { session }
         );
 
-        savedArea = area;
+        savedArea = this.toAreaView(area);
       });
 
-      await this.invalidateAreaCache(savedArea._id.toString());
+      await this.invalidateAreaCache(savedArea.id);
       return savedArea;
     } catch (err) {
       if (err?.code === 11000) {
@@ -289,7 +337,7 @@ export class AreaService {
     }
   }
 
-  async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<Area>> {
+  async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<AreaView>> {
     const {
       zoneId,
       name,
@@ -315,11 +363,13 @@ export class AreaService {
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Area>;
+    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<AreaView>;
 
     const skip = (page - 1) * limit;
-    const match: any = { isDeleted };
-    const sort: any = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
+    const match: FilterQuery<Area> = { isDeleted };
+    const sort: Partial<Record<SortField, 1 | -1>> = {
+      [sortBy]: sortOrder === "asc" ? 1 : -1,
+    };
 
     if (zoneId) match.zoneId = new Types.ObjectId(zoneId);
     if (name)
@@ -348,12 +398,12 @@ export class AreaService {
       },
     ]);
 
-    const data = result[0].data;
+    const data = result[0].data as AreaViewSource[];
     const total = result[0].count[0]?.total ?? 0;
     const totalPages = Math.ceil(total / limit);
 
-    const paginatedResult: PaginatedResponse<Area> = {
-      items: data,
+    const paginatedResult: PaginatedResponse<AreaView> = {
+      items: data.map((area) => this.toAreaView(area)),
       meta: {
         currentPage: page,
         itemsPerPage: limit,
@@ -381,7 +431,7 @@ export class AreaService {
     currentUser: JwtPayload,
     id: string,
     dto: SoftDeleteAreaDTO
-  ): Promise<Area> {
+  ): Promise<AreaView> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException("Invalid area ID");
     }
@@ -389,7 +439,7 @@ export class AreaService {
     const session = await this.connection.startSession();
 
     try {
-      let area: Area;
+      let area: AreaView;
 
       await session.withTransaction(async () => {
         const existing = await this.areaModel
@@ -431,12 +481,12 @@ export class AreaService {
         const seatCount = found.seatCount ?? 0;
 
         await this.atomicCapacityIncrement(
-          found.zoneId,
+          new Types.ObjectId(found.zoneId),
           dto.isDeleted ? -seatCount : seatCount,
           session
         );
 
-        area = found;
+        area = this.toAreaView(found);
       });
 
       await this.invalidateAreaCache(id);
@@ -450,7 +500,7 @@ export class AreaService {
     currentUser: JwtPayload,
     id: string,
     dto: UpdateAreaDTO
-  ): Promise<Area> {
+  ): Promise<AreaView> {
     const { zoneId, name, description, rowLabel, seatCount, seats } = dto;
 
     if (zoneId && !Types.ObjectId.isValid(zoneId)) {
@@ -467,7 +517,7 @@ export class AreaService {
     const session = await this.connection.startSession();
 
     try {
-      let updatedArea!: Area;
+      let updatedArea!: AreaView;
 
       await session.withTransaction(async () => {
         const currentArea = await this.areaModel
@@ -569,14 +619,18 @@ export class AreaService {
         if (description !== undefined) updatePayload.description = description;
         if (zoneId) updatePayload.zoneId = new Types.ObjectId(zoneId);
 
-        updatedArea = (await this.areaModel.findOneAndUpdate(
+        const found = await this.areaModel.findOneAndUpdate(
           { _id: areaId, isDeleted: false },
           updatePayload,
-          { new: true, session }
-        )) as Area;
+          {
+            new: true,
+            session,
+          }
+        );
 
-        if (!updatedArea)
+        if (!found)
           throw new BadRequestException("Area not found or has been deleted");
+        updatedArea = this.toAreaView(found);
       });
 
       await this.invalidateAreaCache(id);
@@ -596,7 +650,7 @@ export class AreaService {
     }
   }
 
-  async getAreaById(id: string): Promise<Area> {
+  async getAreaById(id: string): Promise<AreaView> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException("Invalid area ID");
     }
@@ -605,19 +659,21 @@ export class AreaService {
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as Area;
+    if (cachedRaw) return JSON.parse(cachedRaw) as AreaView;
 
     const area = await this.areaModel
       .findOne({ _id: new Types.ObjectId(id), isDeleted: false })
-      .lean()
+      .lean<AreaViewSource>()
       .exec();
 
     if (!area)
       throw new BadRequestException("Area not found or has been deleted");
 
+    const areaView = this.toAreaView(area);
+
     await this.redisService.client
-      .set(cacheKey, JSON.stringify(area), { EX: this.AREA_CACHE_TTL_SEC })
+      .set(cacheKey, JSON.stringify(areaView), { EX: this.AREA_CACHE_TTL_SEC })
       .catch(() => {});
-    return area;
+    return areaView;
   }
 }

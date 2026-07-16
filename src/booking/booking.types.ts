@@ -26,12 +26,6 @@ export interface BookingCreatePayload {
   notes?: string;
 }
 
-export interface BookingCreateResult {
-  success: true;
-  message: string;
-  data: { bookingCode: string; [key: string]: unknown };
-}
-
 export interface SlotCapacityInfo {
   label: string;
   capacity: number;

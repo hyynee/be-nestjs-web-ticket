@@ -5,6 +5,28 @@ import * as os from "os";
 import { RedisService } from "./redis/redis.service";
 import { QueueService } from "./queue/queue.service";
 
+export interface HealthResponse {
+  status: "ok";
+}
+
+export interface InternalMetricsResponse {
+  status: "ok";
+  uptime: number;
+  memory: Record<"heapUsedMb" | "heapTotalMb" | "rssMb" | "externalMb", number>;
+  os: {
+    freeMb: number;
+    totalMb: number;
+    loadAvg: number[];
+  };
+  version: string;
+}
+
+export interface ReadinessResponse {
+  status: "ready" | "not_ready";
+  dependencies: Record<"mongodb" | "redis", "up" | "down">;
+  queue: Record<"active" | "waiting" | "failed" | "delayed", number>;
+}
+
 @Injectable()
 export class AppService {
   constructor(
@@ -13,12 +35,14 @@ export class AppService {
     private readonly queueService: QueueService
   ) {}
 
-  getHealth() {
+  private health(): HealthResponse {
     return { status: "ok" };
   }
 
-  getInternalMetrics() {
-    const mem = process.memoryUsage();
+  private internalMetrics(
+    mem: NodeJS.MemoryUsage,
+    loadAvg: number[]
+  ): InternalMetricsResponse {
     return {
       status: "ok",
       uptime: Math.floor(process.uptime()),
@@ -31,13 +55,59 @@ export class AppService {
       os: {
         freeMb: Math.round(os.freemem() / 1024 / 1024),
         totalMb: Math.round(os.totalmem() / 1024 / 1024),
-        loadAvg: os.loadavg().map((v) => Math.round(v * 100) / 100),
+        loadAvg,
       },
       version: process.env.npm_package_version ?? "unknown",
     };
   }
 
-  async getReadiness() {
+  private readiness(input: {
+    mongoReady: boolean;
+    redisReady: boolean;
+    queueCounts: Record<string, number>;
+  }): ReadinessResponse {
+    const ready = input.mongoReady && input.redisReady;
+    return {
+      status: ready ? "ready" : "not_ready",
+      dependencies: {
+        mongodb: input.mongoReady ? "up" : "down",
+        redis: input.redisReady ? "up" : "down",
+      },
+      queue: {
+        active: input.queueCounts.active ?? 0,
+        waiting: input.queueCounts.waiting ?? 0,
+        failed: input.queueCounts.failed ?? 0,
+        delayed: input.queueCounts.delayed ?? 0,
+      },
+    };
+  }
+
+  private unavailableReadiness(): ReadinessResponse {
+    return {
+      status: "not_ready",
+      dependencies: { mongodb: "down", redis: "down" },
+      queue: {
+        active: 0,
+        waiting: 0,
+        failed: 0,
+        delayed: 0,
+      },
+    };
+  }
+
+  getHealth(): HealthResponse {
+    return this.health();
+  }
+
+  getInternalMetrics(): InternalMetricsResponse {
+    const mem = process.memoryUsage();
+    return this.internalMetrics(
+      mem,
+      os.loadavg().map((v) => Math.round(v * 100) / 100)
+    );
+  }
+
+  async getReadiness(): Promise<ReadinessResponse> {
     try {
       const mongoReady = this.mongoConnection.readyState === 1; // 1 = connected
       const redisReady = Boolean(this.redisService?.client?.isOpen);
@@ -49,27 +119,9 @@ export class AppService {
         // Queue metrics are informational — don't fail readiness for them
       }
 
-      const ready = mongoReady && redisReady;
-
-      return {
-        status: ready ? "ready" : "not_ready",
-        dependencies: {
-          mongodb: mongoReady ? "up" : "down",
-          redis: redisReady ? "up" : "down",
-        },
-        queue: {
-          active: queueCounts.active ?? 0,
-          waiting: queueCounts.waiting ?? 0,
-          failed: queueCounts.failed ?? 0,
-          delayed: queueCounts.delayed ?? 0,
-        },
-      };
+      return this.readiness({ mongoReady, redisReady, queueCounts });
     } catch {
-      return {
-        status: "not_ready",
-        dependencies: { mongodb: "down", redis: "down" },
-        queue: {},
-      };
+      return this.unavailableReadiness();
     }
   }
 }

@@ -1,5 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { v2 as cloudinary } from "cloudinary";
+import {
+  UploadApiOptions,
+  UploadApiResponse,
+  v2 as cloudinary,
+} from "cloudinary";
 import config from "@src/config/config";
 
 @Injectable()
@@ -12,7 +16,10 @@ export class UploadService {
     });
   }
 
-  async uploadBuffer(buffer: Buffer, options: any): Promise<any> {
+  async uploadBuffer(
+    buffer: Buffer,
+    options: UploadApiOptions
+  ): Promise<UploadApiResponse> {
     return new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         options,
@@ -23,6 +30,11 @@ export class UploadService {
                 ? error.message
                 : "Cloudinary upload failed";
             reject(new Error(errorMessage));
+            return;
+          }
+
+          if (!result) {
+            reject(new Error("Cloudinary upload returned no result"));
             return;
           }
 
@@ -40,15 +52,12 @@ export class UploadService {
 
     const base64Data = base64.split(",")[1];
 
-    const result: any = await this.uploadBuffer(
-      Buffer.from(base64Data, "base64"),
-      {
-        resource_type: "image",
-        folder: "qrcodes",
-        public_id: ticketCode,
-        overwrite: false,
-      }
-    );
+    const result = await this.uploadBuffer(Buffer.from(base64Data, "base64"), {
+      resource_type: "image",
+      folder: "qrcodes",
+      public_id: ticketCode,
+      overwrite: false,
+    });
 
     return result.secure_url;
   }
@@ -57,7 +66,7 @@ export class UploadService {
     buffer: Buffer,
     ticketCode: string
   ): Promise<string> {
-    const result: any = await this.uploadBuffer(buffer, {
+    const result = await this.uploadBuffer(buffer, {
       resource_type: "image",
       folder: "qrcodes",
       public_id: ticketCode,

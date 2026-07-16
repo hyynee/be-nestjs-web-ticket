@@ -3,7 +3,18 @@ import { QueueService } from "@src/queue/queue.service";
 import config from "@src/config/config";
 import * as nodemailer from "nodemailer";
 import { Transporter } from "nodemailer";
+import type Mail from "nodemailer/lib/mailer";
 import { BookingConfirmationData } from "@src/types/booking-modules";
+
+export interface QueuedMailResult {
+  status: "queued";
+}
+
+interface QrAttachmentAsset {
+  cid: string;
+  attachment?: Mail.Attachment;
+  src: string;
+}
 
 @Injectable()
 export class MailService {
@@ -55,11 +66,7 @@ export class MailService {
   private buildQrAttachment(
     ticketCode: string,
     qrCode: string
-  ): {
-    cid: string;
-    attachment?: any;
-    src: string;
-  } {
+  ): QrAttachmentAsset {
     if (!qrCode) {
       return { cid: `qr-${ticketCode}`, src: "" };
     }
@@ -86,35 +93,46 @@ export class MailService {
     };
   }
 
-  async sendRegisterEmail(to: string, fullName: string) {
+  private queued(): QueuedMailResult {
+    return { status: "queued" };
+  }
+
+  async sendRegisterEmail(
+    to: string,
+    fullName: string
+  ): Promise<QueuedMailResult> {
     await this.queueService.addJob({
       type: "send-register-email",
       payload: { to, fullName },
       requestedAt: new Date().toISOString(),
     });
-    return { status: "queued" };
+    return this.queued();
   }
 
-  async sendVerificationEmail(to: string, token: string, fullName: string) {
+  async sendVerificationEmail(
+    to: string,
+    token: string,
+    fullName: string
+  ): Promise<QueuedMailResult> {
     await this.queueService.addJob({
       type: "send-verification-email",
       payload: { to, token, fullName },
       requestedAt: new Date().toISOString(),
     });
-    return { status: "queued" };
+    return this.queued();
   }
 
   async sendPasswordResetEmail(
     email: string,
     resetToken: string,
     fullName: string
-  ) {
+  ): Promise<QueuedMailResult> {
     await this.queueService.addJob({
       type: "send-password-reset",
       payload: { email, resetToken, fullName },
       requestedAt: new Date().toISOString(),
     });
-    return { status: "queued" };
+    return this.queued();
   }
 
   async deliverRegisterEmail(to: string, fullName: string): Promise<void> {
@@ -211,16 +229,20 @@ export class MailService {
     });
   }
 
-  async sendBookingConfirmation(data: BookingConfirmationData) {
+  async sendBookingConfirmation(
+    data: BookingConfirmationData
+  ): Promise<QueuedMailResult> {
     await this.queueService.addJob({
       type: "send-booking-confirmation",
       payload: data,
       requestedAt: new Date().toISOString(),
     });
-    return { status: "queued" };
+    return this.queued();
   }
 
-  async deliverBookingConfirmation(data: BookingConfirmationData) {
+  async deliverBookingConfirmation(
+    data: BookingConfirmationData
+  ): Promise<void> {
     const {
       email,
       customerName,
@@ -243,7 +265,7 @@ export class MailService {
     const formattedDate = this.formatDate(eventDate);
     const formattedPrice = this.formatPrice(totalPrice);
 
-    const attachments: any[] = [];
+    const attachments: Mail.Attachment[] = [];
 
     const ticketsHtml = tickets
       .map((ticket, index) => {
@@ -362,7 +384,7 @@ export class MailService {
     eventDate: Date;
     eventLocation: string;
     bookingCode: string;
-  }) {
+  }): Promise<void> {
     const formattedDate = this.formatDate(data.eventDate);
     const safeName = this.escapeHtml(data.customerName);
     const safeTitle = this.escapeHtml(data.eventTitle);
@@ -424,7 +446,7 @@ export class MailService {
     bookingCode: string;
     eventTitle: string;
     refundAmount?: number;
-  }) {
+  }): Promise<void> {
     const safeName = this.escapeHtml(data.customerName);
     const safeCode = this.escapeHtml(data.bookingCode);
     const safeTitle = this.escapeHtml(data.eventTitle);

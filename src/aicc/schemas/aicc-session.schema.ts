@@ -33,13 +33,12 @@ export enum AiccOutcome {
   UNKNOWN = "unknown",
 }
 
-export interface AiccSessionMetadata {
+export type AiccSessionMetadata = Record<string, unknown> & {
   eventId?: string;
   bookingId?: string;
   ticketId?: string;
   paymentId?: string;
-  [key: string]: unknown;
-}
+};
 
 export type AiccSessionDocument = HydratedDocument<AiccSession>;
 

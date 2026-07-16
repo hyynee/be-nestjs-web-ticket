@@ -21,12 +21,8 @@ const originalConsole = {
   warn: console.warn,
 };
 
-const originalStdoutWrite = process.stdout.write.bind(process.stdout) as (
-  ...args: any[]
-) => boolean;
-const originalStderrWrite = process.stderr.write.bind(process.stderr) as (
-  ...args: any[]
-) => boolean;
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
 
 const installNestLogFilter = () => {
   jest.spyOn(process.stdout, "write").mockImplementation(((chunk, ...args) => {

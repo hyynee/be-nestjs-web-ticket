@@ -18,8 +18,8 @@ export interface AiccExecutedToolCall {
   sessionId: string;
   turnNo: number;
   toolName: AiccToolName;
-  args: Record<string, unknown>;
-  result: Record<string, unknown>;
+  args: AiccToolArgs;
+  result: AiccToolResult;
   status: AiccToolCallStatus;
   errorCode?: string;
   durationMs: number;
@@ -43,11 +43,11 @@ export interface SearchEventsArgs {
   limit?: number;
 }
 
-export interface SearchEventsResult extends Record<string, unknown> {
+export interface SearchEventsResult {
   events: EventSummary[];
 }
 
-export interface GetEventDetailResult extends Record<string, unknown> {
+export interface GetEventDetailResult {
   event?: EventSummary & {
     description?: string;
     timeSlots: Array<{
@@ -72,7 +72,7 @@ export interface GetEventDetailResult extends Record<string, unknown> {
   bookable: boolean;
 }
 
-export interface AvailabilityResult extends Record<string, unknown> {
+export interface AvailabilityResult {
   available: boolean;
   capacity?: number;
   soldCount?: number;
@@ -83,7 +83,7 @@ export interface AvailabilityResult extends Record<string, unknown> {
 export interface CheckoutAction {
   type: "open_checkout" | "open_booking" | "open_tickets";
   label: string;
-  payload: Record<string, unknown>;
+  payload: CheckoutActionPayload;
 }
 
 export interface AiccSensitiveLookupAccess {
@@ -92,7 +92,38 @@ export interface AiccSensitiveLookupAccess {
   customerPhone?: string;
 }
 
-export interface CheckoutContextResult extends Record<string, unknown> {
+export interface CheckoutActionPayload {
+  checkoutUrl?: string;
+  checkoutDeepLink?: string;
+  bookingUrl?: string;
+  ticketsUrl?: string;
+  bookingCode?: string;
+  eventId?: string;
+  zoneId?: string;
+  areaId?: string;
+  timeSlotId?: string;
+  quantity?: number;
+  estimatedTotal?: number;
+}
+
+export interface GetEventDetailArgs {
+  eventId: string;
+}
+
+export interface AvailabilityArgs {
+  eventId: string;
+  zoneId?: string;
+}
+
+export interface CheckoutContextArgs {
+  eventId: string;
+  zoneId?: string;
+  areaId?: string;
+  timeSlotId?: string;
+  quantity: number;
+}
+
+export interface CheckoutContextResult {
   canCheckout: boolean;
   reason?: string;
   event?: { id: string; title: string };
@@ -116,10 +147,7 @@ export interface CheckoutContextResult extends Record<string, unknown> {
 export type BookingNextAction =
   "pay_now" | "wait_payment" | "contact_support" | "view_ticket" | "none";
 
-export interface BookingStatusExplanationResult extends Record<
-  string,
-  unknown
-> {
+export interface BookingStatusExplanationResult {
   found: boolean;
   bookingCode?: string;
   status?: string;
@@ -128,10 +156,7 @@ export interface BookingStatusExplanationResult extends Record<
   nextAction: BookingNextAction;
 }
 
-export interface PaymentStatusExplanationResult extends Record<
-  string,
-  unknown
-> {
+export interface PaymentStatusExplanationResult {
   found: boolean;
   status?: string;
   explanation: string;
@@ -139,7 +164,19 @@ export interface PaymentStatusExplanationResult extends Record<
   handoffReason?: string;
 }
 
-export interface BookingLookupResult extends Record<string, unknown> {
+export interface BookingLookupArgs {
+  bookingCode?: string;
+  email?: string;
+  phone?: string;
+  access?: AiccSensitiveLookupAccess;
+}
+
+export interface BookingStatusExplanationArgs {
+  bookingCode: string;
+  access?: AiccSensitiveLookupAccess;
+}
+
+export interface BookingLookupResult {
   found: boolean;
   booking?: {
     id: string;
@@ -155,7 +192,22 @@ export interface BookingLookupResult extends Record<string, unknown> {
   };
 }
 
-export interface PaymentLookupResult extends Record<string, unknown> {
+export interface PaymentLookupArgs {
+  bookingId?: string;
+  bookingCode?: string;
+  paymentIntentId?: string;
+  paypalOrderId?: string;
+  access?: AiccSensitiveLookupAccess;
+}
+
+export interface PaymentStatusExplanationArgs {
+  bookingCode?: string;
+  paymentIntentId?: string;
+  paypalOrderId?: string;
+  access?: AiccSensitiveLookupAccess;
+}
+
+export interface PaymentLookupResult {
   found: boolean;
   payment?: {
     id: string;
@@ -170,7 +222,13 @@ export interface PaymentLookupResult extends Record<string, unknown> {
   };
 }
 
-export interface TicketLookupResult extends Record<string, unknown> {
+export interface TicketLookupArgs {
+  ticketCode?: string;
+  bookingCode?: string;
+  access?: AiccSensitiveLookupAccess;
+}
+
+export interface TicketLookupResult {
   found: boolean;
   ticket?: {
     id: string;
@@ -200,10 +258,40 @@ export interface KnowledgeDocumentSummary {
   score?: number;
 }
 
-export interface KnowledgeSearchResult extends Record<string, unknown> {
+export interface KnowledgeSearchResult {
   documents: KnowledgeDocumentSummary[];
   belowThreshold: boolean;
 }
+
+export interface ToolFailureResult {
+  errorCode: string;
+  message: string;
+}
+
+export type AiccToolArgs =
+  | SearchEventsArgs
+  | GetEventDetailArgs
+  | AvailabilityArgs
+  | CheckoutContextArgs
+  | BookingLookupArgs
+  | BookingStatusExplanationArgs
+  | PaymentLookupArgs
+  | PaymentStatusExplanationArgs
+  | TicketLookupArgs
+  | KnowledgeSearchArgs;
+
+export type AiccToolResult =
+  | SearchEventsResult
+  | GetEventDetailResult
+  | AvailabilityResult
+  | CheckoutContextResult
+  | BookingLookupResult
+  | BookingStatusExplanationResult
+  | PaymentLookupResult
+  | PaymentStatusExplanationResult
+  | TicketLookupResult
+  | KnowledgeSearchResult
+  | ToolFailureResult;
 
 export interface ExtractedEntities {
   objectId?: string;

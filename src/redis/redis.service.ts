@@ -6,12 +6,12 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
-import { RedisClientType, createClient } from "redis";
+import { RedisClientOptions, createClient } from "redis";
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
-  readonly client: RedisClientType;
+  readonly client: ReturnType<typeof createClient>;
 
   constructor(private readonly configService: ConfigService) {
     const host = this.configService.getOrThrow<string>("REDIS_HOST");
@@ -28,7 +28,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       throw new Error("[Redis] REDIS_DB must be a valid number");
     }
 
-    const redisOptions: any = {
+    const redisOptions: RedisClientOptions = {
       socket: {
         host,
         port,
@@ -60,7 +60,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async onModuleInit() {
+  async onModuleInit(): Promise<void> {
     try {
       await this.client.connect();
       this.logger.log("[Redis] connected successfully");
@@ -82,7 +82,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async onModuleDestroy() {
+  async onModuleDestroy(): Promise<void> {
     if (this.client.isOpen) {
       await this.client.quit();
     }

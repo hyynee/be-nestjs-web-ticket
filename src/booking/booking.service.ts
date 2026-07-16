@@ -46,11 +46,7 @@ import { AuditAction } from "@src/schemas/audit-log.schema";
 import { UploadService } from "@src/upload/upload.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
-import {
-  BookingCreatePayload,
-  BookingCreateResult,
-  SlotCapacityInfo,
-} from "./booking.types";
+import { BookingCreatePayload, SlotCapacityInfo } from "./booking.types";
 
 const RELEASE_LOCK_SCRIPT = `
   if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -59,6 +55,148 @@ const RELEASE_LOCK_SCRIPT = `
     return 0
   end
 `;
+const BOOKING_RESPONSE_SCHEMA_VERSION = "v1";
+
+type BookingReference =
+  Types.ObjectId | string | null | Record<string, unknown>;
+
+interface BookingSnapshotSource {
+  snapshot?: Booking["snapshot"];
+  eventId?: BookingReference;
+  zoneId?: BookingReference;
+  areaId?: BookingReference;
+}
+
+interface BookingViewSource extends BookingSnapshotSource {
+  _id?: Types.ObjectId | string;
+  id?: string;
+  bookingCode: string;
+  userId?: BookingReference;
+  timeSlotId?: Types.ObjectId | string;
+  seats?: string[];
+  quantity: number;
+  pricePerTicket: number;
+  totalPrice: number;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  expiresAt: Date;
+  customerEmail: string;
+  customerName?: string;
+  customerPhone?: string;
+  notes?: string;
+  paidAt?: Date;
+  cancelledAt?: Date;
+  cancellationReason?: string;
+  totalRefunded?: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export interface BookingReferenceView {
+  id?: string;
+  title?: string;
+  name?: string;
+  email?: string;
+  startDate?: Date;
+  endDate?: Date;
+  location?: string;
+  thumbnail?: string;
+  price?: number;
+  hasSeating?: boolean;
+  rowLabel?: string;
+}
+
+export interface BookingListItem {
+  id: string;
+  bookingCode: string;
+  user?: BookingReferenceView;
+  event?: BookingReferenceView;
+  zone?: BookingReferenceView;
+  area?: BookingReferenceView;
+  timeSlotId?: string;
+  seats: string[];
+  quantity: number;
+  pricePerTicket: number;
+  totalPrice: number;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  expiresAt: Date;
+  customerEmail: string;
+  customerName?: string;
+  customerPhone?: string;
+  notes?: string;
+  paidAt?: Date;
+  cancelledAt?: Date;
+  cancellationReason?: string;
+  totalRefunded: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export interface BookingMessageResult {
+  message: string;
+}
+
+export interface BookingCreateResult {
+  success: true;
+  message: string;
+  data: BookingListItem;
+}
+
+export interface BookingDetailResult {
+  success: true;
+  data: BookingListItem;
+}
+
+export interface BookingListResult {
+  success: boolean;
+  items: BookingListItem[];
+  meta: PaginatedResponse<BookingListItem>["meta"];
+}
+
+export interface ZoneBookingEventView {
+  _id: Types.ObjectId | string;
+  title: string;
+  startDate: Date;
+  endDate: Date;
+  location: string;
+}
+
+export interface ZoneBookingZoneView {
+  _id: Types.ObjectId | string;
+  name: string;
+  price: number;
+  hasSeating: boolean;
+  capacity: number;
+  soldCount: number;
+  availableTickets: number;
+  saleStartDate?: Date;
+  saleEndDate?: Date;
+}
+
+export interface ZoneBookingAreaView {
+  _id: Types.ObjectId | string;
+  name: string;
+  description?: string;
+  rowLabel?: string;
+  seatCount?: number;
+}
+
+export interface ZoneBookingInfoResult {
+  success: boolean;
+  data: {
+    event: ZoneBookingEventView;
+    zone: ZoneBookingZoneView;
+    areas: ZoneBookingAreaView[] | null;
+    bookedSeatsByArea: Record<string, string[]> | null;
+  };
+}
+
+export interface ExpirePendingBookingsResult {
+  success: boolean;
+  message: string;
+  expired: number;
+}
 
 @Injectable()
 export class BookingService {
@@ -89,6 +227,15 @@ export class BookingService {
     }
   }
 
+  private toPlainBookingSource<TBooking extends BookingSnapshotSource>(
+    booking: TBooking
+  ): TBooking {
+    const serializable = booking as TBooking & { toObject?: () => TBooking };
+    return typeof serializable.toObject === "function"
+      ? serializable.toObject()
+      : booking;
+  }
+
   /**
    * Overlays a booking's immutable snapshot onto its (live-populated)
    * eventId/zoneId/areaId so every read path returns historically accurate
@@ -99,42 +246,174 @@ export class BookingService {
    * (populate left it null) by synthesizing a minimal object from the
    * snapshot instead of leaving it null.
    */
-  private applyBookingSnapshot(booking: any): any {
-    const snapshot = booking?.snapshot;
+  private applyBookingSnapshot<TBooking extends BookingSnapshotSource>(
+    booking: TBooking
+  ): TBooking {
+    const plainBooking = this.toPlainBookingSource(booking);
+    const snapshot = plainBooking?.snapshot;
     if (!snapshot) return booking;
 
-    booking.eventId =
-      booking.eventId && typeof booking.eventId === "object"
+    const eventId =
+      plainBooking.eventId &&
+      typeof plainBooking.eventId === "object" &&
+      !(plainBooking.eventId instanceof Types.ObjectId)
         ? {
-            ...booking.eventId,
+            ...plainBooking.eventId,
             title: snapshot.eventTitle,
             location: snapshot.location,
             startDate: snapshot.eventStartDate,
             endDate: snapshot.eventEndDate,
           }
         : {
+            id: plainBooking.eventId?.toString(),
             title: snapshot.eventTitle,
             location: snapshot.location,
             startDate: snapshot.eventStartDate,
             endDate: snapshot.eventEndDate,
           };
 
-    booking.zoneId =
-      booking.zoneId && typeof booking.zoneId === "object"
-        ? { ...booking.zoneId, name: snapshot.zoneName }
-        : { name: snapshot.zoneName };
+    const zoneId =
+      plainBooking.zoneId &&
+      typeof plainBooking.zoneId === "object" &&
+      !(plainBooking.zoneId instanceof Types.ObjectId)
+        ? { ...plainBooking.zoneId, name: snapshot.zoneName }
+        : { id: plainBooking.zoneId?.toString(), name: snapshot.zoneName };
 
-    if (snapshot.areaName) {
-      booking.areaId =
-        booking.areaId && typeof booking.areaId === "object"
-          ? { ...booking.areaId, name: snapshot.areaName }
-          : { name: snapshot.areaName };
-    }
+    const areaId = snapshot.areaName
+      ? plainBooking.areaId &&
+        typeof plainBooking.areaId === "object" &&
+        !(plainBooking.areaId instanceof Types.ObjectId)
+        ? { ...plainBooking.areaId, name: snapshot.areaName }
+        : { id: plainBooking.areaId?.toString(), name: snapshot.areaName }
+      : plainBooking.areaId;
 
-    return booking;
+    return {
+      ...plainBooking,
+      eventId,
+      zoneId,
+      areaId,
+    };
   }
 
-  private async emitZoneTicketUpdate(zoneId: Types.ObjectId | string) {
+  private getBookingId(booking: BookingViewSource): string {
+    const id = booking._id?.toString() ?? booking.id;
+    if (!id) {
+      throw new BadRequestException("Booking ID is missing");
+    }
+    return id;
+  }
+
+  private toBookingReference(
+    value: BookingReference | undefined
+  ): BookingReferenceView | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (typeof value === "string" || value instanceof Types.ObjectId) {
+      return { id: value.toString() };
+    }
+
+    const id =
+      value._id instanceof Types.ObjectId || typeof value._id === "string"
+        ? value._id.toString()
+        : typeof value.id === "string"
+          ? value.id
+          : undefined;
+
+    return {
+      id,
+      title: typeof value.title === "string" ? value.title : undefined,
+      name: typeof value.name === "string" ? value.name : undefined,
+      email: typeof value.email === "string" ? value.email : undefined,
+      startDate: value.startDate instanceof Date ? value.startDate : undefined,
+      endDate: value.endDate instanceof Date ? value.endDate : undefined,
+      location: typeof value.location === "string" ? value.location : undefined,
+      thumbnail:
+        typeof value.thumbnail === "string" ? value.thumbnail : undefined,
+      price: typeof value.price === "number" ? value.price : undefined,
+      hasSeating:
+        typeof value.hasSeating === "boolean" ? value.hasSeating : undefined,
+      rowLabel: typeof value.rowLabel === "string" ? value.rowLabel : undefined,
+    };
+  }
+
+  private toBookingListItem(booking: BookingViewSource): BookingListItem {
+    const historicalBooking = this.applyBookingSnapshot(booking);
+
+    return {
+      id: this.getBookingId(historicalBooking),
+      bookingCode: historicalBooking.bookingCode,
+      user: this.toBookingReference(historicalBooking.userId),
+      event: this.toBookingReference(historicalBooking.eventId),
+      zone: this.toBookingReference(historicalBooking.zoneId),
+      area: this.toBookingReference(historicalBooking.areaId),
+      timeSlotId: historicalBooking.timeSlotId?.toString(),
+      seats: historicalBooking.seats ?? [],
+      quantity: historicalBooking.quantity,
+      pricePerTicket: historicalBooking.pricePerTicket,
+      totalPrice: historicalBooking.totalPrice,
+      status: historicalBooking.status,
+      paymentStatus: historicalBooking.paymentStatus,
+      expiresAt: historicalBooking.expiresAt,
+      customerEmail: historicalBooking.customerEmail,
+      customerName: historicalBooking.customerName,
+      customerPhone: historicalBooking.customerPhone,
+      notes: historicalBooking.notes,
+      paidAt: historicalBooking.paidAt,
+      cancelledAt: historicalBooking.cancelledAt,
+      cancellationReason: historicalBooking.cancellationReason,
+      totalRefunded: historicalBooking.totalRefunded ?? 0,
+      createdAt: historicalBooking.createdAt,
+      updatedAt: historicalBooking.updatedAt,
+    };
+  }
+
+  private bookingMessage(message: string): BookingMessageResult {
+    return { message };
+  }
+
+  private bookingDetail(booking: BookingViewSource): BookingDetailResult {
+    return {
+      success: true,
+      data: this.toBookingListItem(booking),
+    };
+  }
+
+  private bookingPage(
+    bookings: BookingViewSource[],
+    page: number,
+    limit: number,
+    total: number
+  ): PaginatedResponse<BookingListItem> {
+    const totalPages = Math.ceil(total / limit);
+    return {
+      items: bookings.map((booking) => this.toBookingListItem(booking)),
+      meta: {
+        currentPage: page,
+        itemsPerPage: limit,
+        totalItems: total,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
+  }
+
+  private expireResult(
+    message: string,
+    expired: number
+  ): ExpirePendingBookingsResult {
+    return {
+      success: true,
+      message,
+      expired,
+    };
+  }
+
+  private async emitZoneTicketUpdate(
+    zoneId: Types.ObjectId | string
+  ): Promise<void> {
     const zone = await this.zoneModel
       .findById(zoneId)
       .select("_id eventId capacity soldCount confirmedSoldCount")
@@ -183,14 +462,14 @@ export class BookingService {
       sortBy,
       sortOrder,
     } = query;
-    return `bookings:list:scope=${scopeKey}:event=${eventId || "all"}:search=${search || ""}:status=${status || "all"}:payment=${paymentStatus || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
+    return `bookings:list:${BOOKING_RESPONSE_SCHEMA_VERSION}:scope=${scopeKey}:event=${eventId || "all"}:search=${search || ""}:status=${status || "all"}:payment=${paymentStatus || "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
   }
 
   private escapeRegex(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  private readonly BOOKING_LIST_INDEX = "bookings:list:index";
+  private readonly BOOKING_LIST_INDEX = `bookings:list:index:${BOOKING_RESPONSE_SCHEMA_VERSION}`;
   private readonly BOOKING_CACHE_TTL_SEC = Math.ceil(
     BOOKING_CACHE_TTL_MS / 1000
   );
@@ -225,7 +504,9 @@ export class BookingService {
       );
       const toDelete = [...keys, this.BOOKING_LIST_INDEX];
       if (eventId && zoneId) {
-        toDelete.push(`zone:booking-info:event=${eventId}:zone=${zoneId}`);
+        toDelete.push(
+          `zone:booking-info:${BOOKING_RESPONSE_SCHEMA_VERSION}:event=${eventId}:zone=${zoneId}`
+        );
       }
       await this.redisService.client.del(toDelete);
     } catch {
@@ -235,7 +516,7 @@ export class BookingService {
 
   private async invalidateUserBookingCache(userId: string): Promise<void> {
     try {
-      const indexKey = `bookings:user:${userId}:index`;
+      const indexKey = `bookings:user:${BOOKING_RESPONSE_SCHEMA_VERSION}:${userId}:index`;
       const keys = await this.redisService.client.sMembers(indexKey);
       const toDelete = [...keys, indexKey];
       await this.redisService.client.del(toDelete);
@@ -244,7 +525,10 @@ export class BookingService {
     }
   }
 
-  async createBooking(userId: string, data: CreateBookingDto) {
+  async createBooking(
+    userId: string,
+    data: CreateBookingDto
+  ): Promise<BookingCreateResult> {
     const userEventLockKey = `booking:user-limit:${userId}:${data.eventId}`;
     const userEventLockValue = crypto.randomBytes(16).toString("hex");
     const lockAcquired = await this.redisService.client.set(
@@ -572,10 +856,7 @@ export class BookingService {
         result = {
           success: true,
           message: "Tạo booking thành công",
-          data: newBooking as unknown as {
-            bookingCode: string;
-            [key: string]: unknown;
-          },
+          data: this.toBookingListItem(newBooking),
         };
       });
 
@@ -601,6 +882,9 @@ export class BookingService {
       this.logger.log(
         `createBooking: success — bookingCode=${result?.data?.bookingCode}, userId=${userId}, zoneId=${data.zoneId}, qty=${data.quantity}`
       );
+      if (!result) {
+        throw new BadRequestException("Booking creation did not complete");
+      }
       return result;
     } catch (error) {
       if (!bookingCommitted && slotCapacity && slotCapacityReserved) {
@@ -636,12 +920,12 @@ export class BookingService {
     status?: string,
     page: number = 1,
     limit: number = 10
-  ) {
-    const cacheKey = `bookings:user:${userId}:status=${status || "all"}:page=${page}:limit=${limit}`;
+  ): Promise<BookingListResult> {
+    const cacheKey = `bookings:user:${BOOKING_RESPONSE_SCHEMA_VERSION}:${userId}:status=${status || "all"}:page=${page}:limit=${limit}`;
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Booking>;
+    if (cachedRaw) return JSON.parse(cachedRaw) as BookingListResult;
     const filter: FilterQuery<Booking> = {
       userId: new Types.ObjectId(userId),
       isDeleted: false,
@@ -659,12 +943,12 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .lean(),
+        .lean<BookingViewSource[]>(),
       this.bookingModel.countDocuments(filter),
     ]);
     const result = {
       success: true,
-      items: bookings.map((b) => this.applyBookingSnapshot(b)),
+      items: bookings.map((booking) => this.toBookingListItem(booking)),
       meta: {
         currentPage: Number(page),
         itemsPerPage: Number(limit),
@@ -675,7 +959,7 @@ export class BookingService {
       },
     };
 
-    const userIndexKey = `bookings:user:${userId}:index`;
+    const userIndexKey = `bookings:user:${BOOKING_RESPONSE_SCHEMA_VERSION}:${userId}:index`;
     await Promise.all([
       this.redisService.client.set(cacheKey, JSON.stringify(result), {
         EX: this.BOOKING_CACHE_TTL_SEC,
@@ -690,7 +974,10 @@ export class BookingService {
     return result;
   }
 
-  async getBookingByCode(userId: string, bookingCode: string) {
+  async getBookingByCode(
+    userId: string,
+    bookingCode: string
+  ): Promise<BookingDetailResult> {
     const query: FilterQuery<Booking> = {
       bookingCode: bookingCode.trim().toUpperCase(),
       isDeleted: false,
@@ -704,28 +991,28 @@ export class BookingService {
       .populate("eventId", "title startDate endDate location thumbnail")
       .populate("zoneId", "name price hasSeating")
       .populate("areaId", "name rowLabel")
-      .lean();
+      .lean<BookingViewSource>();
 
     if (!booking) {
       throw new NotFoundException("Booking không tồn tại");
     }
 
-    return {
-      success: true,
-      data: this.applyBookingSnapshot(booking),
-    };
+    return this.bookingDetail(booking);
   }
 
-  async getZoneBookingInfo(eventId: string, zoneId: string) {
+  async getZoneBookingInfo(
+    eventId: string,
+    zoneId: string
+  ): Promise<ZoneBookingInfoResult> {
     this.assertObjectId(eventId, "event ID");
     this.assertObjectId(zoneId, "zone ID");
-    const cacheKey = `zone:booking-info:event=${eventId}:zone=${zoneId}`;
+    const cacheKey = `zone:booking-info:${BOOKING_RESPONSE_SCHEMA_VERSION}:event=${eventId}:zone=${zoneId}`;
     const lockKey = `${cacheKey}:lock`;
 
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as Record<string, unknown>;
+    if (cachedRaw) return JSON.parse(cachedRaw) as ZoneBookingInfoResult;
 
     const lockValue = `${process.pid}-${Date.now()}`;
     const lockAcquired = await this.redisService.client
@@ -743,7 +1030,7 @@ export class BookingService {
         const retryRaw = await this.redisService.client
           .get(cacheKey)
           .catch(() => null);
-        if (retryRaw) return JSON.parse(retryRaw) as Record<string, unknown>;
+        if (retryRaw) return JSON.parse(retryRaw) as ZoneBookingInfoResult;
       }
       this.logger.warn(
         `getZoneBookingInfo: stampede lock timed out for zone=${zoneId}, computing directly`
@@ -768,7 +1055,7 @@ export class BookingService {
       }
 
       const availableTickets = zone.capacity - zone.soldCount;
-      let areas: Awaited<ReturnType<typeof this.areaModel.find>> | null = null;
+      let areas: ZoneBookingAreaView[] | null = null;
       let bookedSeatsByArea: Record<string, string[]> | null = null;
 
       if (zone.hasSeating) {
@@ -776,7 +1063,7 @@ export class BookingService {
           this.areaModel
             .find({ zoneId: new Types.ObjectId(zoneId), isDeleted: false })
             .select("name description rowLabel seatCount")
-            .lean(),
+            .lean<ZoneBookingAreaView[]>(),
           this.bookingModel.aggregate([
             {
               $match: {
@@ -858,7 +1145,10 @@ export class BookingService {
     }
   }
 
-  async cancelBooking(userId: string, dto: CancelBookingDto) {
+  async cancelBooking(
+    userId: string,
+    dto: CancelBookingDto
+  ): Promise<BookingMessageResult> {
     const session = await this.bookingModel.db.startSession();
     const { bookingCode } = dto;
     let changedZoneId: Types.ObjectId | null = null;
@@ -962,7 +1252,7 @@ export class BookingService {
         await this.emitZoneTicketUpdate(changedZoneId);
       }
 
-      return { message: "Booking cancelled successfully" };
+      return this.bookingMessage("Booking cancelled successfully");
     } catch (error) {
       this.logger.error(
         `cancelBooking: failed — bookingCode=${bookingCode}, userId=${userId}, error=${(error as Error)?.message}`
@@ -977,7 +1267,7 @@ export class BookingService {
     bookingId: string,
     adminId: string,
     reason?: string
-  ) {
+  ): Promise<BookingMessageResult> {
     this.assertObjectId(bookingId, "booking ID");
     const session = await this.bookingModel.db.startSession();
     let changedZoneId: Types.ObjectId | null = null;
@@ -1179,7 +1469,7 @@ export class BookingService {
         );
       }
 
-      return { message: "Booking cancelled by admin" };
+      return this.bookingMessage("Booking cancelled by admin");
     } catch (error) {
       this.logger.error(
         `adminCancelBooking: failed — bookingId=${bookingId}, adminId=${adminId}, error=${(error as Error)?.message}`
@@ -1201,7 +1491,7 @@ export class BookingService {
   async getAllBookings(
     query: QueryBookingDto,
     currentUser: JwtPayload
-  ): Promise<PaginatedResponse<Booking>> {
+  ): Promise<PaginatedResponse<BookingListItem>> {
     const {
       eventId,
       search,
@@ -1221,7 +1511,7 @@ export class BookingService {
       );
     }
 
-    // Ownership gate MUST run before any cache read/write below — otherwise an
+    // Ownership gate MUST run before cache read/write below — otherwise an
     // organizer could get a cache hit for data they were never authorized to see.
     let scopedEventIds: Types.ObjectId[] | undefined;
     let scopeKey = "admin";
@@ -1237,18 +1527,7 @@ export class BookingService {
         const managedIds =
           await this.eventOwnershipService.getManagedEventIds(currentUser);
         if (managedIds.length === 0) {
-          const totalPages = Math.ceil(0 / limit);
-          return {
-            items: [],
-            meta: {
-              currentPage: page,
-              itemsPerPage: limit,
-              totalItems: 0,
-              totalPages,
-              hasPreviousPage: page > 1,
-              hasNextPage: false,
-            },
-          };
+          return this.bookingPage([], page, limit, 0);
         }
         scopedEventIds = managedIds;
         scopeKey = `user:${currentUser.userId}`;
@@ -1261,7 +1540,9 @@ export class BookingService {
     const cachedRaw = await this.redisService.client
       .get(cacheKey)
       .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<Booking>;
+    if (cachedRaw) {
+      return JSON.parse(cachedRaw) as PaginatedResponse<BookingListItem>;
+    }
     const filter: FilterQuery<Booking> = { isDeleted: false };
 
     if (eventId) filter.eventId = new Types.ObjectId(eventId);
@@ -1287,7 +1568,7 @@ export class BookingService {
     sort[sortBy] = sortOrder === "asc" ? 1 : -1;
 
     const [bookings, total] = await Promise.all([
-      this.bookingModel.aggregate([
+      this.bookingModel.aggregate<BookingViewSource>([
         { $match: filter },
         { $sort: sort },
         { $skip: skip },
@@ -1312,6 +1593,15 @@ export class BookingService {
         },
         {
           $lookup: {
+            from: "areas",
+            localField: "areaId",
+            foreignField: "_id",
+            as: "areaId",
+            pipeline: [{ $project: { name: 1, rowLabel: 1 } }],
+          },
+        },
+        {
+          $lookup: {
             from: "users",
             localField: "userId",
             foreignField: "_id",
@@ -1323,29 +1613,19 @@ export class BookingService {
           $addFields: {
             eventId: { $ifNull: [{ $arrayElemAt: ["$eventId", 0] }, null] },
             zoneId: { $ifNull: [{ $arrayElemAt: ["$zoneId", 0] }, null] },
+            areaId: { $ifNull: [{ $arrayElemAt: ["$areaId", 0] }, null] },
             userId: { $ifNull: [{ $arrayElemAt: ["$userId", 0] }, null] },
           },
         },
       ]),
       this.bookingModel.countDocuments(filter),
     ]);
-    const totalPages = Math.ceil(total / limit);
-    const result: PaginatedResponse<Booking> = {
-      items: bookings.map((b: any) => this.applyBookingSnapshot(b)),
-      meta: {
-        currentPage: page,
-        itemsPerPage: limit,
-        totalItems: total,
-        totalPages,
-        hasPreviousPage: page > 1,
-        hasNextPage: page < totalPages,
-      },
-    };
+    const result = this.bookingPage(bookings, page, limit, total);
     await this.setBookingListCache(cacheKey, result);
     return result;
   }
 
-  async expirePendingBookings() {
+  async expirePendingBookings(): Promise<ExpirePendingBookingsResult> {
     const session = await this.bookingModel.db.startSession();
     let committedZoneIds = new Set<string>();
     let committedSlotTotals = new Map<string, number>();
@@ -1369,11 +1649,7 @@ export class BookingService {
           .lean();
 
         if (!candidates.length) {
-          return {
-            success: true,
-            message: "Không có booking hết hạn",
-            expired: 0,
-          };
+          return this.expireResult("Không có booking hết hạn", 0);
         }
 
         const zoneTotals = new Map<string, number>();
@@ -1390,11 +1666,7 @@ export class BookingService {
         );
 
         if (!expired) {
-          return {
-            success: true,
-            message: "Không có booking hết hạn",
-            expired: 0,
-          };
+          return this.expireResult("Không có booking hết hạn", 0);
         }
 
         const actuallyExpiredDocs = await this.bookingModel
@@ -1414,11 +1686,7 @@ export class BookingService {
         }
 
         if (!zoneTotals.size) {
-          return {
-            success: true,
-            message: "Không có booking hết hạn",
-            expired: 0,
-          };
+          return this.expireResult("Không có booking hết hạn", 0);
         }
 
         await this.seatLockModel.deleteMany(
@@ -1458,11 +1726,7 @@ export class BookingService {
           }
         }
 
-        return {
-          success: true,
-          message: `Đã expire ${expired} booking`,
-          expired,
-        };
+        return this.expireResult(`Đã expire ${expired} booking`, expired);
       });
 
       await this.invalidateBookingCache();
@@ -1498,7 +1762,7 @@ export class BookingService {
     }
   }
 
-  async cleanupOldBookings(before: Date) {
+  async cleanupOldBookings(before: Date): Promise<void> {
     const session = await this.bookingModel.db.startSession();
     try {
       await session.withTransaction(async () => {

@@ -889,7 +889,12 @@ describe("BookingService", () => {
       const result = await service.getMyBookings(userId, "confirmed", 2, 5);
 
       expect(result.success).toBe(true);
-      expect(result.items).toEqual(bookings);
+      expect(result.items).toEqual([
+        expect.objectContaining({
+          id: bookings[0]._id.toString(),
+          status: "confirmed",
+        }),
+      ]);
       expect(result.meta.currentPage).toBe(2);
       expect(result.meta.hasPreviousPage).toBe(true);
     });
@@ -946,11 +951,11 @@ describe("BookingService", () => {
 
       const result = await service.getMyBookings(userId);
 
-      expect(result.items[0].eventId.title).toBe(
+      expect(result.items[0].event?.title).toBe(
         "Original title at booking time"
       );
-      expect(result.items[0].zoneId.name).toBe("Original zone name");
-      expect(result.items[0].areaId.name).toBe("Original area name");
+      expect(result.items[0].zone?.name).toBe("Original zone name");
+      expect(result.items[0].area?.name).toBe("Original area name");
     });
   });
 
@@ -971,7 +976,12 @@ describe("BookingService", () => {
       const result = await service.getBookingByCode(userId, "BK001");
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual(bookingDoc);
+      expect(result.data).toEqual(
+        expect.objectContaining({
+          id: bookingDoc._id.toString(),
+          bookingCode: bookingDoc.bookingCode,
+        })
+      );
     });
 
     it("throws NotFoundException when booking not found", async () => {
@@ -1009,8 +1019,8 @@ describe("BookingService", () => {
 
       const result = await service.getBookingByCode(userId, "BK001");
 
-      expect(result.data.eventId.title).toBe("Original title at booking time");
-      expect(result.data.zoneId.name).toBe("Original zone name");
+      expect(result.data.event?.title).toBe("Original title at booking time");
+      expect(result.data.zone?.name).toBe("Original zone name");
     });
   });
 
@@ -1599,10 +1609,10 @@ describe("BookingService", () => {
 
       const result = await service.getAllBookings(baseQuery as any, adminUser);
 
-      expect(result.items[0].eventId.title).toBe(
+      expect(result.items[0].event?.title).toBe(
         "Original title at booking time"
       );
-      expect(result.items[0].zoneId.name).toBe("Original zone name");
+      expect(result.items[0].zone?.name).toBe("Original zone name");
     });
 
     it("applies search filter when search term is provided", async () => {

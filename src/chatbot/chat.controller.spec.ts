@@ -1,4 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { ChatController } from "./chat.controller";
 import { ChatService } from "./chat.service";
 import { OllamaService } from "./ollama.service";
@@ -60,10 +65,9 @@ describe("ChatController", () => {
         "What events are upcoming?",
         "AI response"
       );
-      expect(result.success).toBe(true);
-      expect(result.data.message).toBe("AI response text");
-      expect(result.data.intent).toBe("general");
-      expect(result.data.sessionId).toBe("session-1");
+      expect(result.message).toBe("AI response text");
+      expect(result.intent).toBe("general");
+      expect(result.sessionId).toBe("session-1");
     });
 
     it("should assign a new sessionId when not provided", async () => {
@@ -75,63 +79,57 @@ describe("ChatController", () => {
         message: "Hello",
       } as any);
 
-      expect(result.data.sessionId).toMatch(/^chat_\d+_/);
+      expect(result.sessionId).toMatch(/^chat_\d+_/);
     });
 
     it("should return error response when chatService.createPrompt throws", async () => {
       mockChatService.createPrompt.mockRejectedValue(new Error("Prompt error"));
 
-      const result = await controller.sendMessage({
-        message: "Hello",
-        sessionId: "s1",
-      } as any);
-
-      expect(result.success).toBe(false);
-      expect(result.data.message).toBe(
-        "Xin lỗi, tôi gặp sự cố. Vui lòng thử lại."
-      );
-      expect(result.data.intent).toBe("error");
+      await expect(
+        controller.sendMessage({
+          message: "Hello",
+          sessionId: "s1",
+        } as any)
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
 
-    it("should generate new sessionId in error path when not provided", async () => {
+    it("should throw service unavailable in error path when not provided", async () => {
       mockChatService.createPrompt.mockRejectedValue(new Error("Error"));
 
-      const result = await controller.sendMessage({
-        message: "Hello",
-      } as any);
-
-      expect(result.data.sessionId).toMatch(/^chat_\d+_/);
+      await expect(
+        controller.sendMessage({
+          message: "Hello",
+        } as any)
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
 
-    it("should return error response when ollamaService throws", async () => {
+    it("should throw service unavailable when ollamaService throws", async () => {
       mockChatService.createPrompt.mockResolvedValue("prompt");
       mockOllamaService.generateResponse.mockRejectedValue(
         new Error("Ollama down")
       );
 
-      const result = await controller.sendMessage({
-        message: "Hello",
-        sessionId: "s1",
-      } as any);
-
-      expect(result.success).toBe(false);
-      expect(result.data.intent).toBe("error");
+      await expect(
+        controller.sendMessage({
+          message: "Hello",
+          sessionId: "s1",
+        } as any)
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
 
-    it("should return error response when handleChatMessage throws", async () => {
+    it("should throw service unavailable when handleChatMessage throws", async () => {
       mockChatService.createPrompt.mockResolvedValue("prompt");
       mockOllamaService.generateResponse.mockResolvedValue("AI response");
       mockChatService.handleChatMessage.mockRejectedValue(
         new Error("Processing error")
       );
 
-      const result = await controller.sendMessage({
-        message: "Hello",
-        sessionId: "s1",
-      } as any);
-
-      expect(result.success).toBe(false);
-      expect(result.data.intent).toBe("error");
+      await expect(
+        controller.sendMessage({
+          message: "Hello",
+          sessionId: "s1",
+        } as any)
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
 
     it("should map event data correctly in success path", async () => {
@@ -160,12 +158,12 @@ describe("ChatController", () => {
       );
 
       const result = await controller.sendMessage({
-        message: "Events",
+        message: "Hello",
         sessionId: "s1",
       } as any);
 
-      expect(result.data.events).toHaveLength(1);
-      expect(result.data.events[0]).toEqual({
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0]).toEqual({
         id: "507f1f77bcf86cd799439011",
         title: "Concert",
         description: "A great concert",
@@ -190,8 +188,7 @@ describe("ChatController", () => {
       expect(mockChatService.createPrompt).toHaveBeenCalledWith(
         "Sự kiện sắp diễn ra"
       );
-      expect(result.success).toBe(true);
-      expect(result.data.intent).toBe("suggest");
+      expect(result.intent).toBe("suggest");
     });
 
     it("should return suggestions for active events", async () => {
@@ -204,7 +201,7 @@ describe("ChatController", () => {
       expect(mockChatService.createPrompt).toHaveBeenCalledWith(
         "Sự kiện đang diễn ra"
       );
-      expect(result.success).toBe(true);
+      expect(result.intent).toBe("suggest");
     });
 
     it("should return general suggestions for unknown type", async () => {
@@ -217,7 +214,7 @@ describe("ChatController", () => {
       expect(mockChatService.createPrompt).toHaveBeenCalledWith(
         "Đề xuất sự kiện cho tôi"
       );
-      expect(result.success).toBe(true);
+      expect(result.intent).toBe("suggest");
     });
 
     it("should limit events to 5 in suggestion response", async () => {
@@ -243,25 +240,23 @@ describe("ChatController", () => {
 
       const result = await controller.getSuggestions("upcoming");
 
-      expect(result.data.events.length).toBeLessThanOrEqual(5);
+      expect(result.events.length).toBeLessThanOrEqual(5);
     });
 
     it("should return error response when service throws", async () => {
       mockChatService.createPrompt.mockRejectedValue(new Error("Error"));
 
-      const result = await controller.getSuggestions("upcoming");
-
-      expect(result.success).toBe(false);
-      expect(result.data.message).toBe("Không thể tải đề xuất.");
-      expect(result.data.intent).toBe("error");
+      await expect(
+        controller.getSuggestions("upcoming")
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
 
-    it("should generate sessionId on error", async () => {
+    it("should throw service unavailable on error", async () => {
       mockChatService.createPrompt.mockRejectedValue(new Error("Error"));
 
-      const result = await controller.getSuggestions("upcoming");
-
-      expect(result.data.sessionId).toMatch(/^chat_\d+_/);
+      await expect(
+        controller.getSuggestions("upcoming")
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
   });
 
@@ -278,8 +273,7 @@ describe("ChatController", () => {
       expect(mockChatService.createPrompt).toHaveBeenCalledWith(
         "Xem chi tiết sự kiện ID: 507f1f77bcf86cd799439011"
       );
-      expect(result.success).toBe(true);
-      expect(result.data.intent).toBe("event_detail");
+      expect(result.intent).toBe("event_detail");
     });
 
     it("should map event data in getEventDetails success path", async () => {
@@ -310,24 +304,21 @@ describe("ChatController", () => {
         "507f1f77bcf86cd799439011"
       );
 
-      expect(result.data.events).toHaveLength(1);
-      expect(result.data.events[0].title).toBe("Chi tiết sự kiện");
-      expect(result.data.events[0].location).toBe("Hồ Chí Minh");
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0].title).toBe("Chi tiết sự kiện");
+      expect(result.events[0].location).toBe("Hồ Chí Minh");
     });
 
     it("should return error when eventId is empty", async () => {
-      const result = await controller.getEventDetails("");
-
-      expect(result.success).toBe(false);
-      expect(result.data.message).toBe("Không tìm thấy sự kiện.");
-      expect(result.data.intent).toBe("error");
+      await expect(controller.getEventDetails("")).rejects.toBeInstanceOf(
+        BadRequestException
+      );
     });
 
     it("should return error when eventId is undefined", async () => {
-      const result = await controller.getEventDetails(undefined as any);
-
-      expect(result.success).toBe(false);
-      expect(result.data.message).toBe("Không tìm thấy sự kiện.");
+      await expect(
+        controller.getEventDetails(undefined as any)
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it("should return error when service throws", async () => {
@@ -336,12 +327,9 @@ describe("ChatController", () => {
         new Error("Ollama error")
       );
 
-      const result = await controller.getEventDetails(
-        "507f1f77bcf86cd799439011"
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.data.intent).toBe("error");
+      await expect(
+        controller.getEventDetails("507f1f77bcf86cd799439011")
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it("should return error when handleChatMessage throws", async () => {
@@ -351,12 +339,9 @@ describe("ChatController", () => {
         new Error("Processing error")
       );
 
-      const result = await controller.getEventDetails(
-        "507f1f77bcf86cd799439011"
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.data.intent).toBe("error");
+      await expect(
+        controller.getEventDetails("507f1f77bcf86cd799439011")
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

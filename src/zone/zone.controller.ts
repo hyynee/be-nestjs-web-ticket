@@ -27,20 +27,26 @@ export class ZoneController {
 
   @Throttle({ medium: { limit: 120, ttl: 60000 } })
   @Get()
-  async getAllZones(@Query() query: QueryZoneDto) {
+  async getAllZones(
+    @Query() query: QueryZoneDto
+  ): ReturnType<ZoneService["getAllActiveZones"]> {
     return this.zoneService.getAllActiveZones(query);
   }
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id")
   @ApiOperation({ summary: "Lấy thông tin khu vực theo ID" })
-  async getZoneActiveById(@Param("id") id: string) {
+  async getZoneActiveById(
+    @Param("id") id: string
+  ): ReturnType<ZoneService["getZoneById"]> {
     return this.zoneService.getZoneById(id);
   }
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id/with-areas")
-  async getZoneWithAreas(@Param("id") zoneId: string) {
+  async getZoneWithAreas(
+    @Param("id") zoneId: string
+  ): ReturnType<ZoneService["getZoneWithAreas"]> {
     return this.zoneService.getZoneWithAreas(zoneId);
   }
 
@@ -53,7 +59,7 @@ export class ZoneController {
   async createZone(
     @CurrentUser() currentUser: JwtPayload,
     @Body() createZoneDto: CreateZoneDto
-  ) {
+  ): ReturnType<ZoneService["createZone"]> {
     return this.zoneService.createZone(currentUser, createZoneDto);
   }
 
@@ -67,7 +73,7 @@ export class ZoneController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Body() updateZoneDto: UpdateZoneDto
-  ) {
+  ): ReturnType<ZoneService["updateZone"]> {
     return this.zoneService.updateZone(currentUser, id, updateZoneDto);
   }
 }

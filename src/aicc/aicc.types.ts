@@ -5,7 +5,11 @@ import {
   AiccSessionStatus,
 } from "./schemas/aicc-session.schema";
 import { AiccMessageSpeaker } from "./schemas/aicc-message.schema";
-import { AiccExecutedToolCall, CheckoutAction } from "./tools/aicc-tool.types";
+import {
+  AiccExecutedToolCall,
+  CheckoutAction,
+  EventSummary,
+} from "./tools/aicc-tool.types";
 import {
   AiccHandoffPriority,
   AiccHandoffReason,
@@ -37,15 +41,10 @@ export interface AiccMessageResponse {
   intent: string;
   phase: AiccSessionPhase;
   turnNo: number;
-  events: unknown[];
+  events: EventSummary[];
   actions: CheckoutAction[];
   toolCalls: AiccExecutedToolCall[];
   handoff?: AiccHandoffResponse;
-}
-
-export interface AiccApiResponse<TData> {
-  success: boolean;
-  data: TData;
 }
 
 export interface AiccHandoffResponse {

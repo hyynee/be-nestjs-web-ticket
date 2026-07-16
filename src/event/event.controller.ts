@@ -35,7 +35,10 @@ export class EventController {
   @ApiCookieAuth("access_token")
   @UseGuards(OptionalJwtAuthGuard)
   @Get()
-  getEvents(@Query() query: QueryEventDTO, @CurrentUser() user?: JwtPayload) {
+  getEvents(
+    @Query() query: QueryEventDTO,
+    @CurrentUser() user?: JwtPayload
+  ): ReturnType<EventService["getEvents"]> {
     return this.eventService.getEvents(query, user);
   }
 
@@ -43,7 +46,10 @@ export class EventController {
   @ApiCookieAuth("access_token")
   @UseGuards(OptionalJwtAuthGuard)
   @Get(":id/zones")
-  getEventZones(@Param("id") id: string, @CurrentUser() user?: JwtPayload) {
+  getEventZones(
+    @Param("id") id: string,
+    @CurrentUser() user?: JwtPayload
+  ): ReturnType<EventService["getEventZones"]> {
     return this.eventService.getEventZones(id, user);
   }
 
@@ -52,7 +58,7 @@ export class EventController {
   @Roles("admin")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Get("admin/deleted")
-  async getDeletedEvents() {
+  async getDeletedEvents(): ReturnType<EventService["getDeletedEvents"]> {
     return this.eventService.getDeletedEvents();
   }
 
@@ -66,13 +72,15 @@ export class EventController {
   async getMyManagedEvents(
     @CurrentUser() currentUser: JwtPayload,
     @Query() query: QueryEventDTO
-  ) {
+  ): ReturnType<EventService["getMyManagedEvents"]> {
     return this.eventService.getMyManagedEvents(currentUser, query);
   }
 
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
   @Get(":id")
-  async getEventById(@Param("id") id: string) {
+  async getEventById(
+    @Param("id") id: string
+  ): ReturnType<EventService["getActiveEventById"]> {
     return this.eventService.getActiveEventById(id);
   }
 
@@ -84,7 +92,7 @@ export class EventController {
   async createEvent(
     @CurrentUser() currentUser: JwtPayload,
     @Body() CreateEventDTO: CreateEventDTO
-  ) {
+  ): ReturnType<EventService["createEvent"]> {
     return this.eventService.createEvent(currentUser, CreateEventDTO);
   }
 
@@ -97,7 +105,7 @@ export class EventController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Body() updateEventDTO: UpdateEventDTO
-  ) {
+  ): ReturnType<EventService["updateEvent"]> {
     return this.eventService.updateEvent(currentUser, id, updateEventDTO);
   }
 
@@ -110,7 +118,7 @@ export class EventController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Body() dto: AssignOrganizerDto
-  ) {
+  ): ReturnType<EventService["addOrganizerToEvent"]> {
     return this.eventService.addOrganizerToEvent(currentUser, id, dto.userId);
   }
 
@@ -123,7 +131,7 @@ export class EventController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Param("userId") userId: string
-  ) {
+  ): ReturnType<EventService["removeOrganizerFromEvent"]> {
     return this.eventService.removeOrganizerFromEvent(currentUser, id, userId);
   }
 
@@ -135,7 +143,7 @@ export class EventController {
   async getEventStaff(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string
-  ) {
+  ): ReturnType<EventService["getEventStaff"]> {
     return this.eventService.getEventStaff(currentUser, id);
   }
 
@@ -148,7 +156,7 @@ export class EventController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Body() dto: AssignStaffDto
-  ) {
+  ): ReturnType<EventService["addStaffToEvent"]> {
     return this.eventService.addStaffToEvent(
       currentUser,
       id,
@@ -166,7 +174,7 @@ export class EventController {
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string,
     @Param("userId") userId: string
-  ) {
+  ): ReturnType<EventService["removeStaffFromEvent"]> {
     return this.eventService.removeStaffFromEvent(currentUser, id, userId);
   }
 
@@ -179,7 +187,7 @@ export class EventController {
   async publishEvent(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string
-  ) {
+  ): ReturnType<EventService["publishEvent"]> {
     return this.eventService.publishEvent(currentUser, id);
   }
 
@@ -192,7 +200,7 @@ export class EventController {
   async unpublishEvent(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string
-  ) {
+  ): ReturnType<EventService["unpublishEvent"]> {
     return this.eventService.unpublishEvent(currentUser, id);
   }
 
@@ -205,7 +213,7 @@ export class EventController {
   async endEvent(
     @CurrentUser() currentUser: JwtPayload,
     @Param("id") id: string
-  ) {
+  ): ReturnType<EventService["endEvent"]> {
     return this.eventService.endEvent(currentUser, id);
   }
 
@@ -214,7 +222,9 @@ export class EventController {
   @Roles("admin")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("delete/:id")
-  async deleteEvent(@Param("id") id: string) {
+  async deleteEvent(
+    @Param("id") id: string
+  ): ReturnType<EventService["deleteEvent"]> {
     return this.eventService.deleteEvent(id);
   }
 
@@ -223,7 +233,9 @@ export class EventController {
   @Roles("admin")
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @Put("restore/:id")
-  async restoreEvent(@Param("id") id: string) {
+  async restoreEvent(
+    @Param("id") id: string
+  ): ReturnType<EventService["restoreEvent"]> {
     return this.eventService.restoreEvent(id);
   }
 
@@ -237,7 +249,7 @@ export class EventController {
     @Param("id") id: string,
     @CurrentUser() admin: JwtPayload,
     @Body() dto: CancelEventDto
-  ) {
+  ): ReturnType<EventService["cancelEventWithRefund"]> {
     return this.eventService.cancelEventWithRefund(
       id,
       admin.userId,

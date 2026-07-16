@@ -175,7 +175,7 @@ describe("EventService", () => {
 
   describe("getEvents", () => {
     it("returns only non-deleted events for non-admin users", async () => {
-      const events = [{ title: "Concert" }];
+      const events = [{ _id: eventId, title: "Concert" }];
 
       eventModel.find.mockReturnValue({
         sort: jest.fn().mockReturnValue({
@@ -198,7 +198,9 @@ describe("EventService", () => {
         normalUser as any
       );
 
-      expect(result.items).toEqual(events);
+      expect(result.items).toEqual([
+        expect.objectContaining({ id: eventId, title: "Concert" }),
+      ]);
       expect(result.meta.totalItems).toBe(1);
       expect(eventModel.countDocuments).toHaveBeenCalledWith({
         isDeleted: false,
@@ -412,7 +414,9 @@ describe("EventService", () => {
       });
 
       const result = await service.getActiveEventById(eventId);
-      expect(result).toEqual(event);
+      expect(result).toEqual(
+        expect.objectContaining({ id: eventId, title: "Concert" })
+      );
     });
 
     it("throws NotFoundException when active event is missing", async () => {
@@ -437,7 +441,7 @@ describe("EventService", () => {
 
       const result = await service.getDeletedEvents();
 
-      expect(result).toEqual(deleted);
+      expect(result).toEqual([expect.objectContaining({ id: eventId })]);
       expect(eventModel.find).toHaveBeenCalledWith({ isDeleted: true });
     });
   });
@@ -477,7 +481,7 @@ describe("EventService", () => {
       expect(mockCacheManager.del).toHaveBeenCalledWith(
         "event:list:cache-key-1"
       );
-      expect(mockRedisClient.del).toHaveBeenCalledWith("events:list:index");
+      expect(mockRedisClient.del).toHaveBeenCalledWith("events:list:index:v1");
     });
 
     it("throws BadRequestException when creating with status=active directly (a brand-new event can never have zones yet)", async () => {
@@ -519,7 +523,9 @@ describe("EventService", () => {
         title: "New",
       } as any);
 
-      expect(result).toEqual({ _id: eventId, title: "New" });
+      expect(result).toEqual(
+        expect.objectContaining({ id: eventId, title: "New" })
+      );
       expect(eventModel.findByIdAndUpdate).toHaveBeenCalledWith(
         eventId,
         expect.objectContaining({
@@ -1059,7 +1065,7 @@ describe("EventService", () => {
 
   describe("getMyManagedEvents", () => {
     it("scopes the query to events the user owns or organizes", async () => {
-      const events = [{ title: "My Event" }];
+      const events = [{ _id: eventId, title: "My Event" }];
       const findChain = {
         sort: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
@@ -1079,7 +1085,9 @@ describe("EventService", () => {
         } as any
       );
 
-      expect(result.items).toEqual(events);
+      expect(result.items).toEqual([
+        expect.objectContaining({ id: eventId, title: "My Event" }),
+      ]);
       expect(result.meta.totalItems).toBe(1);
       const passedFilter = eventModel.find.mock.calls[0][0];
       expect(passedFilter.isDeleted).toBe(false);
@@ -1361,7 +1369,12 @@ describe("EventService", () => {
 
       const result = await service.getEventStaff(adminUser as any, eventId);
 
-      expect(result).toEqual(staffList);
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: staffList[0]._id.toString(),
+          email: staffList[0].email,
+        }),
+      ]);
       expect(
         mockEventOwnershipService.assertCanManageEvent
       ).toHaveBeenCalledWith(adminUser, eventId);
@@ -1617,7 +1630,7 @@ describe("EventService", () => {
 
       const result = await service.deleteEvent(eventId);
 
-      expect(result).toEqual({ _id: eventId, isDeleted: true });
+      expect(result).toEqual(expect.objectContaining({ id: eventId }));
       expect(zoneModel.updateMany).toHaveBeenCalledWith(
         { eventId: doc._id, isDeleted: false },
         { $set: { isDeleted: true } },
@@ -1692,7 +1705,7 @@ describe("EventService", () => {
 
       const result = await service.restoreEvent(eventId);
 
-      expect(result).toEqual({ _id: eventId, isDeleted: false });
+      expect(result).toEqual(expect.objectContaining({ id: eventId }));
       expect(zoneModel.updateMany).toHaveBeenCalledWith(
         { eventId: doc._id, isDeleted: true },
         { $set: { isDeleted: false } },
@@ -1784,7 +1797,9 @@ describe("EventService", () => {
         adminUser.userId
       );
 
-      expect(result.event).toEqual(cancelledEvent);
+      expect(result.event).toEqual(
+        expect.objectContaining({ id: eventId, status: EventStatus.CANCELLED })
+      );
       expect(result.totalBookings).toBe(2);
       expect(result.cancelled).toBe(2);
       expect(result.failed).toHaveLength(0);
@@ -1838,7 +1853,9 @@ describe("EventService", () => {
         adminUser.userId
       );
 
-      expect(result.event).toEqual(cancelledEvent);
+      expect(result.event).toEqual(
+        expect.objectContaining({ id: eventId, status: EventStatus.CANCELLED })
+      );
       expect(result.totalBookings).toBe(50);
       expect(result.cancelled).toBe(50);
       expect(result.failed).toHaveLength(0);
@@ -1901,10 +1918,12 @@ describe("EventService", () => {
 
       const result = await service.getEventById(eventId);
 
-      expect(result).toEqual(event);
+      expect(result).toEqual(
+        expect.objectContaining({ id: eventId, title: "DB Event" })
+      );
       expect(mockCacheManager.set).toHaveBeenCalledWith(
-        `event:details:${eventId}`,
-        event,
+        `event:details:v1:${eventId}`,
+        expect.objectContaining({ id: eventId, title: "DB Event" }),
         60_000
       );
     });

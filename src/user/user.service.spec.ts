@@ -59,7 +59,13 @@ describe("UserService", () => {
       const result = await service.updateProfileUser(userId, {
         fullName: "Updated",
       } as any);
-      expect(result).toEqual(updatedUser);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: userId,
+          email: updatedUser.email,
+          fullName: updatedUser.fullName,
+        })
+      );
     });
 
     it("invalidates cache after update", async () => {
@@ -69,7 +75,9 @@ describe("UserService", () => {
       });
 
       await service.updateProfileUser(userId, {} as any);
-      expect(cacheManager.del).toHaveBeenCalledWith(`user:details:${userId}`);
+      expect(cacheManager.del).toHaveBeenCalledWith(
+        `user:details:v1:${userId}`
+      );
     });
 
     it("throws NotFoundException when user not found", async () => {
@@ -91,7 +99,12 @@ describe("UserService", () => {
       });
 
       const result = await service.getUserById(userId);
-      expect(result).toEqual(user);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: userId,
+          email: user.email,
+        })
+      );
     });
 
     it("throws NotFoundException when user does not exist", async () => {
@@ -121,7 +134,12 @@ describe("UserService", () => {
       });
 
       const result = await service.getAllUser({ page: 1, limit: 10 });
-      expect(result.data).toEqual(users);
+      expect(result.data).toEqual([
+        expect.objectContaining({
+          id: userId,
+          email: users[0].email,
+        }),
+      ]);
       expect(result.total).toBe(1);
       expect(result.totalPages).toBe(1);
     });

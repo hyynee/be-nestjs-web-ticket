@@ -9,7 +9,17 @@ import { io as ioClient, Socket as ClientSocket } from "socket.io-client";
 import * as http from "http";
 import { AddressInfo } from "net";
 
-const REDIS_URL = `redis://${process.env.REDIS_HOST ?? "localhost"}:${process.env.REDIS_PORT ?? 6379}`;
+const buildRedisUrl = (): string => {
+  const host = process.env.REDIS_HOST ?? "localhost";
+  const port = process.env.REDIS_PORT ?? "6379";
+  const database = process.env.REDIS_DB;
+  const password = process.env.REDIS_PASSWORD;
+  const auth = password ? `:${encodeURIComponent(password)}@` : "";
+  const dbPath = database ? `/${database}` : "";
+  return `redis://${auth}${host}:${port}${dbPath}`;
+};
+
+const REDIS_URL = buildRedisUrl();
 
 describe("Socket.IO cross-instance propagation via Redis adapter", () => {
   let serverA: Server;

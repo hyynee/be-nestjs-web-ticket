@@ -56,7 +56,7 @@ export class ExportService {
     format: string,
     res: Response,
     fileName: string
-  ) {
+  ): Promise<Response | void> {
     // Handle empty data
     if (!data || data.length === 0) {
       const emptyData = [{ message: "No data to export" }];
@@ -117,7 +117,7 @@ export class ExportService {
     );
   }
 
-  private async getTicketData(dto: ExportTicketDto) {
+  private async getTicketData(dto: ExportTicketDto): Promise<ExportRow[]> {
     const filter: FilterQuery<Ticket> = { isDeleted: false };
 
     if (dto.eventId) {
@@ -178,7 +178,9 @@ export class ExportService {
     }));
   }
 
-  private async getCheckInZoneData(dto: ExportCheckInDto) {
+  private async getCheckInZoneData(
+    dto: ExportCheckInDto
+  ): Promise<ExportRow[]> {
     const id = new Types.ObjectId(dto.eventId);
 
     const zones = await this.zoneModel
@@ -214,7 +216,7 @@ export class ExportService {
     dto: ExportCheckInDto,
     currentUser: JwtPayload,
     res: Response
-  ) {
+  ): Promise<Response> {
     await this.eventOwnershipService.assertCanManageEvent(
       currentUser,
       dto.eventId
@@ -234,7 +236,7 @@ export class ExportService {
     dto: ExportTicketDto,
     currentUser: JwtPayload,
     res: Response
-  ) {
+  ): Promise<Response> {
     await this.eventOwnershipService.assertCanManageEvent(
       currentUser,
       dto.eventId

@@ -17,7 +17,10 @@ export const REDACTED_VALUE = "***REDACTED***";
 const MAX_SANITIZE_DEPTH = 3;
 
 /** Recursively redacts known-sensitive key names before data is surfaced to an admin API/log. */
-export function sanitizeSensitiveFields(value: unknown, depth = 0): unknown {
+export function sanitizeSensitiveFields<TValue>(
+  value: TValue,
+  depth = 0
+): TValue {
   if (
     depth > MAX_SANITIZE_DEPTH ||
     value === null ||
@@ -27,7 +30,9 @@ export function sanitizeSensitiveFields(value: unknown, depth = 0): unknown {
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeSensitiveFields(item, depth + 1));
+    return value.map((item) =>
+      sanitizeSensitiveFields(item, depth + 1)
+    ) as TValue;
   }
 
   const source = value as Record<string, unknown>;
@@ -39,5 +44,5 @@ export function sanitizeSensitiveFields(value: unknown, depth = 0): unknown {
     }
     result[key] = sanitizeSensitiveFields(source[key], depth + 1);
   }
-  return result;
+  return result as TValue;
 }

@@ -11,6 +11,8 @@ import { WINSTON_MODULE_NEST_PROVIDER } from "nest-winston";
 import { IoAdapter } from "@nestjs/platform-socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { createClient } from "redis";
+import type { Server, ServerOptions } from "socket.io";
+import { applyApiResponseEnvelopeToOpenApi } from "./common/http/openapi-envelope";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -58,7 +60,7 @@ async function bootstrap() {
   logger.log("Redis clients connected", "Bootstrap");
 
   class RedisAdapter extends IoAdapter {
-    createIOServer(port: number, options?: any): any {
+    createIOServer(port: number, options?: ServerOptions): Server {
       const server = super.createIOServer(port, options);
       server.adapter(createAdapter(pubClient, subClient));
       logger.log("Redis adapter attached to Socket.IO server", "Bootstrap");
@@ -123,7 +125,9 @@ async function bootstrap() {
         "refresh_token"
       )
       .build();
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const document = applyApiResponseEnvelopeToOpenApi(
+      SwaggerModule.createDocument(app, swaggerConfig)
+    );
     SwaggerModule.setup("swagger", app, document);
   }
 

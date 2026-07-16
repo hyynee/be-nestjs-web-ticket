@@ -30,6 +30,19 @@ type PopulatedActor = {
   role?: string;
 };
 
+type AuditLogLean = {
+  _id: Types.ObjectId;
+  action: AuditAction;
+  actorId?: PopulatedActor | Types.ObjectId;
+  bookingId?: Types.ObjectId;
+  eventId?: Types.ObjectId;
+  ticketId?: Types.ObjectId;
+  reason?: string;
+  ipAddress?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: Date;
+};
+
 export interface AuditLogListItem {
   id: string;
   action: AuditAction;
@@ -41,6 +54,13 @@ export interface AuditLogListItem {
   ipAddress?: string;
   metadata?: Record<string, unknown>;
   createdAt: Date;
+}
+
+export interface AuditLogListResult {
+  data: AuditLogListItem[];
+  page: number;
+  limit: number;
+  total: number;
 }
 
 export const AUDIT_EXPORT_MAX_ROWS = 20_000;
@@ -90,12 +110,7 @@ export class AuditService {
     }
   }
 
-  async findAll(query: QueryAuditLogDto): Promise<{
-    data: AuditLogListItem[];
-    page: number;
-    limit: number;
-    total: number;
-  }> {
+  async findAll(query: QueryAuditLogDto): Promise<AuditLogListResult> {
     const filter = this.buildFilter(query);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -109,16 +124,11 @@ export class AuditService {
         .skip((page - 1) * limit)
         .limit(limit)
         .populate<{ actorId: PopulatedActor }>("actorId", "email fullName role")
-        .lean(),
+        .lean<AuditLogLean[]>(),
       this.auditLogModel.countDocuments(filter),
     ]);
 
-    return {
-      data: rows.map((row) => this.toListItem(row)),
-      page,
-      limit,
-      total,
-    };
+    return this.toListResult(rows, page, limit, total);
   }
 
   async findById(id: string): Promise<AuditLogListItem> {
@@ -129,7 +139,7 @@ export class AuditService {
     const row = await this.auditLogModel
       .findById(id)
       .populate<{ actorId: PopulatedActor }>("actorId", "email fullName role")
-      .lean();
+      .lean<AuditLogLean>();
 
     if (!row) {
       throw new NotFoundException("Audit log not found");
@@ -148,7 +158,7 @@ export class AuditService {
       .sort({ [sortBy]: sortOrder })
       .limit(AUDIT_EXPORT_MAX_ROWS + 1)
       .populate<{ actorId: PopulatedActor }>("actorId", "email fullName role")
-      .lean();
+      .lean<AuditLogLean[]>();
 
     if (rows.length > AUDIT_EXPORT_MAX_ROWS) {
       throw new BadRequestException(
@@ -158,22 +168,40 @@ export class AuditService {
 
     const exportRows = rows.map((row) => {
       const item = this.toListItem(row);
-      return {
-        id: item.id,
-        createdAt: item.createdAt.toISOString(),
-        action: item.action,
-        actorId: item.actor.id,
-        actorEmail: item.actor.email ?? "",
-        actorRole: item.actor.role ?? "",
-        bookingId: item.bookingId ?? "",
-        eventId: item.eventId ?? "",
-        ticketId: item.ticketId ?? "",
-        reason: item.reason ?? "",
-        ipAddress: item.ipAddress ?? "",
-      };
+      return this.toExportRow(item);
     });
 
     return exportCSV(exportRows, [...AUDIT_EXPORT_FIELDS]);
+  }
+
+  private toListResult(
+    rows: AuditLogLean[],
+    page: number,
+    limit: number,
+    total: number
+  ): AuditLogListResult {
+    return {
+      data: rows.map((row) => this.toListItem(row)),
+      page,
+      limit,
+      total,
+    };
+  }
+
+  private toExportRow(item: AuditLogListItem): Record<string, string> {
+    return {
+      id: item.id,
+      createdAt: item.createdAt.toISOString(),
+      action: item.action,
+      actorId: item.actor.id,
+      actorEmail: item.actor.email ?? "",
+      actorRole: item.actor.role ?? "",
+      bookingId: item.bookingId ?? "",
+      eventId: item.eventId ?? "",
+      ticketId: item.ticketId ?? "",
+      reason: item.reason ?? "",
+      ipAddress: item.ipAddress ?? "",
+    };
   }
 
   private buildFilter(query: QueryAuditLogDto): FilterQuery<AuditLog> {
@@ -194,8 +222,8 @@ export class AuditService {
     return filter;
   }
 
-  private toListItem(row: any): AuditLogListItem {
-    const actor = row.actorId as PopulatedActor | Types.ObjectId | undefined;
+  private toListItem(row: AuditLogLean): AuditLogListItem {
+    const actor = row.actorId;
     const isPopulated =
       !!actor && typeof actor === "object" && "email" in actor;
 
@@ -203,12 +231,10 @@ export class AuditService {
       id: String(row._id),
       action: row.action,
       actor: {
-        id: isPopulated
-          ? String((actor as PopulatedActor)._id)
-          : String(actor ?? ""),
-        email: isPopulated ? (actor as PopulatedActor).email : undefined,
-        fullName: isPopulated ? (actor as PopulatedActor).fullName : undefined,
-        role: isPopulated ? (actor as PopulatedActor).role : undefined,
+        id: isPopulated ? String(actor._id) : String(actor ?? ""),
+        email: isPopulated ? actor.email : undefined,
+        fullName: isPopulated ? actor.fullName : undefined,
+        role: isPopulated ? actor.role : undefined,
       },
       bookingId: row.bookingId ? String(row.bookingId) : undefined,
       eventId: row.eventId ? String(row.eventId) : undefined,

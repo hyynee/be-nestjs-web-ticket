@@ -30,7 +30,7 @@ export class UserController {
   updateProfileUser(
     @CurrentUser() user: JwtPayload,
     @Body() data: UpdateUserDto
-  ) {
+  ): ReturnType<UserService["updateProfileUser"]> {
     return this.userService.updateProfileUser(user.userId, data);
   }
 
@@ -41,7 +41,7 @@ export class UserController {
   getUserSpending(
     @CurrentUser() user: JwtPayload,
     @Query() query: UserSpendingQueryDto
-  ) {
+  ): Promise<{ totalSpending: number }> {
     const userId = user.userId;
 
     if (query.day) {
@@ -75,7 +75,9 @@ export class UserController {
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiCookieAuth("access_token")
   @HttpCode(200)
-  async getAllUser(@Query() query: QueryUserDTO) {
+  async getAllUser(
+    @Query() query: QueryUserDTO
+  ): ReturnType<UserService["getAllUser"]> {
     return this.userService.getAllUser(query);
   }
 
@@ -85,7 +87,9 @@ export class UserController {
   @UseGuards(AuthGuard("jwt"), RolesGuard)
   @ApiCookieAuth("access_token")
   @HttpCode(200)
-  async getUserById(@Param("id") id: string) {
+  async getUserById(
+    @Param("id") id: string
+  ): ReturnType<UserService["getUserById"]> {
     return this.userService.getUserById(id);
   }
 }

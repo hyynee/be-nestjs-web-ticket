@@ -1,9 +1,20 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model, Types } from "mongoose";
+import { FilterQuery, Model, Types } from "mongoose";
 import { ChatResponse, EventData } from "./chat.interface";
 import { Event } from "@src/schemas/event.schema";
 import { escapeRegex } from "@src/common/utils/regex.utils";
+
+interface ChatEventSource {
+  _id: Types.ObjectId | string;
+  title: string;
+  description?: string;
+  startDate: Date;
+  endDate: Date;
+  location: string;
+  thumbnail?: string;
+  status: EventData["status"];
+}
 
 @Injectable()
 export class ChatService {
@@ -61,9 +72,9 @@ export class ChatService {
   private async getEventsByIntent(
     query: string,
     intent: string
-  ): Promise<Event[]> {
+  ): Promise<ChatEventSource[]> {
     const now = new Date();
-    const filter: any = {
+    const filter: FilterQuery<Event> = {
       isDeleted: false,
       status: "active",
     };
@@ -216,15 +227,23 @@ export class ChatService {
       status: event.status,
     }));
 
+    return this.chatResponse(aiResponse, eventData, intent);
+  }
+
+  private chatResponse(
+    response: string,
+    eventData: EventData[],
+    intent: string
+  ): ChatResponse {
     return {
-      response: aiResponse,
+      response,
       eventData,
       intent,
       timestamp: new Date(),
     };
   }
 
-  private checkEventActive(event: Event): boolean {
+  private checkEventActive(event: ChatEventSource): boolean {
     const now = new Date();
     return (
       event.status === "active" &&

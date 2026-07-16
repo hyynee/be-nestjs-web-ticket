@@ -517,10 +517,9 @@ describe("AiccService", () => {
       null
     );
 
-    expect(result.success).toBe(true);
-    expect(result.data.status).toBe(AiccSessionStatus.ACTIVE);
-    expect(result.data.phase).toBe(AiccSessionPhase.GREETING);
-    expect(sessions.get(result.data.sessionId)?.customerEmail).toBe(
+    expect(result.status).toBe(AiccSessionStatus.ACTIVE);
+    expect(result.phase).toBe(AiccSessionPhase.GREETING);
+    expect(sessions.get(result.sessionId)?.customerEmail).toBe(
       "user@example.com"
     );
   });
@@ -529,22 +528,22 @@ describe("AiccService", () => {
     const created = await service.createSession({}, null);
 
     const result = await service.sendMessage(
-      created.data.sessionId,
+      created.sessionId,
       { message: "Toi muon kiem tra booking BK123" },
       null
     );
 
-    expect(result.data.intent).toBe("booking_lookup");
-    expect(result.data.turnNo).toBe(2);
-    expect(result.data.toolCalls).toHaveLength(1);
+    expect(result.intent).toBe("booking_lookup");
+    expect(result.turnNo).toBe(2);
+    expect(result.toolCalls).toHaveLength(1);
     expect(messages).toHaveLength(2);
     expect(toolCalls).toHaveLength(1);
     expect(toolCalls[0].toolName).toBe(AiccToolName.LOOKUP_BOOKING);
     expect(messages[0].speaker).toBe(AiccMessageSpeaker.CUSTOMER);
     expect(messages[0].turnNo).toBe(1);
     expect(messages[1].speaker).toBe(AiccMessageSpeaker.AI);
-    expect(sessions.get(created.data.sessionId)?.nextTurnNo).toBe(3);
-    expect(sessions.get(created.data.sessionId)?.outcome).toBe(
+    expect(sessions.get(created.sessionId)?.nextTurnNo).toBe(3);
+    expect(sessions.get(created.sessionId)?.outcome).toBe(
       AiccOutcome.BOOKING_SUPPORT
     );
   });
@@ -568,22 +567,20 @@ describe("AiccService", () => {
     const created = await service.createSession({}, null);
 
     const result = await service.sendMessage(
-      created.data.sessionId,
+      created.sessionId,
       { message: "Toi muon gap nhan vien" },
       null
     );
 
-    expect(result.data.handoff?.reason).toBe(AiccHandoffReason.HUMAN_REQUEST);
+    expect(result.handoff?.reason).toBe(AiccHandoffReason.HUMAN_REQUEST);
     expect(handoffs.size).toBe(1);
-    expect(sessions.get(created.data.sessionId)?.status).toBe(
+    expect(sessions.get(created.sessionId)?.status).toBe(
       AiccSessionStatus.HANDOFF
     );
-    expect(sessions.get(created.data.sessionId)?.outcome).toBe(
-      AiccOutcome.HANDOFF
-    );
+    expect(sessions.get(created.sessionId)?.outcome).toBe(AiccOutcome.HANDOFF);
     expect(gateway.emitHandoffCreated).toHaveBeenCalledTimes(1);
     expect(gateway.emitSessionUpdated).toHaveBeenCalledWith(
-      created.data.sessionId,
+      created.sessionId,
       AiccSessionStatus.HANDOFF
     );
   });
@@ -625,7 +622,7 @@ describe("AiccService", () => {
     const created = await service.createSession({}, null);
 
     await service.sendMessage(
-      created.data.sessionId,
+      created.sessionId,
       { message: "Toi co duoc hoan tien khong?" },
       null
     );
@@ -638,15 +635,13 @@ describe("AiccService", () => {
 
   it("updates handoff status and emits picked/resolved events", async () => {
     const created = await service.createSession({}, null);
-    const handoff = (
-      await service.createHandoff({
-        sessionId: created.data.sessionId,
-        reason: AiccHandoffReason.PAYMENT_ISSUE,
-        priority: AiccHandoffPriority.HIGH,
-        summary:
-          "Khách báo đã thanh toán nhưng booking vẫn unpaid. Cần admin kiểm tra giao dịch.",
-      })
-    ).data;
+    const handoff = await service.createHandoff({
+      sessionId: created.sessionId,
+      reason: AiccHandoffReason.PAYMENT_ISSUE,
+      priority: AiccHandoffPriority.HIGH,
+      summary:
+        "Khách báo đã thanh toán nhưng booking vẫn unpaid. Cần admin kiểm tra giao dịch.",
+    });
 
     const picked = await service.updateHandoff(
       handoff.id,
@@ -663,9 +658,9 @@ describe("AiccService", () => {
       resolutionNote: "Đã gọi lại cho khách.",
     });
 
-    expect(picked.data.status).toBe(AiccHandoffStatus.PICKED);
-    expect(resolved.data.status).toBe(AiccHandoffStatus.RESOLVED);
-    expect(resolved.data.resolvedAt).toBeInstanceOf(Date);
+    expect(picked.status).toBe(AiccHandoffStatus.PICKED);
+    expect(resolved.status).toBe(AiccHandoffStatus.RESOLVED);
+    expect(resolved.resolvedAt).toBeInstanceOf(Date);
     expect(gateway.emitHandoffPicked).toHaveBeenCalledTimes(1);
     expect(gateway.emitHandoffResolved).toHaveBeenCalledTimes(1);
   });
@@ -689,24 +684,23 @@ describe("AiccService", () => {
     );
 
     const updated = await service.updateKnowledge(
-      created.data.id,
+      created.id,
       {
         content:
           "Sau khi thanh toán thành công, khách cần kiểm tra email và mục vé của tài khoản để nhận QR.",
       },
       admin
     );
-    const archived = await service.archiveKnowledge(created.data.id, admin);
-    const search = await service.searchKnowledge({
+    const archived = await service.archiveKnowledge(created.id, admin);
+    await service.searchKnowledge({
       query: "thanh toán xong nhận vé ở đâu",
       category: AiccKnowledgeCategory.PAYMENT_POLICY,
       topK: 3,
     });
 
-    expect(created.data.status).toBe(AiccKnowledgeStatus.ACTIVE);
-    expect(updated.data.version).toBe(2);
-    expect(archived.data.status).toBe(AiccKnowledgeStatus.ARCHIVED);
-    expect(search.success).toBe(true);
+    expect(created.status).toBe(AiccKnowledgeStatus.ACTIVE);
+    expect(updated.version).toBe(2);
+    expect(archived.status).toBe(AiccKnowledgeStatus.ARCHIVED);
     expect(knowledgeTool.searchKnowledge).toHaveBeenCalledWith({
       query: "thanh toán xong nhận vé ở đâu",
       category: AiccKnowledgeCategory.PAYMENT_POLICY,
@@ -724,7 +718,7 @@ describe("AiccService", () => {
     );
 
     const transcript = await service.createTranscript(
-      created.data.sessionId,
+      created.sessionId,
       {
         turnNo: 12,
         speaker: AiccMessageSpeaker.CUSTOMER,
@@ -737,38 +731,36 @@ describe("AiccService", () => {
       null
     );
 
-    expect(transcript.data.turnNo).toBe(1);
-    expect(transcript.data.metadata).toMatchObject({
+    expect(transcript.turnNo).toBe(1);
+    expect(transcript.metadata).toMatchObject({
       transcriptType: "voice_final_transcript",
       externalTurnNo: 12,
       sttLatencyMs: 180,
     });
-    expect(sessions.get(created.data.sessionId)?.nextTurnNo).toBe(2);
+    expect(sessions.get(created.sessionId)?.nextTurnNo).toBe(2);
   });
 
   it("builds AICC analytics dashboard metrics", async () => {
     const completed = await service.createSession({}, null);
     await service.sendMessage(
-      completed.data.sessionId,
+      completed.sessionId,
       { message: "Kiem tra booking BK202607060001" },
       null
     );
     await service.endSession(
-      completed.data.sessionId,
+      completed.sessionId,
       { reason: "completed" },
       null
     );
 
     const handoffSession = await service.createSession({}, null);
-    const handoff = (
-      await service.createHandoff({
-        sessionId: handoffSession.data.sessionId,
-        reason: AiccHandoffReason.PAYMENT_ISSUE,
-        priority: AiccHandoffPriority.HIGH,
-        summary:
-          "Khách báo đã thanh toán nhưng booking vẫn unpaid. Cần admin kiểm tra giao dịch.",
-      })
-    ).data;
+    const handoff = await service.createHandoff({
+      sessionId: handoffSession.sessionId,
+      reason: AiccHandoffReason.PAYMENT_ISSUE,
+      priority: AiccHandoffPriority.HIGH,
+      summary:
+        "Khách báo đã thanh toán nhưng booking vẫn unpaid. Cần admin kiểm tra giao dịch.",
+    });
     await service.updateHandoff(handoff.id, {
       status: AiccHandoffStatus.RESOLVED,
       resolutionNote: "Đã xử lý.",
@@ -776,13 +768,13 @@ describe("AiccService", () => {
 
     const abandoned = await service.createSession({}, null);
     await service.endSession(
-      abandoned.data.sessionId,
+      abandoned.sessionId,
       { reason: "abandoned" },
       null
     );
 
     toolCalls.push({
-      sessionId: completed.data.sessionId,
+      sessionId: completed.sessionId,
       turnNo: 99,
       toolName: AiccToolName.SEARCH_KNOWLEDGE,
       args: {},
@@ -800,33 +792,29 @@ describe("AiccService", () => {
       channel: "all",
     });
 
-    expect(dashboard.data.sessions).toMatchObject({
+    expect(dashboard.sessions).toMatchObject({
       total: 3,
       completed: 1,
       handoff: 1,
       abandoned: 1,
     });
-    expect(dashboard.data.containmentRate).toBe(0.3333);
-    expect(dashboard.data.handoffRate).toBe(0.3333);
-    expect(dashboard.data.topIntents[0]).toEqual(["booking_lookup", 1]);
-    expect(dashboard.data.tools.totalCalls).toBe(2);
-    expect(dashboard.data.tools.successRate).toBe(0.5);
-    expect(dashboard.data.handoff.resolved).toBe(1);
-    expect(dashboard.data.supportCounts.bookingSupport).toBe(1);
-    expect(dashboard.data.supportCounts.paymentIssue).toBe(1);
+    expect(dashboard.containmentRate).toBe(0.3333);
+    expect(dashboard.handoffRate).toBe(0.3333);
+    expect(dashboard.topIntents[0]).toEqual(["booking_lookup", 1]);
+    expect(dashboard.tools.totalCalls).toBe(2);
+    expect(dashboard.tools.successRate).toBe(0.5);
+    expect(dashboard.handoff.resolved).toBe(1);
+    expect(dashboard.supportCounts.bookingSupport).toBe(1);
+    expect(dashboard.supportCounts.paymentIssue).toBe(1);
   });
 
   it("rejects messages after a session ends", async () => {
     const created = await service.createSession({}, null);
-    await service.endSession(
-      created.data.sessionId,
-      { reason: "completed" },
-      null
-    );
+    await service.endSession(created.sessionId, { reason: "completed" }, null);
 
     await expect(
       service.sendMessage(
-        created.data.sessionId,
+        created.sessionId,
         { message: "Co su kien nao sap dien ra?" },
         null
       )
@@ -851,7 +839,7 @@ describe("AiccService", () => {
     const created = await service.createSession({}, owner);
 
     await expect(
-      service.getSession(created.data.sessionId, other)
+      service.getSession(created.sessionId, other)
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

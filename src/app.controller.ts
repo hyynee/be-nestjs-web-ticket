@@ -20,12 +20,12 @@ export class AppController {
   ) {}
 
   @Get("health")
-  health() {
+  health(): ReturnType<AppService["getHealth"]> {
     return this.appService.getHealth();
   }
 
   @Get("ready")
-  async ready() {
+  async ready(): ReturnType<AppService["getReadiness"]> {
     const readiness = await this.appService.getReadiness();
     if (readiness.status !== "ready") {
       throw new ServiceUnavailableException(readiness);
@@ -34,7 +34,9 @@ export class AppController {
   }
 
   @Get("internal/metrics")
-  internalMetrics(@Headers("x-internal-secret") secret: string) {
+  internalMetrics(
+    @Headers("x-internal-secret") secret: string
+  ): ReturnType<AppService["getInternalMetrics"]> {
     const expected = this.configService.get<string>("INTERNAL_METRICS_SECRET");
     if (!expected || secret !== expected) {
       throw new UnauthorizedException("Invalid internal secret");
@@ -46,7 +48,7 @@ export class AppController {
   async prometheusMetrics(
     @Headers("x-internal-secret") secret: string,
     @Res() res: Response
-  ) {
+  ): Promise<void> {
     const expected = this.configService.get<string>("INTERNAL_METRICS_SECRET");
     if (!expected || secret !== expected) {
       throw new UnauthorizedException("Invalid internal secret");

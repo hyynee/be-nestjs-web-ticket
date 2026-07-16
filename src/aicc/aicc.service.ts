@@ -55,7 +55,6 @@ import {
 } from "./dto/query-aicc-knowledge.dto";
 import { AiccGateway } from "./aicc.gateway";
 import {
-  AiccApiResponse,
   AiccAnalyticsDashboardResponse,
   AiccHandoffListResponse,
   AiccHandoffResponse,
@@ -103,6 +102,43 @@ interface AiccHandoffAnalyticsLean {
   status: AiccHandoffStatus;
 }
 
+interface AiccAnalyticsRange {
+  from: Date;
+  to: Date;
+  channel: AiccChannel | "all";
+}
+
+type AiccIdValue = Types.ObjectId | string;
+
+interface AiccHandoffView extends TimestampedDocument {
+  _id: AiccIdValue;
+  sessionId: string;
+  userId?: AiccIdValue;
+  customerEmail?: string;
+  customerPhone?: string;
+  reason: AiccHandoffReason;
+  priority: AiccHandoffPriority;
+  summary: string;
+  status: AiccHandoffStatus;
+  assignedTo?: AiccIdValue;
+  pickedAt?: Date;
+  resolvedAt?: Date;
+  resolutionNote?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface AiccKnowledgeView extends TimestampedDocument {
+  _id: AiccIdValue;
+  title: string;
+  category: AiccKnowledge["category"];
+  content: string;
+  status: AiccKnowledgeStatus;
+  version: number;
+  effectiveFrom?: Date;
+  updatedBy?: AiccIdValue;
+  metadata?: Record<string, unknown>;
+}
+
 @Injectable()
 export class AiccService {
   private readonly logger = new Logger(AiccService.name);
@@ -123,10 +159,146 @@ export class AiccService {
     private readonly aiccGateway: AiccGateway
   ) {}
 
+  private handoffListResponse(
+    items: AiccHandoffView[],
+    page: number,
+    limit: number,
+    total: number
+  ): AiccHandoffListResponse {
+    const totalPages = Math.ceil(total / limit);
+    return {
+      items: items.map((item) => this.toHandoffResponse(item)),
+      meta: {
+        currentPage: page,
+        itemsPerPage: limit,
+        totalItems: total,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
+  }
+
+  private knowledgeListResponse(
+    items: AiccKnowledgeView[],
+    page: number,
+    limit: number,
+    total: number
+  ): AiccKnowledgeListResponse {
+    const totalPages = Math.ceil(total / limit);
+    return {
+      items: items.map((item) => this.toKnowledgeResponse(item)),
+      meta: {
+        currentPage: page,
+        itemsPerPage: limit,
+        totalItems: total,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
+  }
+
+  private analyticsDashboardResponse(
+    range: AiccAnalyticsRange,
+    sessionRows: AiccSessionAnalyticsLean[],
+    messages: AiccMessageAnalyticsLean[],
+    tools: AiccToolCallAnalyticsLean[],
+    handoffs: AiccHandoffAnalyticsLean[]
+  ): AiccAnalyticsDashboardResponse {
+    const totalSessions = sessionRows.length;
+    const completed = this.countByValue(
+      sessionRows.map((session) => session.status),
+      AiccSessionStatus.COMPLETED
+    );
+    const handoff = this.countByValue(
+      sessionRows.map((session) => session.status),
+      AiccSessionStatus.HANDOFF
+    );
+    const abandoned = this.countByValue(
+      sessionRows.map((session) => session.status),
+      AiccSessionStatus.ABANDONED
+    );
+    const active = this.countByValue(
+      sessionRows.map((session) => session.status),
+      AiccSessionStatus.ACTIVE
+    );
+    const successfulTools = tools.filter(
+      (tool) => tool.status === AiccToolCallStatus.SUCCESS
+    ).length;
+    const toolDurations = tools
+      .map((tool) => tool.durationMs)
+      .filter((duration) => Number.isFinite(duration));
+    const latencies = messages
+      .filter((message) => message.speaker === AiccMessageSpeaker.AI)
+      .map((message) => message.latencyMs)
+      .filter((latency): latency is number => typeof latency === "number");
+
+    return {
+      range: {
+        from: range.from.toISOString(),
+        to: range.to.toISOString(),
+        channel: range.channel,
+      },
+      sessions: {
+        total: totalSessions,
+        completed,
+        handoff,
+        abandoned,
+        active,
+      },
+      containmentRate: this.rate(completed, totalSessions),
+      handoffRate: this.rate(handoff, totalSessions),
+      topIntents: this.topCounts(
+        messages
+          .filter((message) => message.speaker === AiccMessageSpeaker.CUSTOMER)
+          .map((message) => message.intent)
+          .filter((intent): intent is string => Boolean(intent))
+      ),
+      tools: {
+        totalCalls: tools.length,
+        successRate: this.rate(successfulTools, tools.length),
+        avgDurationMs: this.average(toolDurations),
+      },
+      handoff: {
+        topReasons: this.topCounts(handoffs.map((item) => item.reason)),
+        open: this.countByValue(
+          handoffs.map((item) => item.status),
+          AiccHandoffStatus.OPEN
+        ),
+        resolved: this.countByValue(
+          handoffs.map((item) => item.status),
+          AiccHandoffStatus.RESOLVED
+        ),
+      },
+      latency: {
+        avgResponseMs: this.average(latencies),
+        p95ResponseMs: this.percentile(latencies, 0.95),
+      },
+      supportCounts: {
+        bookingSupport: this.countByValue(
+          sessionRows.map((session) => session.outcome),
+          AiccOutcome.BOOKING_SUPPORT
+        ),
+        paymentIssue: handoffs.filter(
+          (item) => item.reason === AiccHandoffReason.PAYMENT_ISSUE
+        ).length,
+        ticketLookup: this.countByValue(
+          messages
+            .filter(
+              (message) => message.speaker === AiccMessageSpeaker.CUSTOMER
+            )
+            .map((message) => message.intent),
+          "ticket_lookup"
+        ),
+      },
+    };
+  }
+
   async createSession(
     dto: CreateAiccSessionDto,
     user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccSessionResponse>> {
+  ): Promise<AiccSessionResponse> {
     const metadata = this.sanitizeMetadata(dto.metadata);
     const userId = this.getUserObjectId(user);
     const session = await this.aiccSessionModel.create({
@@ -144,30 +316,24 @@ export class AiccService {
 
     this.logger.log(`AICC session created: ${session.sessionId}`);
 
-    return {
-      success: true,
-      data: this.toSessionResponse(session),
-    };
+    return this.toSessionResponse(session);
   }
 
   async getSession(
     sessionId: string,
     user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccSessionResponse>> {
+  ): Promise<AiccSessionResponse> {
     const session = await this.findSessionOrThrow(sessionId);
     this.assertSessionAccess(session, user);
 
-    return {
-      success: true,
-      data: this.toSessionResponse(session),
-    };
+    return this.toSessionResponse(session);
   }
 
   async sendMessage(
     sessionId: string,
     dto: SendAiccMessageDto,
     user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccMessageResponse>> {
+  ): Promise<AiccMessageResponse> {
     const startedAt = Date.now();
     const mongoSession = await this.aiccSessionModel.db.startSession();
     let response: AiccMessageResponse | null = null;
@@ -335,19 +501,19 @@ export class AiccService {
       throw new BadRequestException("Không thể xử lý tin nhắn AICC");
     }
 
-    return { success: true, data: response };
+    return response;
   }
 
   async endSession(
     sessionId: string,
     dto: EndAiccSessionDto,
     user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccSessionResponse>> {
+  ): Promise<AiccSessionResponse> {
     const existing = await this.findSessionOrThrow(sessionId);
     this.assertSessionAccess(existing, user);
 
     if (existing.status !== AiccSessionStatus.ACTIVE) {
-      return { success: true, data: this.toSessionResponse(existing) };
+      return this.toSessionResponse(existing);
     }
 
     const status = this.mapEndReasonToStatus(dto.reason);
@@ -370,22 +536,19 @@ export class AiccService {
 
     if (!ended) {
       const latest = await this.findSessionOrThrow(sessionId);
-      return { success: true, data: this.toSessionResponse(latest) };
+      return this.toSessionResponse(latest);
     }
 
     this.logger.log(`AICC session ended: ${sessionId}, status=${status}`);
 
-    return {
-      success: true,
-      data: this.toSessionResponse(ended),
-    };
+    return this.toSessionResponse(ended);
   }
 
   async createTranscript(
     sessionId: string,
     dto: CreateAiccTranscriptDto,
     user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccTranscriptResponse>> {
+  ): Promise<AiccTranscriptResponse> {
     const existing = await this.findSessionOrThrow(sessionId);
     this.assertSessionAccess(existing, user);
 
@@ -431,15 +594,12 @@ export class AiccService {
       },
     ]);
 
-    return {
-      success: true,
-      data: this.toTranscriptResponse(message),
-    };
+    return this.toTranscriptResponse(message);
   }
 
   async getAnalyticsDashboard(
     query: QueryAiccAnalyticsDto
-  ): Promise<AiccApiResponse<AiccAnalyticsDashboardResponse>> {
+  ): Promise<AiccAnalyticsDashboardResponse> {
     const range = this.resolveAnalyticsRange(query);
     const sessionFilter: FilterQuery<AiccSession> = {
       createdAt: { $gte: range.from, $lte: range.to },
@@ -448,11 +608,11 @@ export class AiccService {
       sessionFilter.channel = range.channel;
     }
 
-    const sessionRows = (await this.aiccSessionModel
+    const sessionRows = await this.aiccSessionModel
       .find(sessionFilter)
       .select("sessionId status currentIntent outcome")
-      .lean()
-      .exec()) as unknown as AiccSessionAnalyticsLean[];
+      .lean<AiccSessionAnalyticsLean[]>()
+      .exec();
 
     const sharedDateFilter: FilterQuery<
       AiccMessage | AiccToolCall | AiccHandoff
@@ -469,122 +629,30 @@ export class AiccService {
       this.aiccMessageModel
         .find(sharedDateFilter)
         .select("speaker intent latencyMs")
-        .lean()
-        .exec() as Promise<unknown>,
+        .lean<AiccMessageAnalyticsLean[]>()
+        .exec(),
       this.aiccToolCallModel
         .find(sharedDateFilter)
         .select("toolName status durationMs")
-        .lean()
-        .exec() as Promise<unknown>,
+        .lean<AiccToolCallAnalyticsLean[]>()
+        .exec(),
       this.aiccHandoffModel
         .find(sharedDateFilter)
         .select("reason status")
-        .lean()
-        .exec() as Promise<unknown>,
+        .lean<AiccHandoffAnalyticsLean[]>()
+        .exec(),
     ]);
 
-    const messages = messageRows as AiccMessageAnalyticsLean[];
-    const tools = toolRows as AiccToolCallAnalyticsLean[];
-    const handoffs = handoffRows as AiccHandoffAnalyticsLean[];
-
-    const totalSessions = sessionRows.length;
-    const completed = this.countByValue(
-      sessionRows.map((session) => session.status),
-      AiccSessionStatus.COMPLETED
+    return this.analyticsDashboardResponse(
+      range,
+      sessionRows,
+      messageRows,
+      toolRows,
+      handoffRows
     );
-    const handoff = this.countByValue(
-      sessionRows.map((session) => session.status),
-      AiccSessionStatus.HANDOFF
-    );
-    const abandoned = this.countByValue(
-      sessionRows.map((session) => session.status),
-      AiccSessionStatus.ABANDONED
-    );
-    const active = this.countByValue(
-      sessionRows.map((session) => session.status),
-      AiccSessionStatus.ACTIVE
-    );
-
-    const successfulTools = tools.filter(
-      (tool) => tool.status === AiccToolCallStatus.SUCCESS
-    ).length;
-    const toolDurations = tools
-      .map((tool) => tool.durationMs)
-      .filter((duration) => Number.isFinite(duration));
-    const latencies = messages
-      .filter((message) => message.speaker === AiccMessageSpeaker.AI)
-      .map((message) => message.latencyMs)
-      .filter((latency): latency is number => typeof latency === "number");
-
-    return {
-      success: true,
-      data: {
-        range: {
-          from: range.from.toISOString(),
-          to: range.to.toISOString(),
-          channel: range.channel,
-        },
-        sessions: {
-          total: totalSessions,
-          completed,
-          handoff,
-          abandoned,
-          active,
-        },
-        containmentRate: this.rate(completed, totalSessions),
-        handoffRate: this.rate(handoff, totalSessions),
-        topIntents: this.topCounts(
-          messages
-            .filter(
-              (message) => message.speaker === AiccMessageSpeaker.CUSTOMER
-            )
-            .map((message) => message.intent)
-            .filter((intent): intent is string => Boolean(intent))
-        ),
-        tools: {
-          totalCalls: tools.length,
-          successRate: this.rate(successfulTools, tools.length),
-          avgDurationMs: this.average(toolDurations),
-        },
-        handoff: {
-          topReasons: this.topCounts(handoffs.map((item) => item.reason)),
-          open: this.countByValue(
-            handoffs.map((item) => item.status),
-            AiccHandoffStatus.OPEN
-          ),
-          resolved: this.countByValue(
-            handoffs.map((item) => item.status),
-            AiccHandoffStatus.RESOLVED
-          ),
-        },
-        latency: {
-          avgResponseMs: this.average(latencies),
-          p95ResponseMs: this.percentile(latencies, 0.95),
-        },
-        supportCounts: {
-          bookingSupport: this.countByValue(
-            sessionRows.map((session) => session.outcome),
-            AiccOutcome.BOOKING_SUPPORT
-          ),
-          paymentIssue: handoffs.filter(
-            (item) => item.reason === AiccHandoffReason.PAYMENT_ISSUE
-          ).length,
-          ticketLookup: this.countByValue(
-            messages
-              .filter(
-                (message) => message.speaker === AiccMessageSpeaker.CUSTOMER
-              )
-              .map((message) => message.intent),
-            "ticket_lookup"
-          ),
-        },
-      },
-    };
   }
 
-  async createHandoff(
-    dto: CreateAiccHandoffDto
-  ): Promise<AiccApiResponse<AiccHandoffResponse>> {
+  async createHandoff(dto: CreateAiccHandoffDto): Promise<AiccHandoffResponse> {
     const session = await this.findSessionOrThrow(dto.sessionId);
     const [handoff] = await this.aiccHandoffModel.create([
       {
@@ -620,12 +688,12 @@ export class AiccService {
       AiccSessionStatus.HANDOFF
     );
 
-    return { success: true, data: response };
+    return response;
   }
 
   async listHandoffs(
     query: QueryAiccHandoffDto
-  ): Promise<AiccApiResponse<AiccHandoffListResponse>> {
+  ): Promise<AiccHandoffListResponse> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -644,43 +712,24 @@ export class AiccService {
         .sort({ priority: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .lean()
+        .lean<AiccHandoffView[]>()
         .exec(),
       this.aiccHandoffModel.countDocuments(filter).exec(),
     ]);
 
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      success: true,
-      data: {
-        items: items.map((item) =>
-          this.toHandoffResponse(item as unknown as AiccHandoffDocument)
-        ),
-        meta: {
-          currentPage: page,
-          itemsPerPage: limit,
-          totalItems: total,
-          totalPages,
-          hasPreviousPage: page > 1,
-          hasNextPage: page < totalPages,
-        },
-      },
-    };
+    return this.handoffListResponse(items, page, limit, total);
   }
 
-  async getHandoff(
-    handoffId: string
-  ): Promise<AiccApiResponse<AiccHandoffResponse>> {
+  async getHandoff(handoffId: string): Promise<AiccHandoffResponse> {
     const handoff = await this.findHandoffOrThrow(handoffId);
-    return { success: true, data: this.toHandoffResponse(handoff) };
+    return this.toHandoffResponse(handoff);
   }
 
   async updateHandoff(
     handoffId: string,
     dto: UpdateAiccHandoffDto,
     admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccHandoffResponse>> {
+  ): Promise<AiccHandoffResponse> {
     const existing = await this.findHandoffOrThrow(handoffId);
     const nextStatus = dto.status ?? existing.status;
     const now = new Date();
@@ -741,13 +790,13 @@ export class AiccService {
       this.aiccGateway.emitHandoffResolved(response);
     }
 
-    return { success: true, data: response };
+    return response;
   }
 
   async createKnowledge(
     dto: CreateAiccKnowledgeDto,
     admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     const [knowledge] = await this.aiccKnowledgeModel.create([
       {
         title: dto.title.trim(),
@@ -765,12 +814,12 @@ export class AiccService {
 
     this.logger.log(`AICC KB created: id=${knowledge._id?.toString()}`);
 
-    return { success: true, data: this.toKnowledgeResponse(knowledge) };
+    return this.toKnowledgeResponse(knowledge);
   }
 
   async listKnowledge(
     query: QueryAiccKnowledgeDto
-  ): Promise<AiccApiResponse<AiccKnowledgeListResponse>> {
+  ): Promise<AiccKnowledgeListResponse> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -787,9 +836,9 @@ export class AiccService {
       filter.$text = { $search: search };
     }
 
-    const sort: { [key: string]: SortOrder | { $meta: string } } = search
-      ? { score: { $meta: "textScore" } }
-      : { updatedAt: -1 };
+    const sort: Partial<
+      Record<"score" | "updatedAt", SortOrder | { $meta: "textScore" }>
+    > = search ? { score: { $meta: "textScore" } } : { updatedAt: -1 };
 
     const [items, total] = await Promise.all([
       this.aiccKnowledgeModel
@@ -797,43 +846,24 @@ export class AiccService {
         .sort(sort)
         .skip(skip)
         .limit(limit)
-        .lean()
+        .lean<AiccKnowledgeView[]>()
         .exec(),
       this.aiccKnowledgeModel.countDocuments(filter).exec(),
     ]);
 
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      success: true,
-      data: {
-        items: items.map((item) =>
-          this.toKnowledgeResponse(item as unknown as AiccKnowledgeDocument)
-        ),
-        meta: {
-          currentPage: page,
-          itemsPerPage: limit,
-          totalItems: total,
-          totalPages,
-          hasPreviousPage: page > 1,
-          hasNextPage: page < totalPages,
-        },
-      },
-    };
+    return this.knowledgeListResponse(items, page, limit, total);
   }
 
-  async getKnowledge(
-    knowledgeId: string
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  async getKnowledge(knowledgeId: string): Promise<AiccKnowledgeResponse> {
     const knowledge = await this.findKnowledgeOrThrow(knowledgeId);
-    return { success: true, data: this.toKnowledgeResponse(knowledge) };
+    return this.toKnowledgeResponse(knowledge);
   }
 
   async updateKnowledge(
     knowledgeId: string,
     dto: UpdateAiccKnowledgeDto,
     admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     const existing = await this.findKnowledgeOrThrow(knowledgeId);
     const update: Partial<AiccKnowledge> = {
       updatedBy: this.getUserObjectId(admin),
@@ -871,13 +901,13 @@ export class AiccService {
       throw new NotFoundException("Không tìm thấy tài liệu KB AICC");
     }
 
-    return { success: true, data: this.toKnowledgeResponse(updated) };
+    return this.toKnowledgeResponse(updated);
   }
 
   async archiveKnowledge(
     knowledgeId: string,
     admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     await this.findKnowledgeOrThrow(knowledgeId);
     const updated = await this.aiccKnowledgeModel.findByIdAndUpdate(
       knowledgeId,
@@ -894,19 +924,19 @@ export class AiccService {
       throw new NotFoundException("Không tìm thấy tài liệu KB AICC");
     }
 
-    return { success: true, data: this.toKnowledgeResponse(updated) };
+    return this.toKnowledgeResponse(updated);
   }
 
   async searchKnowledge(
     dto: SearchAiccKnowledgeDto
-  ): Promise<AiccApiResponse<KnowledgeSearchResult>> {
+  ): Promise<KnowledgeSearchResult> {
     const result = await this.knowledgeTool.searchKnowledge({
       query: dto.query,
       category: dto.category,
       topK: dto.topK,
     });
 
-    return { success: true, data: result };
+    return result;
   }
 
   private async findSessionOrThrow(
@@ -1054,9 +1084,11 @@ export class AiccService {
     };
   }
 
-  private toHandoffResponse(handoff: AiccHandoffDocument): AiccHandoffResponse {
-    const timestamped = handoff as AiccHandoffDocument & TimestampedDocument;
-    const id = handoff._id?.toString();
+  private toHandoffResponse(
+    handoff: AiccHandoffDocument | AiccHandoffView
+  ): AiccHandoffResponse {
+    const timestamped = handoff as TimestampedDocument;
+    const id = handoff._id.toString();
 
     return {
       id,
@@ -1079,11 +1111,10 @@ export class AiccService {
   }
 
   private toKnowledgeResponse(
-    knowledge: AiccKnowledgeDocument
+    knowledge: AiccKnowledgeDocument | AiccKnowledgeView
   ): AiccKnowledgeResponse {
-    const timestamped = knowledge as AiccKnowledgeDocument &
-      TimestampedDocument;
-    const id = knowledge._id?.toString();
+    const timestamped = knowledge as TimestampedDocument;
+    const id = knowledge._id.toString();
 
     return {
       id,
@@ -1114,11 +1145,9 @@ export class AiccService {
     };
   }
 
-  private resolveAnalyticsRange(query: QueryAiccAnalyticsDto): {
-    from: Date;
-    to: Date;
-    channel: AiccChannel | "all";
-  } {
+  private resolveAnalyticsRange(
+    query: QueryAiccAnalyticsDto
+  ): AiccAnalyticsRange {
     const to = query.to ? new Date(query.to) : new Date();
     const from = query.from
       ? new Date(query.from)

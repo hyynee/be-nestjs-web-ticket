@@ -1,7 +1,11 @@
+ARG NODE_IMAGE=node:22-bookworm-slim
+
 # Stage 1: Build stage
-FROM cgr.dev/chainguard/node:latest-dev@sha256:7b7b121a191d77b40f52a8adf5bd9af2329dbef08e3aae3eb6fe8eb912d1660e AS builder
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /app
+
+RUN corepack enable
 
 COPY package.json pnpm-lock.yaml ./
 
@@ -12,9 +16,11 @@ COPY . .
 RUN pnpm build
 
 # Stage 2: Production dependencies
-FROM cgr.dev/chainguard/node:latest-dev@sha256:7b7b121a191d77b40f52a8adf5bd9af2329dbef08e3aae3eb6fe8eb912d1660e AS production-deps
+FROM ${NODE_IMAGE} AS production-deps
 
 WORKDIR /app
+
+RUN corepack enable
 
 COPY package.json pnpm-lock.yaml ./
 
@@ -22,7 +28,7 @@ RUN pnpm install --frozen-lockfile --prod --ignore-scripts && \
     pnpm store prune
 
 # Stage 3: Runtime
-FROM cgr.dev/chainguard/node:latest@sha256:b73c955ff6449b039c260fdd819b290c127dc8b94c00799535744452270f19f5 AS production
+FROM ${NODE_IMAGE} AS production
 
 WORKDIR /app
 

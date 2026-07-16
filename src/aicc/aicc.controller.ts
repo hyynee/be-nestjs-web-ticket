@@ -34,7 +34,6 @@ import {
 import { QueryAiccAnalyticsDto } from "./dto/query-aicc-analytics.dto";
 import {
   AiccAnalyticsDashboardResponse,
-  AiccApiResponse,
   AiccHandoffListResponse,
   AiccHandoffResponse,
   AiccKnowledgeListResponse,
@@ -57,7 +56,7 @@ export class AiccController {
   createSession(
     @Body() dto: CreateAiccSessionDto,
     @CurrentUser() user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccSessionResponse>> {
+  ): Promise<AiccSessionResponse> {
     return this.aiccService.createSession(dto, user);
   }
 
@@ -66,7 +65,7 @@ export class AiccController {
   getSession(
     @Param("sessionId") sessionId: string,
     @CurrentUser() user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccSessionResponse>> {
+  ): Promise<AiccSessionResponse> {
     return this.aiccService.getSession(sessionId, user);
   }
 
@@ -76,7 +75,7 @@ export class AiccController {
     @Param("sessionId") sessionId: string,
     @Body() dto: SendAiccMessageDto,
     @CurrentUser() user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccMessageResponse>> {
+  ): Promise<AiccMessageResponse> {
     return this.aiccService.sendMessage(sessionId, dto, user);
   }
 
@@ -86,7 +85,7 @@ export class AiccController {
     @Param("sessionId") sessionId: string,
     @Body() dto: CreateAiccTranscriptDto,
     @CurrentUser() user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccTranscriptResponse>> {
+  ): Promise<AiccTranscriptResponse> {
     return this.aiccService.createTranscript(sessionId, dto, user);
   }
 
@@ -96,7 +95,7 @@ export class AiccController {
     @Param("sessionId") sessionId: string,
     @Body() dto: EndAiccSessionDto,
     @CurrentUser() user?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccSessionResponse>> {
+  ): Promise<AiccSessionResponse> {
     return this.aiccService.endSession(sessionId, dto, user);
   }
 
@@ -106,7 +105,7 @@ export class AiccController {
   @Post("handoffs")
   createHandoff(
     @Body() dto: CreateAiccHandoffDto
-  ): Promise<AiccApiResponse<AiccHandoffResponse>> {
+  ): Promise<AiccHandoffResponse> {
     return this.aiccService.createHandoff(dto);
   }
 
@@ -116,7 +115,7 @@ export class AiccController {
   @Get("handoffs")
   listHandoffs(
     @Query() query: QueryAiccHandoffDto
-  ): Promise<AiccApiResponse<AiccHandoffListResponse>> {
+  ): Promise<AiccHandoffListResponse> {
     return this.aiccService.listHandoffs(query);
   }
 
@@ -126,7 +125,7 @@ export class AiccController {
   @Get("handoffs/:handoffId")
   getHandoff(
     @Param("handoffId") handoffId: string
-  ): Promise<AiccApiResponse<AiccHandoffResponse>> {
+  ): Promise<AiccHandoffResponse> {
     return this.aiccService.getHandoff(handoffId);
   }
 
@@ -138,7 +137,7 @@ export class AiccController {
     @Param("handoffId") handoffId: string,
     @Body() dto: UpdateAiccHandoffDto,
     @CurrentUser() admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccHandoffResponse>> {
+  ): Promise<AiccHandoffResponse> {
     return this.aiccService.updateHandoff(handoffId, dto, admin);
   }
 
@@ -149,7 +148,7 @@ export class AiccController {
   createKnowledge(
     @Body() dto: CreateAiccKnowledgeDto,
     @CurrentUser() admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     return this.aiccService.createKnowledge(dto, admin);
   }
 
@@ -159,7 +158,7 @@ export class AiccController {
   @Get("kb")
   listKnowledge(
     @Query() query: QueryAiccKnowledgeDto
-  ): Promise<AiccApiResponse<AiccKnowledgeListResponse>> {
+  ): Promise<AiccKnowledgeListResponse> {
     return this.aiccService.listKnowledge(query);
   }
 
@@ -169,7 +168,7 @@ export class AiccController {
   @Get("kb/:knowledgeId")
   getKnowledge(
     @Param("knowledgeId") knowledgeId: string
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     return this.aiccService.getKnowledge(knowledgeId);
   }
 
@@ -181,7 +180,7 @@ export class AiccController {
     @Param("knowledgeId") knowledgeId: string,
     @Body() dto: UpdateAiccKnowledgeDto,
     @CurrentUser() admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     return this.aiccService.updateKnowledge(knowledgeId, dto, admin);
   }
 
@@ -192,7 +191,7 @@ export class AiccController {
   archiveKnowledge(
     @Param("knowledgeId") knowledgeId: string,
     @CurrentUser() admin?: JwtPayload | null
-  ): Promise<AiccApiResponse<AiccKnowledgeResponse>> {
+  ): Promise<AiccKnowledgeResponse> {
     return this.aiccService.archiveKnowledge(knowledgeId, admin);
   }
 
@@ -202,7 +201,7 @@ export class AiccController {
   @Post("kb/search")
   searchKnowledge(
     @Body() dto: SearchAiccKnowledgeDto
-  ): Promise<AiccApiResponse<KnowledgeSearchResult>> {
+  ): Promise<KnowledgeSearchResult> {
     return this.aiccService.searchKnowledge(dto);
   }
 
@@ -212,7 +211,7 @@ export class AiccController {
   @Get("analytics/dashboard")
   getAnalyticsDashboard(
     @Query() query: QueryAiccAnalyticsDto
-  ): Promise<AiccApiResponse<AiccAnalyticsDashboardResponse>> {
+  ): Promise<AiccAnalyticsDashboardResponse> {
     return this.aiccService.getAnalyticsDashboard(query);
   }
 }

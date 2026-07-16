@@ -1,4 +1,14 @@
-import { Controller, Post, Body, Get, Query, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Logger,
+  NotFoundException,
+  Post,
+  Body,
+  Query,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { ChatService } from "./chat.service";
 import { OllamaService } from "./ollama.service";
@@ -12,6 +22,10 @@ export class ChatController {
     private readonly chatService: ChatService,
     private readonly ollamaService: OllamaService
   ) {}
+
+  private buildChatResponse(data: ChatResponseDto): ChatResponseDto {
+    return data;
+  }
 
   @Throttle({ short: { limit: 15, ttl: 60000 } })
   @Post("message")
@@ -31,38 +45,29 @@ export class ChatController {
         aiResponse
       );
 
-      return {
-        success: true,
-        data: {
-          message: result.response,
-          events: result.eventData.map((event) => ({
-            id: event.id.toString(),
-            title: event.title,
-            description: event.description,
-            startDate: event.startDate.toISOString(),
-            endDate: event.endDate.toISOString(),
-            location: event.location,
-            thumbnail: event.thumbnail,
-            isActiveNow: event.isActiveNow,
-            status: event.status,
-          })),
-          intent: result.intent,
-          sessionId: sessionId || this.createSessionId(),
-          timestamp: result.timestamp,
-        },
-      };
+      return this.buildChatResponse({
+        message: result.response,
+        events: result.eventData.map((event) => ({
+          id: event.id.toString(),
+          title: event.title,
+          description: event.description,
+          startDate: event.startDate.toISOString(),
+          endDate: event.endDate.toISOString(),
+          location: event.location,
+          thumbnail: event.thumbnail,
+          isActiveNow: event.isActiveNow,
+          status: event.status,
+        })),
+        intent: result.intent,
+        sessionId: sessionId || this.createSessionId(),
+        timestamp: result.timestamp,
+      });
     } catch (error) {
       this.logger.error("Lỗi xử lý tin nhắn:", error);
-      return {
-        success: false,
-        data: {
-          message: "Xin lỗi, tôi gặp sự cố. Vui lòng thử lại.",
-          events: [],
-          intent: "error",
-          sessionId: body.sessionId || this.createSessionId(),
-          timestamp: new Date(),
-        },
-      };
+      throw new ServiceUnavailableException({
+        code: "CHAT_MESSAGE_UNAVAILABLE",
+        message: "Xin lỗi, tôi gặp sự cố. Vui lòng thử lại.",
+      });
     }
   }
 
@@ -84,37 +89,28 @@ export class ChatController {
         aiResponse
       );
 
-      return {
-        success: true,
-        data: {
-          message: result.response,
-          events: result.eventData.slice(0, 5).map((event) => ({
-            id: event.id.toString(),
-            title: event.title,
-            description: event.description,
-            startDate: event.startDate.toISOString(),
-            endDate: event.endDate.toISOString(),
-            location: event.location,
-            thumbnail: event.thumbnail,
-            isActiveNow: event.isActiveNow,
-            status: event.status,
-          })),
-          intent: "suggest",
-          sessionId: this.createSessionId(),
-          timestamp: result.timestamp,
-        },
-      };
+      return this.buildChatResponse({
+        message: result.response,
+        events: result.eventData.slice(0, 5).map((event) => ({
+          id: event.id.toString(),
+          title: event.title,
+          description: event.description,
+          startDate: event.startDate.toISOString(),
+          endDate: event.endDate.toISOString(),
+          location: event.location,
+          thumbnail: event.thumbnail,
+          isActiveNow: event.isActiveNow,
+          status: event.status,
+        })),
+        intent: "suggest",
+        sessionId: this.createSessionId(),
+        timestamp: result.timestamp,
+      });
     } catch {
-      return {
-        success: false,
-        data: {
-          message: "Không thể tải đề xuất.",
-          events: [],
-          intent: "error",
-          sessionId: this.createSessionId(),
-          timestamp: new Date(),
-        },
-      };
+      throw new ServiceUnavailableException({
+        code: "CHAT_SUGGESTIONS_UNAVAILABLE",
+        message: "Không thể tải đề xuất.",
+      });
     }
   }
 
@@ -122,11 +118,14 @@ export class ChatController {
   async getEventDetails(
     @Query("id") eventId: string
   ): Promise<ChatResponseDto> {
-    try {
-      if (!eventId) {
-        throw new Error("Thiếu ID sự kiện");
-      }
+    if (!eventId) {
+      throw new BadRequestException({
+        code: "CHAT_EVENT_ID_REQUIRED",
+        message: "Thiếu ID sự kiện",
+      });
+    }
 
+    try {
       const query = `Xem chi tiết sự kiện ID: ${eventId}`;
       const prompt = await this.chatService.createPrompt(query);
       const aiResponse = await this.ollamaService.generateResponse(prompt);
@@ -135,37 +134,28 @@ export class ChatController {
         aiResponse
       );
 
-      return {
-        success: true,
-        data: {
-          message: result.response,
-          events: result.eventData.map((event) => ({
-            id: event.id.toString(),
-            title: event.title,
-            description: event.description,
-            startDate: event.startDate.toISOString(),
-            endDate: event.endDate.toISOString(),
-            location: event.location,
-            thumbnail: event.thumbnail,
-            isActiveNow: event.isActiveNow,
-            status: event.status,
-          })),
-          intent: "event_detail",
-          sessionId: this.createSessionId(),
-          timestamp: result.timestamp,
-        },
-      };
+      return this.buildChatResponse({
+        message: result.response,
+        events: result.eventData.map((event) => ({
+          id: event.id.toString(),
+          title: event.title,
+          description: event.description,
+          startDate: event.startDate.toISOString(),
+          endDate: event.endDate.toISOString(),
+          location: event.location,
+          thumbnail: event.thumbnail,
+          isActiveNow: event.isActiveNow,
+          status: event.status,
+        })),
+        intent: "event_detail",
+        sessionId: this.createSessionId(),
+        timestamp: result.timestamp,
+      });
     } catch {
-      return {
-        success: false,
-        data: {
-          message: "Không tìm thấy sự kiện.",
-          events: [],
-          intent: "error",
-          sessionId: this.createSessionId(),
-          timestamp: new Date(),
-        },
-      };
+      throw new NotFoundException({
+        code: "CHAT_EVENT_NOT_FOUND",
+        message: "Không tìm thấy sự kiện.",
+      });
     }
   }
 

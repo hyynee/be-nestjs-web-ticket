@@ -16,13 +16,57 @@ import { ApiCookieAuth } from "@nestjs/swagger";
 import config from "@src/config/config";
 import { RolesGuard } from "@src/guards/role.guard";
 import { Roles } from "@src/common/decorators/roles.decorator";
-import { v2 as cloudinary } from "cloudinary";
+import {
+  UploadApiOptions,
+  UploadApiResponse,
+  v2 as cloudinary,
+} from "cloudinary";
 import * as multer from "multer";
 import { UserService } from "@src/user/user.service";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 
 const storage = multer.memoryStorage();
+const PRIVATE_IMAGE_EXPIRES_IN_SECONDS = 24 * 3600;
+const AVATAR_EXPIRES_IN_SECONDS = 3600;
+
+interface AvatarReference {
+  avatarPublicId: string | null;
+}
+
+interface AvatarLookupService {
+  getUserAvatarReference?: (
+    userId: string
+  ) => Promise<{ avatarPublicId?: string | null }>;
+  getUserById?: (userId: string) => Promise<{ avatarPublicId?: string | null }>;
+}
+
+function uploadImageBuffer(
+  buffer: Buffer,
+  options: UploadApiOptions
+): Promise<UploadApiResponse> {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      options,
+      (error, result) => {
+        if (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Cloudinary upload failed";
+          reject(new Error(errorMessage));
+          return;
+        }
+
+        if (!result) {
+          reject(new Error("Cloudinary upload returned no result"));
+          return;
+        }
+
+        resolve(result);
+      }
+    );
+    uploadStream.end(buffer);
+  });
+}
 
 @Controller("upload")
 export class UploadController {
@@ -32,6 +76,19 @@ export class UploadController {
       api_key: config.CLOUDINARY_API_KEY,
       api_secret: config.CLOUDINARY_API_SECRET,
     });
+  }
+
+  private async getAvatarReference(userId: string): Promise<AvatarReference> {
+    const avatarLookupService = this.userService as AvatarLookupService;
+
+    if (avatarLookupService.getUserAvatarReference) {
+      const reference =
+        await avatarLookupService.getUserAvatarReference(userId);
+      return { avatarPublicId: reference.avatarPublicId ?? null };
+    }
+
+    const legacyUser = await avatarLookupService.getUserById?.(userId);
+    return { avatarPublicId: legacyUser?.avatarPublicId ?? null };
   }
 
   // ==================== ADMIN ENDPOINTS ====================
@@ -57,31 +114,14 @@ export class UploadController {
     }
 
     try {
-      const uploadResult: any = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            resource_type: "image",
-            type: "private",
-            folder: "private_uploads",
-            access_mode: "authenticated",
-          },
-          (error, result) => {
-            if (error) {
-              const errorMessage =
-                error instanceof Error
-                  ? error.message
-                  : "Cloudinary upload failed";
-              reject(new Error(errorMessage));
-              return;
-            }
-
-            resolve(result);
-          }
-        );
-        uploadStream.end(file.buffer);
+      const uploadResult = await uploadImageBuffer(file.buffer, {
+        resource_type: "image",
+        type: "private",
+        folder: "private_uploads",
+        access_mode: "authenticated",
       });
 
-      const expiresIn = 24 * 3600;
+      const expiresIn = PRIVATE_IMAGE_EXPIRES_IN_SECONDS;
       const signedUrl = cloudinary.url(uploadResult.public_id, {
         type: "private",
         sign_url: true,
@@ -120,7 +160,7 @@ export class UploadController {
     }
 
     try {
-      const expiresIn = 24 * 3600;
+      const expiresIn = PRIVATE_IMAGE_EXPIRES_IN_SECONDS;
       const signedUrl = cloudinary.url(publicId, {
         type: "private",
         sign_url: true,
@@ -161,7 +201,7 @@ export class UploadController {
     @UploadedFile() file: Express.Multer.File,
     @CurrentUser() user: JwtPayload
   ) {
-    const dbUser = await this.userService.getUserById(user.userId);
+    const dbUser = await this.getAvatarReference(user.userId);
 
     if (!file) {
       throw new HttpException("No file uploaded", HttpStatus.BAD_REQUEST);
@@ -187,41 +227,22 @@ export class UploadController {
         }
       }
 
-      // Upload avatar mới
-      const uploadResult: any = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            resource_type: "image",
-            type: "private",
-            folder: `avatars/${user.userId}`,
-            access_mode: "authenticated",
-            transformation: [
-              { width: 400, height: 400, crop: "fill", gravity: "face" },
-              { quality: "auto:good" },
-            ],
-          },
-          (error, result) => {
-            if (error) {
-              const errorMessage =
-                error instanceof Error
-                  ? error.message
-                  : "Cloudinary upload failed";
-              reject(new Error(errorMessage));
-              return;
-            }
-
-            resolve(result);
-          }
-        );
-        uploadStream.end(file.buffer);
+      const uploadResult = await uploadImageBuffer(file.buffer, {
+        resource_type: "image",
+        type: "private",
+        folder: `avatars/${user.userId}`,
+        access_mode: "authenticated",
+        transformation: [
+          { width: 400, height: 400, crop: "fill", gravity: "face" },
+          { quality: "auto:good" },
+        ],
       });
 
       await this.userService.updateProfileUser(user.userId, {
         avatarPublicId: uploadResult.public_id,
       });
 
-      // Generate signed URL
-      const expiresIn = 3600;
+      const expiresIn = AVATAR_EXPIRES_IN_SECONDS;
       const avatarUrl = cloudinary.url(uploadResult.public_id, {
         type: "private",
         sign_url: true,
@@ -251,7 +272,7 @@ export class UploadController {
   @UseGuards(AuthGuard("jwt"))
   @Delete("avatar")
   async deleteAvatar(@CurrentUser() user: JwtPayload) {
-    const dbUser = await this.userService.getUserById(user.userId);
+    const dbUser = await this.getAvatarReference(user.userId);
 
     if (!dbUser.avatarPublicId) {
       throw new HttpException("No avatar to delete", HttpStatus.BAD_REQUEST);
@@ -276,7 +297,7 @@ export class UploadController {
   @UseGuards(AuthGuard("jwt"))
   @Get("refresh-avatar-url")
   async refreshAvatarUrl(@CurrentUser() user: JwtPayload) {
-    const dbUser = await this.userService.getUserById(user.userId);
+    const dbUser = await this.getAvatarReference(user.userId);
     if (!dbUser.avatarPublicId) {
       throw new HttpException("User has no avatar", HttpStatus.BAD_REQUEST);
     }
