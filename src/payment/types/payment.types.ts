@@ -118,6 +118,13 @@ export type BookingForConfirmationMail = {
   quantity: number;
   totalPrice: number;
   userId?: Types.ObjectId;
+  /** Facts as they were at booking time — preferred over eventId/zoneId (live, populated) when present. Absent on bookings created before this field existed. */
+  snapshot?: {
+    eventTitle: string;
+    location: string;
+    eventStartDate: Date;
+    zoneName: string;
+  };
 };
 
 export type CreatedTicketForMail = {

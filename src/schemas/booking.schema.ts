@@ -36,6 +36,47 @@ export class SeatLock extends Document {
 export const SeatLockSchema = SchemaFactory.createForClass(SeatLock);
 SeatLockSchema.index({ eventId: 1, areaId: 1, seat: 1 }, { unique: true });
 
+/**
+ * Immutable copy of event/zone/area facts as they were at booking time.
+ * Populated once in BookingService.createBooking() and never touched again —
+ * later edits to the Event/Zone/Area documents (title, price, dates, ...)
+ * must not change how a past booking reads. Absent on bookings created
+ * before this field existed; consumers fall back to populating
+ * eventId/zoneId/areaId live for those.
+ */
+@Schema({ _id: false })
+export class BookingSnapshot {
+  @Prop({ type: String, required: true })
+  eventTitle: string;
+
+  @Prop({ type: Date, required: true })
+  eventStartDate: Date;
+
+  @Prop({ type: Date, required: true })
+  eventEndDate: Date;
+
+  @Prop({ type: String, required: true })
+  location: string;
+
+  @Prop({ type: String, required: true })
+  zoneName: string;
+
+  @Prop({ type: String })
+  areaName?: string;
+
+  @Prop({ type: [String] })
+  seats?: string[];
+
+  @Prop({ type: Number, required: true, min: 0 })
+  pricePerTicket: number;
+
+  @Prop({ type: String, required: true })
+  currency: string;
+}
+
+export const BookingSnapshotSchema =
+  SchemaFactory.createForClass(BookingSnapshot);
+
 @Schema({ timestamps: true })
 export class Booking extends Document {
   @Prop({ required: true, unique: true })
@@ -67,6 +108,9 @@ export class Booking extends Document {
 
   @Prop({ type: Number, required: true, min: 0 })
   totalPrice: number;
+
+  @Prop({ type: BookingSnapshotSchema })
+  snapshot?: BookingSnapshot;
 
   @Prop({
     type: String,

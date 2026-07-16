@@ -225,6 +225,31 @@ describe("ExportService", () => {
       expect(result[0].status).toBe("valid");
     });
 
+    it("prefers the booking's snapshot over the live-populated event/zone when present", async () => {
+      const ticketWithSnapshot = [
+        {
+          ...mockTickets[0],
+          eventId: { title: "Live title (renamed since booking)" },
+          zoneId: { name: "Live zone (renamed since booking)" },
+          bookingId: {
+            snapshot: {
+              eventTitle: "Original title at booking time",
+              zoneName: "Original zone at booking time",
+            },
+          },
+        },
+      ];
+      ticketModel.find.mockReturnValue(makeFindChain(ticketWithSnapshot));
+
+      const result = await (service as any).getTicketData({
+        eventId: new Types.ObjectId().toString(),
+        format: "csv",
+      });
+
+      expect(result[0].eventTitle).toBe("Original title at booking time");
+      expect(result[0].zoneName).toBe("Original zone at booking time");
+    });
+
     it("handles missing populated references", async () => {
       const ticketWithNullRefs = [
         {
@@ -304,10 +329,11 @@ describe("ExportService", () => {
         format: "csv",
       });
 
-      expect(chain.populate).toHaveBeenCalledTimes(3);
+      expect(chain.populate).toHaveBeenCalledTimes(4);
       expect(chain.populate).toHaveBeenCalledWith("eventId", "title");
       expect(chain.populate).toHaveBeenCalledWith("zoneId", "name");
       expect(chain.populate).toHaveBeenCalledWith("userId", "email name");
+      expect(chain.populate).toHaveBeenCalledWith("bookingId", "snapshot");
     });
   });
 

@@ -447,6 +447,113 @@ describe("BookingService", () => {
       );
     });
 
+    it("populates an immutable snapshot of event/zone/area facts at booking time (seated zone)", async () => {
+      const customEvent = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: false,
+        status: "active",
+        title: "Concert A",
+        location: "HCM",
+        startDate: new Date("2030-01-01"),
+        endDate: new Date("2030-01-02"),
+      };
+      mockCreateContext(
+        {
+          _id: new Types.ObjectId(zoneId),
+          eventId: new Types.ObjectId(eventId),
+          name: "VIP",
+          price: 120,
+          hasSeating: true,
+          isDeleted: false,
+        },
+        customEvent
+      );
+
+      areaModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          session: jest.fn().mockResolvedValue({
+            _id: new Types.ObjectId(areaId),
+            name: "Row A",
+            seats: ["A1", "A2", "A3"],
+          }),
+        }),
+      });
+
+      bookingModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnValue({
+          select: jest.fn().mockResolvedValue(null),
+        }),
+      });
+
+      zoneModel.findOneAndUpdate.mockResolvedValue({
+        _id: new Types.ObjectId(zoneId),
+      });
+      mockEmitZoneSnapshot();
+
+      await service.createBooking(userId, {
+        ...baseDto,
+        quantity: 2,
+        areaId,
+        seats: ["A1", "A2"],
+      } as any);
+
+      const bookingPayload = bookingModel.mock.calls[0][0];
+      expect(bookingPayload.snapshot).toEqual({
+        eventTitle: "Concert A",
+        eventStartDate: customEvent.startDate,
+        eventEndDate: customEvent.endDate,
+        location: "HCM",
+        zoneName: "VIP",
+        areaName: "Row A",
+        seats: ["A1", "A2"],
+        pricePerTicket: 120,
+        currency: "VND",
+      });
+    });
+
+    it("populates a snapshot without seats/areaName for a non-seating (general admission) zone", async () => {
+      const customEvent = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: false,
+        status: "active",
+        title: "Festival B",
+        location: "Da Nang",
+        startDate: new Date("2030-03-01"),
+        endDate: new Date("2030-03-02"),
+      };
+      mockCreateContext(
+        {
+          _id: new Types.ObjectId(zoneId),
+          eventId: new Types.ObjectId(eventId),
+          name: "General",
+          price: 80,
+          hasSeating: false,
+          isDeleted: false,
+        },
+        customEvent
+      );
+
+      zoneModel.findOneAndUpdate.mockResolvedValue({
+        _id: new Types.ObjectId(zoneId),
+      });
+      mockEmitZoneSnapshot();
+
+      await service.createBooking(userId, baseDto as any);
+
+      const bookingPayload = bookingModel.mock.calls[0][0];
+      expect(bookingPayload.snapshot).toEqual({
+        eventTitle: "Festival B",
+        eventStartDate: customEvent.startDate,
+        eventEndDate: customEvent.endDate,
+        location: "Da Nang",
+        zoneName: "General",
+        areaName: undefined,
+        seats: undefined,
+        pricePerTicket: 80,
+        currency: "VND",
+      });
+    });
+
     it("throws NotFoundException when zone does not exist", async () => {
       eventModel.findById.mockReturnValue({
         session: jest.fn().mockResolvedValue({

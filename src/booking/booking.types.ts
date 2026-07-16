@@ -1,5 +1,9 @@
 import { Types } from "mongoose";
-import { BookingStatus, PaymentStatus } from "@src/schemas/booking.schema";
+import {
+  BookingSnapshot,
+  BookingStatus,
+  PaymentStatus,
+} from "@src/schemas/booking.schema";
 
 export interface BookingCreatePayload {
   userId: Types.ObjectId;
@@ -11,6 +15,7 @@ export interface BookingCreatePayload {
   quantity: number;
   pricePerTicket: number;
   totalPrice: number;
+  snapshot?: BookingSnapshot;
   bookingCode: string;
   expiresAt: Date;
   status: BookingStatus;

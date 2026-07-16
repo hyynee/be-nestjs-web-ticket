@@ -662,10 +662,10 @@ export class PaymentService {
       email: customerEmail || booking.customerEmail,
       customerName: customerName || booking.customerName || "Khách hàng",
       bookingCode: booking.bookingCode,
-      eventTitle: booking.eventId.title,
-      eventLocation: booking.eventId.location,
-      eventDate: booking.eventId.startDate,
-      zoneName: booking.zoneId.name,
+      eventTitle: booking.snapshot?.eventTitle ?? booking.eventId.title,
+      eventLocation: booking.snapshot?.location ?? booking.eventId.location,
+      eventDate: booking.snapshot?.eventStartDate ?? booking.eventId.startDate,
+      zoneName: booking.snapshot?.zoneName ?? booking.zoneId.name,
       seats: booking.seats || [],
       quantity: booking.quantity,
       totalPrice,
@@ -744,7 +744,7 @@ export class PaymentService {
             {
               new: true,
               select:
-                "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId",
+                "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId snapshot",
               session: dbSession,
             }
           )
@@ -758,7 +758,7 @@ export class PaymentService {
           booking = await this.bookingModel
             .findOne({ _id: bookingId, bookingCode, isDeleted: false })
             .select(
-              "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId status paymentStatus"
+              "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId snapshot status paymentStatus"
             )
             .session(dbSession)
             .populate("eventId", "title location startDate endDate")
@@ -1196,7 +1196,7 @@ export class PaymentService {
             {
               new: true,
               select:
-                "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId",
+                "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId snapshot",
               session: dbSession,
             }
           )

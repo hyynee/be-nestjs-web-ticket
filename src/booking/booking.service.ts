@@ -369,6 +369,8 @@ export class BookingService {
           notes: data.notes,
         };
 
+        let areaNameForSnapshot: string | undefined;
+
         if (zone.hasSeating) {
           if (!data.areaId) {
             throw new BadRequestException("Vui lòng chọn hàng ghế (area)");
@@ -379,11 +381,12 @@ export class BookingService {
               zoneId: new Types.ObjectId(data.zoneId),
               isDeleted: false,
             })
-            .select("seats")
+            .select("seats name")
             .session(session);
           if (!area) {
             throw new NotFoundException("Hàng ghế không tồn tại");
           }
+          areaNameForSnapshot = area.name;
 
           if (data.seats && data.seats.length > 0) {
             if (data.seats.length !== data.quantity) {
@@ -471,6 +474,21 @@ export class BookingService {
           bookingData.seats = [];
           bookingData.areaId = undefined;
         }
+
+        // Immutable copy of event/zone/area facts as of right now — later
+        // edits to those documents (title, price, dates...) must never
+        // rewrite how this booking reads in its own history/export/email.
+        bookingData.snapshot = {
+          eventTitle: event.title,
+          eventStartDate: event.startDate,
+          eventEndDate: event.endDate,
+          location: event.location,
+          zoneName: zone.name,
+          areaName: areaNameForSnapshot,
+          seats: bookingData.seats.length > 0 ? bookingData.seats : undefined,
+          pricePerTicket: bookingData.pricePerTicket,
+          currency: "VND",
+        };
 
         const zoneUpdate = await this.zoneModel.findOneAndUpdate(
           {

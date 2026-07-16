@@ -31,6 +31,15 @@ interface PopulatedBookingLean {
   };
   zoneId?: { _id: Types.ObjectId; name: string; price?: number };
   areaId?: { _id: Types.ObjectId; name: string; rowLabel?: string };
+  /** Facts as they were at booking time — preferred over eventId/zoneId/areaId (live, populated) when present. */
+  snapshot?: {
+    eventTitle: string;
+    eventStartDate: Date;
+    eventEndDate: Date;
+    location: string;
+    zoneName: string;
+    areaName?: string;
+  };
 }
 
 @Injectable()
@@ -63,7 +72,7 @@ export class AiccBookingTool {
     const booking = (await this.bookingModel
       .findOne(filter)
       .select(
-        "bookingCode status paymentStatus quantity totalPrice expiresAt eventId zoneId areaId"
+        "bookingCode status paymentStatus quantity totalPrice expiresAt eventId zoneId areaId snapshot"
       )
       .sort({ createdAt: -1 })
       .populate("eventId", "title startDate endDate location thumbnail status")
@@ -75,6 +84,15 @@ export class AiccBookingTool {
     if (!booking) {
       return { found: false };
     }
+
+    // Prefer the immutable snapshot (facts as of booking time) for
+    // title/dates/location/names — a support conversation about an old
+    // booking should reflect what the customer actually booked, not
+    // whatever the event/zone/area have since been edited to. `status` and
+    // `thumbnail` are intentionally excluded from this preference: they are
+    // current-state fields, not historical facts, so they always come from
+    // the live populate.
+    const snapshot = booking.snapshot;
 
     return {
       found: true,
@@ -89,10 +107,14 @@ export class AiccBookingTool {
         event: booking.eventId
           ? {
               id: booking.eventId._id.toString(),
-              title: booking.eventId.title,
-              startDate: booking.eventId.startDate.toISOString(),
-              endDate: booking.eventId.endDate.toISOString(),
-              location: booking.eventId.location,
+              title: snapshot?.eventTitle ?? booking.eventId.title,
+              startDate: (
+                snapshot?.eventStartDate ?? booking.eventId.startDate
+              ).toISOString(),
+              endDate: (
+                snapshot?.eventEndDate ?? booking.eventId.endDate
+              ).toISOString(),
+              location: snapshot?.location ?? booking.eventId.location,
               status: booking.eventId.status ?? "",
               thumbnail: booking.eventId.thumbnail,
             }
@@ -100,14 +122,14 @@ export class AiccBookingTool {
         zone: booking.zoneId
           ? {
               id: booking.zoneId._id.toString(),
-              name: booking.zoneId.name,
+              name: snapshot?.zoneName ?? booking.zoneId.name,
               price: booking.zoneId.price,
             }
           : undefined,
         area: booking.areaId
           ? {
               id: booking.areaId._id.toString(),
-              name: booking.areaId.name,
+              name: snapshot?.areaName ?? booking.areaId.name,
               rowLabel: booking.areaId.rowLabel,
             }
           : undefined,

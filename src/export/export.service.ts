@@ -26,6 +26,9 @@ type TicketExportLean = {
   eventId?: PopulatedTicketRef | null;
   zoneId?: PopulatedTicketRef | null;
   userId?: PopulatedTicketRef | null;
+  bookingId?: {
+    snapshot?: { eventTitle: string; zoneName: string };
+  } | null;
   seatNumber?: string | null;
   price: number;
   status: string;
@@ -145,13 +148,23 @@ export class ExportService {
       .populate("eventId", "title")
       .populate("zoneId", "name")
       .populate("userId", "email name")
+      .populate("bookingId", "snapshot")
       .lean<TicketExportLean[]>()
       .exec();
 
     return tickets.map<ExportRow>((ticket) => ({
       ticketCode: ticket.ticketCode,
-      eventTitle: ticket.eventId?.title || "N/A",
-      zoneName: ticket.zoneId?.name || "N/A",
+      // Prefer the booking's immutable snapshot (facts as of booking time)
+      // over the live-populated Event/Zone — those can be edited after the
+      // fact and an export run months later should reflect history, not
+      // today's data. Falls back to the live populate for bookings created
+      // before the snapshot field existed.
+      eventTitle:
+        ticket.bookingId?.snapshot?.eventTitle ||
+        ticket.eventId?.title ||
+        "N/A",
+      zoneName:
+        ticket.bookingId?.snapshot?.zoneName || ticket.zoneId?.name || "N/A",
       seatNumber: ticket.seatNumber || "N/A",
       price: ticket.price,
       status: ticket.status,
