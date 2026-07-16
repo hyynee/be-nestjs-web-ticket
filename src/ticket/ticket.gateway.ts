@@ -42,6 +42,14 @@ interface TicketCheckinPayload {
   checkedInAt: Date;
 }
 
+interface TicketCancelledPayload {
+  ticketCode: string;
+  eventId?: Types.ObjectId | string;
+  zoneId?: Types.ObjectId | string;
+  reason?: string;
+  cancelledAt?: Date;
+}
+
 @WebSocketGateway({
   cors: {
     origin: getAllowedWsOrigins(),
@@ -66,7 +74,7 @@ export class TicketGateway {
     // chia room theo eventId de chi nhan thong bao checkin ve cho nhung client quan tam den event do
   }
 
-  emitTicketCancelled(data: any) {
+  emitTicketCancelled(data: TicketCancelledPayload) {
     this.server.emit("ticket.cancelled", data);
   }
 }

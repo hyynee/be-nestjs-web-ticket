@@ -1,7 +1,8 @@
 /**
  * Payment Integration Tests — Failure Injection (P0 Sprint)
  *
- * Dùng MongoMemoryReplSet (hỗ trợ transactions) + supertest (HTTP thật).
+ * Dùng MongoDB replica set thật qua MONGODB_URI/PAYMENT_INTEGRATION_MONGODB_URI
+ * (hỗ trợ transactions) + supertest (HTTP thật).
  * Redis được mock; jest.spyOn() tiêm lỗi tại đúng thời điểm quan trọng.
  *
  *   PAY-001: Redis DOWN → MongoDB fallback idempotency (không retry storm)
@@ -22,7 +23,6 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { MongooseModule } from "@nestjs/mongoose";
 import { AuthGuard } from "@nestjs/passport";
 import { ThrottlerGuard } from "@nestjs/throttler";
-import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { Model, Types } from "mongoose";
 
 const supertest = require("supertest") as typeof import("supertest");
@@ -53,6 +53,17 @@ const FAKE_JWT_PAYLOAD = {
   role: "user",
 };
 
+const getPaymentIntegrationMongoUri = (): string => {
+  const mongoUri =
+    process.env.PAYMENT_INTEGRATION_MONGODB_URI ?? process.env.MONGODB_URI;
+  if (!mongoUri) {
+    throw new Error(
+      "PAYMENT_INTEGRATION_MONGODB_URI or MONGODB_URI is required for payment integration tests"
+    );
+  }
+  return mongoUri;
+};
+
 // ─── Shared mutable Redis mock ────────────────────────────────────────────────
 // Tests spy/override individual methods to inject failures.
 // Reset to healthy defaults in beforeEach.
@@ -69,7 +80,6 @@ const redisClient = {
 };
 
 // ─── Test infrastructure ──────────────────────────────────────────────────────
-let mongod: MongoMemoryReplSet;
 let app: INestApplication;
 let testingModule: TestingModule;
 let paymentService: PaymentService;
@@ -77,12 +87,7 @@ let bookingModel: Model<Booking>;
 let paymentModel: Model<any>;
 
 beforeAll(async () => {
-  // MongoDB replica set — withTransaction() yêu cầu replica set, không chạy được với standalone
-  mongod = await MongoMemoryReplSet.create({
-    replSet: { count: 1, storageEngine: "wiredTiger" },
-  });
-  const mongoUri = mongod.getUri();
-
+  const mongoUri = getPaymentIntegrationMongoUri();
   testingModule = await Test.createTestingModule({
     imports: [
       MongooseModule.forRoot(mongoUri, { dbName: "payment_integration_test" }),
@@ -150,7 +155,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
-  await mongod?.stop();
 });
 
 beforeEach(async () => {

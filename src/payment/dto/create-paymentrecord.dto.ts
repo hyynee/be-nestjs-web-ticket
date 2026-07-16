@@ -9,7 +9,7 @@ export class CreatePaymentRecordDto {
   currency?: string;
   paymentMethod?: string;
   status?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, string | number | boolean | null>;
   createAt?: Date;
   updateAt?: Date;
 }

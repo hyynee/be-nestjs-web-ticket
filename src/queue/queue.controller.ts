@@ -22,6 +22,11 @@ import { AdminAddJobDto } from "./dto/add-job.dto";
 import { QueryJobDto } from "./dto/query-job.dto";
 import { MoveToDeadLetterDto } from "./dto/move-to-dead-letter.dto";
 
+interface QueueAdminJobAddedResult {
+  message: string;
+  jobId?: string;
+}
+
 @ApiCookieAuth("access_token")
 @Controller("queue")
 @Roles("admin")
@@ -33,17 +38,19 @@ export class QueueController {
   ) {}
 
   @Get("stats")
-  async getStats() {
+  async getStats(): ReturnType<QueueService["getQueueStats"]> {
     return this.queueService.getQueueStats();
   }
 
   @Get("jobs")
-  async listJobs(@Query() query: QueryJobDto) {
+  async listJobs(
+    @Query() query: QueryJobDto
+  ): ReturnType<QueueService["listJobs"]> {
     return this.queueService.listJobs(query);
   }
 
   @Get("jobs/:id")
-  async getJob(@Param("id") id: string) {
+  async getJob(@Param("id") id: string): ReturnType<QueueService["getJob"]> {
     return this.queueService.getJob(id);
   }
 
@@ -52,7 +59,7 @@ export class QueueController {
   async addAdminJob(
     @Body() dto: AdminAddJobDto,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): Promise<QueueAdminJobAddedResult> {
     const job = await this.queueService.addAdminJob(dto);
     await this.auditService.record({
       action: AuditAction.QUEUE_JOB_ADD,
@@ -60,12 +67,19 @@ export class QueueController {
       actorRole: user.role,
       metadata: { jobId: job.id, type: dto.type },
     });
-    return { message: "Job added to queue", jobId: job.id };
+    const result: QueueAdminJobAddedResult = {
+      message: "Job added to queue",
+      jobId: job.id,
+    };
+    return result;
   }
 
   @Throttle({ short: { limit: 20, ttl: 60000 } })
   @Post("jobs/:id/retry")
-  async retryJob(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+  async retryJob(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload
+  ): ReturnType<QueueService["retryJob"]> {
     const result = await this.queueService.retryJob(id);
     await this.auditService.record({
       action: AuditAction.QUEUE_JOB_RETRY,
@@ -82,7 +96,7 @@ export class QueueController {
     @Param("id") id: string,
     @Body() dto: MoveToDeadLetterDto,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): ReturnType<QueueService["moveToDeadLetter"]> {
     const result = await this.queueService.moveToDeadLetter(id, dto.reason);
     await this.auditService.record({
       action: AuditAction.QUEUE_JOB_DEAD_LETTER,
@@ -96,7 +110,10 @@ export class QueueController {
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @Delete("jobs/:id")
-  async removeJob(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+  async removeJob(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload
+  ): ReturnType<QueueService["removeJob"]> {
     const result = await this.queueService.removeJob(id);
     await this.auditService.record({
       action: AuditAction.QUEUE_JOB_REMOVE,

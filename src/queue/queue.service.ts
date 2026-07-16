@@ -11,6 +11,7 @@ import { randomUUID } from "crypto";
 import { QueryJobDto, QUEUE_JOB_STATUSES } from "./dto/query-job.dto";
 import { sanitizeSensitiveFields } from "@src/helper/sanitize.helper";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
+import { QueueJobPayload } from "./dto/job-payloads.dto";
 
 export const FAILED_JOB_RETAIN_COUNT = 1000;
 export const FAILED_JOB_ALERT_THRESHOLD = 100;
@@ -28,8 +29,43 @@ export interface QueueJobSummary {
 }
 
 export interface QueueJobDetail extends QueueJobSummary {
-  data: unknown;
+  data: QueueJobData | DeadLetterJobData;
   stacktrace: string[] | undefined;
+}
+
+export interface QueueJobData {
+  type: string;
+  payload?: QueueJobPayload;
+  requestedAt?: string;
+}
+
+interface DeadLetterJobData {
+  originalJobId: string | undefined;
+  originalName: string;
+  originalType: string | undefined;
+  payload: QueueJobData;
+  error: string;
+  attemptsMade: number;
+  failedAt: string;
+}
+
+export interface QueueStatsResult {
+  default: Awaited<ReturnType<Queue<QueueJobData>["getJobCounts"]>>;
+  deadLetter: Awaited<ReturnType<Queue<DeadLetterJobData>["getJobCounts"]>>;
+}
+
+export interface QueueListResult {
+  data: QueueJobSummary[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface QueueCommandResult {
+  id: string;
+  retried?: boolean;
+  moved?: boolean;
+  removed?: boolean;
 }
 
 @Injectable()
@@ -37,22 +73,21 @@ export class QueueService {
   private readonly logger = new Logger(QueueService.name);
 
   constructor(
-    @InjectQueue("default") private readonly queue: Queue,
-    @InjectQueue("dead-letter") private readonly dlqQueue: Queue
+    @InjectQueue("default") private readonly queue: Queue<QueueJobData>,
+    @InjectQueue("dead-letter")
+    private readonly dlqQueue: Queue<DeadLetterJobData>
   ) {}
 
-  async getJobCounts() {
+  async getJobCounts(): Promise<
+    Awaited<ReturnType<Queue<QueueJobData>["getJobCounts"]>>
+  > {
     return this.queue.getJobCounts("active", "waiting", "failed", "delayed");
   }
 
   async addJob(
-    data: {
-      type: string;
-      payload?: unknown;
-      [key: string]: unknown;
-    },
+    data: QueueJobData,
     options?: { jobId?: string }
-  ) {
+  ): Promise<Job<QueueJobData>> {
     const isRefundAlert = data.type === "refund-failure-alert";
     const jobId = options?.jobId ?? this.buildJobId(data);
 
@@ -70,11 +105,58 @@ export class QueueService {
   }
 
   /** Admin-facing wrapper around {@link addJob} — payload already DTO-validated by controller. */
-  async addAdminJob(data: { type: string; payload: Record<string, unknown> }) {
+  async addAdminJob(data: QueueJobData): Promise<Job<QueueJobData>> {
     return this.addJob(data);
   }
 
-  async getQueueStats() {
+  private queueStatsResult(
+    defaultCounts: QueueStatsResult["default"],
+    deadLetterCounts: QueueStatsResult["deadLetter"]
+  ): QueueStatsResult {
+    return {
+      default: defaultCounts,
+      deadLetter: deadLetterCounts,
+    };
+  }
+
+  private queueListResult(input: {
+    data: QueueJobSummary[];
+    page: number;
+    limit: number;
+    total: number;
+  }): QueueListResult {
+    return {
+      data: input.data,
+      page: input.page,
+      limit: input.limit,
+      total: input.total,
+    };
+  }
+
+  private queueJobDetail(
+    summary: QueueJobSummary,
+    job: Job<QueueJobData | DeadLetterJobData>
+  ): QueueJobDetail {
+    return {
+      ...summary,
+      data: sanitizeSensitiveFields(job.data),
+      stacktrace: job.stacktrace?.length ? job.stacktrace : undefined,
+    };
+  }
+
+  private retriedJob(id: string): QueueCommandResult {
+    return { id, retried: true };
+  }
+
+  private movedJob(id: string): QueueCommandResult {
+    return { id, moved: true };
+  }
+
+  private removedJob(id: string): QueueCommandResult {
+    return { id, removed: true };
+  }
+
+  async getQueueStats(): Promise<QueueStatsResult> {
     const [defaultCounts, deadLetterCounts] = await Promise.all([
       this.queue.getJobCounts(
         "active",
@@ -86,18 +168,10 @@ export class QueueService {
       this.dlqQueue.getJobCounts("waiting", "failed", "completed"),
     ]);
 
-    return {
-      default: defaultCounts,
-      deadLetter: deadLetterCounts,
-    };
+    return this.queueStatsResult(defaultCounts, deadLetterCounts);
   }
 
-  async listJobs(query: QueryJobDto): Promise<{
-    data: QueueJobSummary[];
-    page: number;
-    limit: number;
-    total: number;
-  }> {
+  async listJobs(query: QueryJobDto): Promise<QueueListResult> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const queueName = query.queue ?? "default";
@@ -119,7 +193,7 @@ export class QueueService {
 
     const data = await Promise.all(jobs.map((job) => this.toSummary(job)));
 
-    return { data, page, limit, total };
+    return this.queueListResult({ data, page, limit, total });
   }
 
   async getJob(id: string): Promise<QueueJobDetail> {
@@ -127,19 +201,15 @@ export class QueueService {
     const state = await job.getState();
     const summary = await this.toSummary(job, state);
 
-    return {
-      ...summary,
-      data: sanitizeSensitiveFields(job.data),
-      stacktrace: job.stacktrace?.length ? job.stacktrace : undefined,
-    };
+    return this.queueJobDetail(summary, job);
   }
 
-  async retryJob(id: string): Promise<{ id: string; retried: boolean }> {
+  async retryJob(id: string): Promise<QueueCommandResult> {
     const job = await this.queue.getJob(id);
 
     if (job) {
       await this.retryExistingJob(job);
-      return { id, retried: true };
+      return this.retriedJob(id);
     }
 
     const dlqJob = await this.dlqQueue.getJob(id);
@@ -147,10 +217,7 @@ export class QueueService {
       throw new NotFoundException(`Job ${id} not found`);
     }
 
-    // DLQ entries store the full original job data (`{ type, payload }`) under
-    // their own `payload` field — re-enqueue it as-is, do not re-wrap it.
-    const originalJobData = dlqJob.data?.payload as
-      { type?: string; payload?: unknown; [key: string]: unknown } | undefined;
+    const originalJobData = dlqJob.data?.payload as QueueJobData | undefined;
     if (!originalJobData?.type) {
       throw new BadRequestException(
         "Dead-letter entry missing original job type — cannot re-enqueue"
@@ -163,32 +230,21 @@ export class QueueService {
       : undefined;
 
     if (originalJob) {
-      // The original job can still be sitting in the default queue — BullMQ
-      // retains failed jobs up to FAILED_JOB_RETAIN_COUNT before eviction.
-      // Retry it in place: re-adding with the same deduped jobId (e.g. for
-      // send-password-reset/send-booking-confirmation/finalize-ticket-delivery/
-      // refund-failure-alert) would silently no-op against the still-existing
-      // job instead of creating a fresh attempt, making this look like a
-      // successful retry when nothing actually reprocessed.
       await this.retryExistingJob(originalJob);
     } else {
-      // Original job was already evicted — re-enqueue fresh, forcing a unique
-      // jobId so a deduped job type can't collide with an id that, by
-      // definition, no longer resolves to anything real.
-      await this.addJob(
-        originalJobData as { type: string; payload?: unknown },
-        {
-          jobId: `retry:${originalJobId ?? id}:${Date.now()}`,
-        }
-      );
+      await this.addJob(originalJobData, {
+        jobId: `retry:${originalJobId ?? id}:${Date.now()}`,
+      });
     }
 
     await dlqJob.remove();
 
-    return { id, retried: true };
+    return this.retriedJob(id);
   }
 
-  private async retryExistingJob(job: Job): Promise<void> {
+  private async retryExistingJob(
+    job: Job<QueueJobData | DeadLetterJobData>
+  ): Promise<void> {
     const state = await job.getState();
     if (state !== "failed" && state !== "completed") {
       throw new BadRequestException(
@@ -201,7 +257,7 @@ export class QueueService {
   async moveToDeadLetter(
     id: string,
     reason?: string
-  ): Promise<{ id: string; moved: boolean }> {
+  ): Promise<QueueCommandResult> {
     const job = await this.queue.getJob(id);
     if (!job) {
       throw new NotFoundException(`Job ${id} not found in default queue`);
@@ -214,7 +270,7 @@ export class QueueService {
       );
     }
 
-    const dlqPayload = {
+    const dlqPayload: DeadLetterJobData = {
       originalJobId: job.id,
       originalName: job.name,
       originalType: job.data?.type,
@@ -225,12 +281,6 @@ export class QueueService {
     };
     const dlqJobId = `dead-letter:${job.id ?? `${job.data?.type}:${Date.now()}`}`;
 
-    // Write the dead-letter copy first, using a deterministic jobId so a retry
-    // of this same move never creates a second copy. Only remove the source
-    // job from the default queue once the copy is durably persisted — if
-    // remove() then fails (e.g. the job got picked up and locked by a worker
-    // in the meantime), roll back the copy we just wrote instead of leaving
-    // the job permanently lost from both queues.
     const dlqJob = await this.dlqQueue.add("dead-letter", dlqPayload, {
       jobId: dlqJobId,
       removeOnComplete: false,
@@ -252,16 +302,18 @@ export class QueueService {
       );
     }
 
-    return { id, moved: true };
+    return this.movedJob(id);
   }
 
-  async removeJob(id: string): Promise<{ id: string; removed: boolean }> {
+  async removeJob(id: string): Promise<QueueCommandResult> {
     const job = await this.findJobAnywhere(id);
     await job.remove();
-    return { id, removed: true };
+    return this.removedJob(id);
   }
 
-  private async findJobAnywhere(id: string): Promise<Job> {
+  private async findJobAnywhere(
+    id: string
+  ): Promise<Job<QueueJobData | DeadLetterJobData>> {
     const job =
       (await this.queue.getJob(id)) ?? (await this.dlqQueue.getJob(id));
     if (!job) {
@@ -270,12 +322,15 @@ export class QueueService {
     return job;
   }
 
-  private async toSummary(job: Job, state?: string): Promise<QueueJobSummary> {
+  private async toSummary(
+    job: Job<QueueJobData | DeadLetterJobData>,
+    state?: string
+  ): Promise<QueueJobSummary> {
     const resolvedState = state ?? (await job.getState());
     return {
       id: String(job.id),
       name: job.name,
-      type: (job.data?.type as string | undefined) ?? job.data?.originalType,
+      type: this.getJobType(job.data),
       status: resolvedState,
       attemptsMade: job.attemptsMade,
       timestamp: job.timestamp,
@@ -285,22 +340,22 @@ export class QueueService {
     };
   }
 
-  private buildJobId(data: {
-    type: string;
-    payload?: unknown;
-  }): string | undefined {
+  private buildJobId(data: QueueJobData): string | undefined {
     if (!this.isDeduplicatedJobType(data.type)) {
       return undefined;
     }
 
-    const payload = this.asRecord(data.payload);
     const stableKey =
-      this.readString(payload, "bookingCode") ??
-      this.readString(payload, "email") ??
-      this.readString(payload, "bookingId") ??
+      this.readPayloadString(data.payload, "bookingCode") ??
+      this.readPayloadString(data.payload, "email") ??
+      this.readPayloadString(data.payload, "bookingId") ??
       randomUUID();
 
-    return `${data.type}:${stableKey}`;
+    return `${this.toBullJobIdPart(data.type)}-${this.toBullJobIdPart(stableKey)}`;
+  }
+
+  private toBullJobIdPart(value: string): string {
+    return value.replace(/:/g, "-");
   }
 
   private isDeduplicatedJobType(type: string): boolean {
@@ -313,17 +368,29 @@ export class QueueService {
     ].includes(type);
   }
 
-  private asRecord(value: unknown): Record<string, unknown> {
-    return value !== null && typeof value === "object"
-      ? (value as Record<string, unknown>)
-      : {};
+  private readPayloadString(
+    payload: QueueJobPayload | undefined,
+    key: "bookingCode" | "email" | "bookingId"
+  ): string | undefined {
+    if (!payload) {
+      return undefined;
+    }
+
+    let value: string | undefined;
+    if (key === "bookingCode" && "bookingCode" in payload) {
+      value = payload.bookingCode;
+    } else if (key === "email" && "email" in payload) {
+      value = payload.email;
+    } else if (key === "bookingId" && "bookingId" in payload) {
+      value = payload.bookingId;
+    }
+
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
   }
 
-  private readString(
-    record: Record<string, unknown>,
-    key: string
+  private getJobType(
+    data: QueueJobData | DeadLetterJobData
   ): string | undefined {
-    const value = record[key];
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    return "type" in data ? data.type : data.originalType;
   }
 }

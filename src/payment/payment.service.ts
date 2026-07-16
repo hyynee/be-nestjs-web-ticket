@@ -25,9 +25,18 @@ import type {
   BookingEventSummary,
   BookingForConfirmationMail,
   BookingZoneSummary,
+  CheckoutSessionResult,
   CreatedTicketForMail,
+  PaymentCancelResult,
+  PaymentHistoryEvent,
+  PaymentHistoryItem,
+  PaymentHistoryResult,
+  PaymentHistoryZone,
+  PaymentMetadata,
   PaymentRecord,
+  PaypalCreateTransactionResult,
   PaypalCapture,
+  PaypalFinalizeResult,
   PaypalHttpClient,
   PaypalOrderCaptureResponse,
   PaypalOrderCreateResponse,
@@ -40,7 +49,8 @@ import { QueueService } from "@src/queue/queue.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { CurrencyService } from "@src/currency/currency.service";
 
-const paypalSdk = paypal as unknown as PaypalSdk;
+const paypalSdk: PaypalSdk = paypal;
+const HOT_EVENTS_CACHE_KEY = "stat:v1:hot-events";
 
 const WEBHOOK_RELEASE_SCRIPT = `
   if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -51,6 +61,72 @@ const WEBHOOK_RELEASE_SCRIPT = `
 `;
 
 export type WebhookIdempotencyStatus = "new" | "processing" | "succeeded";
+
+type BookingMailReference<T> = T | Types.ObjectId | string | null | undefined;
+interface BookingMailObjectIdObject {
+  _id?: Types.ObjectId | string;
+}
+type BookingMailObjectIdReference =
+  Types.ObjectId | string | BookingMailObjectIdObject;
+type BookingMailPopulatedEvent = BookingForConfirmationMail["eventId"] & {
+  _id?: Types.ObjectId | string;
+};
+type BookingMailPopulatedZone = BookingForConfirmationMail["zoneId"] & {
+  _id?: Types.ObjectId | string;
+};
+
+interface BookingMailSource {
+  bookingCode: string;
+  customerEmail: string;
+  customerName?: string;
+  eventId: BookingMailReference<BookingMailPopulatedEvent>;
+  zoneId: BookingMailReference<BookingMailPopulatedZone>;
+  seats?: string[];
+  quantity: number;
+  totalPrice: number;
+  userId?: Types.ObjectId;
+  snapshot?: BookingForConfirmationMail["snapshot"];
+}
+
+interface PaymentHistoryEventSource {
+  _id?: Types.ObjectId | string;
+  title?: string;
+  location?: string;
+  startDate?: Date;
+}
+
+interface PaymentHistoryZoneSource {
+  _id?: Types.ObjectId | string;
+  name?: string;
+  price?: number;
+}
+
+interface PaymentHistoryBookingSource {
+  _id?: Types.ObjectId | string;
+  bookingCode?: string;
+  eventId?: PaymentHistoryEventSource | Types.ObjectId | string;
+  zoneId?: PaymentHistoryZoneSource | Types.ObjectId | string;
+}
+
+interface PaymentHistorySource {
+  _id?: Types.ObjectId | string;
+  bookingId?: PaymentHistoryBookingSource | Types.ObjectId | string;
+  stripePaymentIntentId?: string;
+  paypalOrderId?: string;
+  paypalCaptureId?: string;
+  amount: number;
+  currency: string;
+  paymentMethod: string;
+  status: string;
+  errorMessage?: string;
+  metadata?: PaymentMetadata;
+  paidAt?: Date;
+  refundedAt?: Date;
+  stripeRefundId?: string;
+  refundAmount?: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
 
 @Injectable()
 export class PaymentService {
@@ -72,7 +148,7 @@ export class PaymentService {
   private static readonly STRIPE_MIN_EXPIRES_IN_MS = 31 * 60 * 1000;
 
   constructor(
-    @InjectModel(Payment.name) private paymentModel: Model<any>,
+    @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectModel(Zone.name) private zoneModel: Model<Zone>,
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
@@ -101,8 +177,250 @@ export class PaymentService {
     this.paypalClient = new paypalSdk.core.PayPalHttpClient(paypalEnv);
   }
 
+  private checkoutSessionResult(
+    message: string,
+    checkoutUrl: string | null
+  ): CheckoutSessionResult {
+    return {
+      status: 200,
+      message,
+      checkoutUrl,
+    };
+  }
+
+  private paypalCreateTransactionResult(input: {
+    paypalOrderId: string;
+    approvalUrl?: string;
+    amountUSD: string;
+    bookingCode: string;
+    amount: number;
+    customerEmail?: string;
+    customerName?: string;
+    customerPhone?: string;
+  }): PaypalCreateTransactionResult {
+    return {
+      status: 200,
+      message: "PayPal order created successfully",
+      paypalOrderId: input.paypalOrderId,
+      approvalUrl: input.approvalUrl,
+      amountUSD: input.amountUSD,
+      bookingDetails: {
+        bookingCode: input.bookingCode,
+        amount: input.amount,
+        amountUSD: input.amountUSD,
+        currency: "VND",
+        customerEmail: input.customerEmail,
+        customerName: input.customerName,
+        customerPhone: input.customerPhone,
+      },
+    };
+  }
+
+  private paypalFinalizeResult(
+    message: string,
+    captureId?: string
+  ): PaypalFinalizeResult {
+    return {
+      status: 200,
+      message,
+      ...(captureId ? { captureId } : {}),
+    };
+  }
+
+  private paymentHistoryResult(input: {
+    payments: PaymentHistorySource[];
+    currentPage: number;
+    itemsPerPage: number;
+    totalItems: number;
+  }): PaymentHistoryResult {
+    const totalPages = Math.ceil(input.totalItems / input.itemsPerPage);
+    return {
+      success: true,
+      data: input.payments.map((payment) => this.toPaymentHistoryItem(payment)),
+      meta: {
+        currentPage: input.currentPage,
+        itemsPerPage: input.itemsPerPage,
+        totalItems: input.totalItems,
+        totalPages,
+        hasPreviousPage: input.currentPage > 1,
+        hasNextPage: input.currentPage < totalPages,
+      },
+    };
+  }
+
+  private paymentCancelResult(message: string): PaymentCancelResult {
+    return {
+      status: 200,
+      message,
+    };
+  }
+
+  private toPaymentHistoryItem(
+    payment: PaymentHistorySource
+  ): PaymentHistoryItem {
+    return {
+      id: this.toOptionalId(payment._id) ?? "",
+      booking: this.toPaymentHistoryBooking(payment.bookingId),
+      amount: payment.amount,
+      currency: payment.currency,
+      paymentMethod: payment.paymentMethod,
+      status: payment.status,
+      errorMessage: payment.errorMessage,
+      stripePaymentIntentId: payment.stripePaymentIntentId,
+      paypalOrderId: payment.paypalOrderId,
+      paypalCaptureId: payment.paypalCaptureId,
+      metadata: payment.metadata,
+      paidAt: payment.paidAt,
+      refundedAt: payment.refundedAt,
+      stripeRefundId: payment.stripeRefundId,
+      refundAmount: payment.refundAmount,
+      createdAt: payment.createdAt,
+      updatedAt: payment.updatedAt,
+    };
+  }
+
+  private toPaymentHistoryBooking(
+    booking: PaymentHistorySource["bookingId"]
+  ): PaymentHistoryItem["booking"] {
+    if (!booking) {
+      return "";
+    }
+
+    if (booking instanceof Types.ObjectId || typeof booking === "string") {
+      return booking.toString();
+    }
+
+    return {
+      id: this.toOptionalId(booking._id),
+      bookingCode: booking.bookingCode,
+      event: this.toPaymentHistoryEvent(booking.eventId),
+      zone: this.toPaymentHistoryZone(booking.zoneId),
+    };
+  }
+
+  private toPaymentHistoryEvent(
+    event?: PaymentHistoryBookingSource["eventId"]
+  ): PaymentHistoryEvent | undefined {
+    if (
+      !event ||
+      event instanceof Types.ObjectId ||
+      typeof event === "string"
+    ) {
+      return undefined;
+    }
+
+    return {
+      id: this.toOptionalId(event._id),
+      title: event.title,
+      location: event.location,
+      startDate: event.startDate,
+    };
+  }
+
+  private toPaymentHistoryZone(
+    zone?: PaymentHistoryBookingSource["zoneId"]
+  ): PaymentHistoryZone | undefined {
+    if (!zone || zone instanceof Types.ObjectId || typeof zone === "string") {
+      return undefined;
+    }
+
+    return {
+      id: this.toOptionalId(zone._id),
+      name: zone.name,
+      price: zone.price,
+    };
+  }
+
+  private toOptionalId(value?: Types.ObjectId | string): string | undefined {
+    return value?.toString();
+  }
+
   private getPaymentIdempotencyKey(eventId: string): string {
     return `idemp:payment:${eventId}`;
+  }
+
+  private toBookingConfirmationMail(
+    booking: BookingMailSource
+  ): BookingForConfirmationMail {
+    const event = this.resolveEventForMail(booking);
+    const zone = this.resolveZoneForMail(booking);
+
+    return {
+      bookingCode: booking.bookingCode,
+      customerEmail: booking.customerEmail,
+      customerName: booking.customerName,
+      eventId: event,
+      zoneId: zone,
+      seats: booking.seats,
+      quantity: booking.quantity,
+      totalPrice: booking.totalPrice,
+      userId: booking.userId,
+      snapshot: booking.snapshot,
+    };
+  }
+
+  private resolveEventForMail(
+    booking: BookingMailSource
+  ): BookingForConfirmationMail["eventId"] {
+    if (booking.snapshot) {
+      const eventId = this.resolveMailReferenceId(booking.eventId);
+      return {
+        ...(eventId ? { _id: eventId } : {}),
+        title: booking.snapshot.eventTitle,
+        location: booking.snapshot.location,
+        startDate: booking.snapshot.eventStartDate,
+      };
+    }
+
+    if (
+      booking.eventId &&
+      typeof booking.eventId === "object" &&
+      !(booking.eventId instanceof Types.ObjectId)
+    ) {
+      return booking.eventId;
+    }
+
+    return {
+      title: "",
+      location: "",
+      startDate: new Date(0),
+    };
+  }
+
+  private resolveZoneForMail(
+    booking: BookingMailSource
+  ): BookingForConfirmationMail["zoneId"] {
+    if (booking.snapshot) {
+      const zoneId = this.resolveMailReferenceId(booking.zoneId);
+      return {
+        ...(zoneId ? { _id: zoneId } : {}),
+        name: booking.snapshot.zoneName,
+      };
+    }
+
+    if (
+      booking.zoneId &&
+      typeof booking.zoneId === "object" &&
+      !(booking.zoneId instanceof Types.ObjectId)
+    ) {
+      return booking.zoneId;
+    }
+
+    return { name: "" };
+  }
+
+  private resolveMailReferenceId(
+    value: BookingMailObjectIdReference | null | undefined
+  ): Types.ObjectId | string | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (value instanceof Types.ObjectId || typeof value === "string") {
+      return value;
+    }
+
+    return value._id;
   }
 
   private async enqueueRefundFailureAlert(
@@ -139,8 +457,9 @@ export class PaymentService {
   private withPaypalTimeout<T>(
     promise: Promise<{ result: T }>
   ): Promise<{ result: T }> {
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
         () =>
           reject(
             new Error(
@@ -148,14 +467,18 @@ export class PaymentService {
             )
           ),
         this.PAYPAL_TIMEOUT_MS
-      )
-    );
-    return Promise.race([promise, timeout]);
+      );
+      timeoutHandle.unref?.();
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    });
   }
 
   private toObjectId(
-    value:
-      Types.ObjectId | string | { _id?: Types.ObjectId | string } | undefined,
+    value: Types.ObjectId | string | object | null | undefined,
     fieldName: string
   ): Types.ObjectId {
     if (value instanceof Types.ObjectId) {
@@ -166,12 +489,14 @@ export class PaymentService {
       return new Types.ObjectId(value);
     }
 
-    const nestedId = value?._id;
-    if (nestedId instanceof Types.ObjectId) {
-      return nestedId;
-    }
-    if (typeof nestedId === "string") {
-      return new Types.ObjectId(nestedId);
+    if (value && "_id" in value) {
+      const nestedId = value._id;
+      if (nestedId instanceof Types.ObjectId) {
+        return nestedId;
+      }
+      if (typeof nestedId === "string") {
+        return new Types.ObjectId(nestedId);
+      }
     }
 
     throw new BadRequestException(`${fieldName} is missing`);
@@ -197,7 +522,9 @@ export class PaymentService {
     );
   }
 
-  private async emitZoneTicketUpdate(zoneId: Types.ObjectId | string) {
+  private async emitZoneTicketUpdate(
+    zoneId: Types.ObjectId | string
+  ): Promise<void> {
     const zone = await this.zoneModel
       .findById(zoneId)
       .select("_id eventId capacity soldCount confirmedSoldCount")
@@ -381,15 +708,21 @@ export class PaymentService {
     return false;
   }
 
-  async createCheckoutSession(userId: string, bookingCode: string) {
+  async createCheckoutSession(
+    userId: string,
+    bookingCode: string
+  ): Promise<CheckoutSessionResult> {
     const booking = await this.bookingModel
       .findOne({
         bookingCode: bookingCode,
         userId: new Types.ObjectId(userId),
         isDeleted: false,
       })
-      .populate("eventId", "title thumbnail location startDate endDate")
-      .populate("zoneId", "name price")
+      .populate<{ eventId: BookingEventSummary }>(
+        "eventId",
+        "title thumbnail location startDate endDate"
+      )
+      .populate<{ zoneId: BookingZoneSummary }>("zoneId", "name price")
       .populate("areaId", "name");
 
     if (!booking) {
@@ -417,8 +750,8 @@ export class PaymentService {
       );
     }
 
-    const event = booking.eventId as unknown as BookingEventSummary;
-    const zone = booking.zoneId as unknown as BookingZoneSummary;
+    const event = booking.eventId;
+    const zone = booking.zoneId;
 
     const thumbnailUrl =
       event.thumbnail ||
@@ -444,11 +777,10 @@ export class PaymentService {
         const existingSession =
           await this.stripe.checkout.sessions.retrieve(luaValue);
         if (existingSession.status === "open") {
-          return {
-            status: 200,
-            message: "Checkout session already exists",
-            checkoutUrl: existingSession.url,
-          };
+          return this.checkoutSessionResult(
+            "Checkout session already exists",
+            existingSession.url
+          );
         }
       } catch {
         // Session expired or invalid — fall through to create a new one
@@ -511,21 +843,26 @@ export class PaymentService {
     });
     await this.redisService.client.del(dedupLockKey).catch(() => {});
 
-    return {
-      status: 200,
-      message: "Checkout session created successfully",
-      checkoutUrl: session.url,
-    };
+    return this.checkoutSessionResult(
+      "Checkout session created successfully",
+      session.url
+    );
   }
 
-  async createPaypalTransaction(userId: string, bookingCode: string) {
+  async createPaypalTransaction(
+    userId: string,
+    bookingCode: string
+  ): Promise<PaypalCreateTransactionResult> {
     const booking = await this.bookingModel
       .findOne({
         bookingCode: bookingCode,
         userId: new Types.ObjectId(userId),
         isDeleted: false,
       })
-      .populate("eventId", "title thumbnail location startDate endDate")
+      .populate<{ eventId: BookingEventSummary }>(
+        "eventId",
+        "title thumbnail location startDate endDate"
+      )
       .populate("zoneId", "name price")
       .populate("areaId", "name");
 
@@ -542,7 +879,7 @@ export class PaymentService {
       throw new BadRequestException("Booking has expired");
     }
 
-    const event = booking.eventId as unknown as BookingEventSummary;
+    const event = booking.eventId;
     // Same rationale as the Stripe flow — prefer the immutable snapshot for
     // customer-facing/record-keeping text.
     const eventTitle = booking.snapshot?.eventTitle ?? event.title;
@@ -576,8 +913,8 @@ export class PaymentService {
         return_url: `${config.FRONTEND_URL}/payment/paypal-success?bookingCode=${booking.bookingCode}`,
         cancel_url: `${config.FRONTEND_URL}/booking/cancel?bookingCode=${booking.bookingCode}`,
       },
-    } as any);
-    (request as any).body.expiry_time = expiryIso;
+      expiry_time: expiryIso,
+    });
 
     try {
       const response = await this.withPaypalTimeout(
@@ -616,22 +953,16 @@ export class PaymentService {
       const approveLink = order.links.find(
         (link: { rel?: string; href?: string }) => link.rel === "approve"
       );
-      return {
-        status: 200,
-        message: "PayPal order created successfully",
+      return this.paypalCreateTransactionResult({
         paypalOrderId: order.id,
         approvalUrl: approveLink?.href,
-        amountUSD: amountUSD,
-        bookingDetails: {
-          bookingCode: booking.bookingCode,
-          amount: booking.totalPrice,
-          amountUSD: amountUSD,
-          currency: "VND",
-          customerEmail: booking.customerEmail,
-          customerName: booking.customerName,
-          customerPhone: booking.customerPhone,
-        },
-      };
+        amountUSD,
+        bookingCode: booking.bookingCode,
+        amount: booking.totalPrice,
+        customerEmail: booking.customerEmail,
+        customerName: booking.customerName,
+        customerPhone: booking.customerPhone,
+      });
     } catch (error) {
       this.logger.error(
         `PayPal order creation failed for booking ${bookingCode}: ${(error as Error)?.message || "unknown error"}`
@@ -716,7 +1047,9 @@ export class PaymentService {
     });
   }
 
-  async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+  async handleCheckoutSessionCompleted(
+    session: Stripe.Checkout.Session
+  ): Promise<void> {
     const { userId, bookingCode, bookingId } = session.metadata || {};
 
     if (!userId || !bookingCode || !bookingId) {
@@ -759,8 +1092,14 @@ export class PaymentService {
               session: dbSession,
             }
           )
-          .populate("eventId", "title location startDate endDate")
-          .populate("zoneId", "name")
+          .populate<{ eventId: BookingForConfirmationMail["eventId"] }>(
+            "eventId",
+            "title location startDate endDate"
+          )
+          .populate<{ zoneId: BookingForConfirmationMail["zoneId"] }>(
+            "zoneId",
+            "name"
+          )
           .populate("areaId", "name");
 
         let booking = updatedBooking;
@@ -772,8 +1111,14 @@ export class PaymentService {
               "zoneId quantity bookingCode areaId eventId seats customerEmail customerName totalPrice userId snapshot status paymentStatus"
             )
             .session(dbSession)
-            .populate("eventId", "title location startDate endDate")
-            .populate("zoneId", "name")
+            .populate<{ eventId: BookingForConfirmationMail["eventId"] }>(
+              "eventId",
+              "title location startDate endDate"
+            )
+            .populate<{ zoneId: BookingForConfirmationMail["zoneId"] }>(
+              "zoneId",
+              "name"
+            )
             .populate("areaId", "name");
 
           if (!booking) {
@@ -811,7 +1156,7 @@ export class PaymentService {
               ],
               { session: dbSession }
             );
-            changedZoneId = booking.zoneId as Types.ObjectId;
+            changedZoneId = this.toObjectId(booking.zoneId, "zoneId");
           }
         }
 
@@ -865,7 +1210,7 @@ export class PaymentService {
           bookingCode,
           dbSession
         );
-        bookingForMail = booking as unknown as BookingForConfirmationMail;
+        bookingForMail = this.toBookingConfirmationMail(booking);
         ticketOwnerUserId = booking.userId?.toString();
       });
     } catch (error) {
@@ -908,13 +1253,32 @@ export class PaymentService {
       return;
     }
 
+    if (tickets.length === 0) {
+      return;
+    }
+
     const confirmedBooking = bookingForMail as BookingForConfirmationMail;
     const bookingCodeForPublish: string = confirmedBooking.bookingCode;
 
     try {
+      const broadcastEventId = this.toObjectId(
+        confirmedBooking.eventId as BookingMailObjectIdReference,
+        "eventId"
+      );
+      const broadcastZoneId = this.toObjectId(
+        confirmedBooking.zoneId as BookingMailObjectIdReference,
+        "zoneId"
+      );
       await this.ticketService.publishTicketCreation(
         bookingCodeForPublish,
-        tickets,
+        tickets.map((ticket) => ({
+          ticketCode: ticket.ticketCode,
+          eventId: broadcastEventId,
+          zoneId: broadcastZoneId,
+          seatNumber: ticket.seatNumber ?? null,
+          price: ticket.price,
+          status: ticket.status,
+        })),
         ticketOwnerUserId
       );
     } catch (e) {
@@ -937,7 +1301,7 @@ export class PaymentService {
       provider: "stripe",
       status: "succeeded",
     });
-    await this.redisService.client.del("stat:hot-events").catch(() => {});
+    await this.redisService.client.del(HOT_EVENTS_CACHE_KEY).catch(() => {});
 
     if (!shouldSendConfirmation) {
       return;
@@ -975,7 +1339,10 @@ export class PaymentService {
     }
   }
 
-  async finalizePaypalTransaction(orderId: string, userId: string) {
+  async finalizePaypalTransaction(
+    orderId: string,
+    userId: string
+  ): Promise<PaypalFinalizeResult> {
     const lockStatus = await this.acquirePaypalLock(orderId);
 
     if (lockStatus === "processing") {
@@ -1047,7 +1414,7 @@ export class PaymentService {
         } finally {
           await idemSession.endSession();
         }
-        return { status: 200, message: "Payment already finalized" };
+        return this.paypalFinalizeResult("Payment already finalized");
       }
 
       const captureRequest = new paypalSdk.orders.OrdersCaptureRequest(orderId);
@@ -1070,7 +1437,7 @@ export class PaymentService {
           if (refreshed?.status === "succeeded") {
             await this.markPaypalSucceeded(orderId);
             markedSucceeded = true;
-            return { status: 200, message: "Payment already finalized" };
+            return this.paypalFinalizeResult("Payment already finalized");
           }
 
           this.logger.warn(
@@ -1100,10 +1467,9 @@ export class PaymentService {
                 this.logger.log(
                   `[PAYPAL_RECOVERY] Successfully recovered orderId=${orderId}`
                 );
-                return {
-                  status: 200,
-                  message: "Payment finalized after recovery",
-                };
+                return this.paypalFinalizeResult(
+                  "Payment finalized after recovery"
+                );
               }
             }
           } catch (recoveryErr) {
@@ -1150,11 +1516,10 @@ export class PaymentService {
         }
         await this.markPaypalSucceeded(orderId);
         markedSucceeded = true;
-        return {
-          status: 200,
-          message: "PayPal payment completed",
-          captureId: captureDetail.id,
-        };
+        return this.paypalFinalizeResult(
+          "PayPal payment completed",
+          captureDetail.id
+        );
       } else {
         throw new BadRequestException(
           `Capture failed with status: ${capture.status}`
@@ -1181,7 +1546,7 @@ export class PaymentService {
     payment: PaymentRecord,
     order: PaypalOrderCaptureResponse,
     captureOrAuth: PaypalCapture
-  ) {
+  ): Promise<void> {
     const dbSession = await this.bookingModel.db.startSession();
     let bookingForMail: BookingForConfirmationMail | null = null;
     let tickets: CreatedTicketForMail[] = [];
@@ -1211,8 +1576,14 @@ export class PaymentService {
               session: dbSession,
             }
           )
-          .populate("eventId", "title location startDate endDate")
-          .populate("zoneId", "name")
+          .populate<{ eventId: BookingForConfirmationMail["eventId"] }>(
+            "eventId",
+            "title location startDate endDate"
+          )
+          .populate<{ zoneId: BookingForConfirmationMail["zoneId"] }>(
+            "zoneId",
+            "name"
+          )
           .populate("areaId", "name");
 
         if (!updatedBooking) {
@@ -1266,7 +1637,7 @@ export class PaymentService {
             ],
             { session: dbSession }
           );
-          changedZoneId = updatedBooking.zoneId as Types.ObjectId;
+          changedZoneId = this.toObjectId(updatedBooking.zoneId, "zoneId");
         }
 
         await this.paymentModel.findByIdAndUpdate(
@@ -1291,24 +1662,11 @@ export class PaymentService {
           updatedBooking.bookingCode,
           dbSession
         );
-        bookingForMail =
-          updatedBooking as unknown as BookingForConfirmationMail;
+        bookingForMail = this.toBookingConfirmationMail(updatedBooking);
         ticketOwnerUserId = updatedBooking.userId?.toString();
       });
     } catch (error) {
-      const paymentId =
-        payment && typeof payment === "object" && "_id" in payment
-          ? (() => {
-              const rawId = (payment as { _id?: unknown })._id;
-              if (rawId instanceof Types.ObjectId) {
-                return rawId.toString();
-              }
-              if (typeof rawId === "string") {
-                return rawId;
-              }
-              return "unknown";
-            })()
-          : "unknown";
+      const paymentId = payment?._id.toString() ?? "unknown";
       this.logger.error(
         `PayPal finalize failed for payment ${paymentId}: ${(error as Error)?.message || "unknown error"}`
       );
@@ -1321,13 +1679,32 @@ export class PaymentService {
       return;
     }
 
+    if (tickets.length === 0) {
+      return;
+    }
+
     const confirmedBooking = bookingForMail as BookingForConfirmationMail;
     const bookingCodeForPublish: string = confirmedBooking.bookingCode;
 
     try {
+      const broadcastEventId = this.toObjectId(
+        confirmedBooking.eventId as BookingMailObjectIdReference,
+        "eventId"
+      );
+      const broadcastZoneId = this.toObjectId(
+        confirmedBooking.zoneId as BookingMailObjectIdReference,
+        "zoneId"
+      );
       await this.ticketService.publishTicketCreation(
         bookingCodeForPublish,
-        tickets,
+        tickets.map((ticket) => ({
+          ticketCode: ticket.ticketCode,
+          eventId: broadcastEventId,
+          zoneId: broadcastZoneId,
+          seatNumber: ticket.seatNumber ?? null,
+          price: ticket.price,
+          status: ticket.status,
+        })),
         ticketOwnerUserId
       );
     } catch (e) {
@@ -1379,12 +1756,13 @@ export class PaymentService {
       );
     }
 
-    // Fix: was "stat:hotEventsByRevenue" (wrong key) via cacheManager (wrong client — Keyv prefix mismatch).
-    // StatisticalService writes under "stat:hot-events" via raw Redis client.
-    await this.redisService.client.del("stat:hot-events").catch(() => {});
+    await this.redisService.client.del(HOT_EVENTS_CACHE_KEY).catch(() => {});
   }
 
-  async getPaymentHistory(userId: string, query: QueryPaymentHistoryDto = {}) {
+  async getPaymentHistory(
+    userId: string,
+    query: QueryPaymentHistoryDto = {}
+  ): Promise<PaymentHistoryResult> {
     const {
       page = 1,
       limit = 10,
@@ -1447,24 +1825,18 @@ export class PaymentService {
         })
         .sort(sort)
         .skip(skip)
-        .limit(itemsPerPage),
+        .limit(itemsPerPage)
+        .lean<PaymentHistorySource[]>()
+        .exec(),
       this.paymentModel.countDocuments(filter),
     ]);
 
-    const totalPages = Math.ceil(totalItems / itemsPerPage);
-
-    return {
-      success: true,
-      data: payments,
-      meta: {
-        currentPage,
-        itemsPerPage,
-        totalItems,
-        totalPages,
-        hasPreviousPage: currentPage > 1,
-        hasNextPage: currentPage < totalPages,
-      },
-    };
+    return this.paymentHistoryResult({
+      payments,
+      currentPage,
+      itemsPerPage,
+      totalItems,
+    });
   }
 
   async handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
@@ -1583,12 +1955,13 @@ export class PaymentService {
       await this.emitZoneTicketUpdate(changedZoneId);
     }
 
-    // Fix: was "stat:hotEventsByRevenue" (wrong key) via cacheManager (wrong client — Keyv prefix mismatch).
-    // StatisticalService writes under "stat:hot-events" via raw Redis client.
-    await this.redisService.client.del("stat:hot-events").catch(() => {});
+    await this.redisService.client.del(HOT_EVENTS_CACHE_KEY).catch(() => {});
   }
 
-  async handlePaymentCancelled(userId: string, bookingCode: string) {
+  async handlePaymentCancelled(
+    userId: string,
+    bookingCode: string
+  ): Promise<PaymentCancelResult | void> {
     const normalizedCode = bookingCode.trim().toUpperCase();
     const dbSession = await this.bookingModel.db.startSession();
     let cancelled = false;
@@ -1645,10 +2018,7 @@ export class PaymentService {
       await this.emitZoneTicketUpdate(changedZoneId);
     }
 
-    return {
-      status: 200,
-      message: "Payment cancelled successfully",
-    };
+    return this.paymentCancelResult("Payment cancelled successfully");
   }
 
   // ---------------------------------------------------------------------------

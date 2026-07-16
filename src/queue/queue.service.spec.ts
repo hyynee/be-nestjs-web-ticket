@@ -121,6 +121,16 @@ describe("QueueService", () => {
     expect(opts.backoff.delay).toBe(10_000);
   });
 
+  it("sanitizes deduplicated job ids for BullMQ", async () => {
+    await service.addJob({
+      type: "send-booking-confirmation",
+      payload: { bookingCode: "BK:2026:001" },
+    });
+
+    const opts = (mockQueue.add as jest.Mock).mock.calls[0][2];
+    expect(opts.jobId).toBe("send-booking-confirmation-BK-2026-001");
+  });
+
   // ── addAdminJob ───────────────────────────────────────────────────────────
 
   it("addAdminJob delegates to addJob and returns the created job", async () => {

@@ -10,6 +10,7 @@ export type TicketBroadcastItem = {
 };
 
 export type ZoneSeatMode = {
+  _id: Types.ObjectId;
   hasSeating?: boolean;
 };
 

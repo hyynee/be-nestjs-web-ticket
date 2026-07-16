@@ -45,7 +45,7 @@ export class TicketController {
   async createTicketsFromBooking(
     @CurrentUser() user: JwtPayload,
     @Body("bookingCode") bookingCode: string
-  ) {
+  ): ReturnType<TicketService["createTicketsFromBooking"]> {
     return this.ticketService.createTicketsFromBooking(
       bookingCode,
       undefined,
@@ -60,7 +60,7 @@ export class TicketController {
   async getMyTickets(
     @CurrentUser() user: JwtPayload,
     @Query() query: MyTicketsQueryDto
-  ) {
+  ): ReturnType<TicketService["getMyTickets"]> {
     return this.ticketService.getMyTickets(user.userId, query);
   }
 
@@ -72,7 +72,7 @@ export class TicketController {
   async validateTicket(
     @CurrentUser() user: JwtPayload,
     @Param("ticketCode") ticketCode: string
-  ) {
+  ): ReturnType<TicketService["validateTicket"]> {
     return this.ticketService.validateTicket(ticketCode, user);
   }
   @Throttle({ medium: { limit: 60, ttl: 60000 } })
@@ -83,7 +83,7 @@ export class TicketController {
   async getTicketByCode(
     @CurrentUser() user: JwtPayload,
     @Param("ticketCode") ticketCode: string
-  ) {
+  ): ReturnType<TicketService["getTicketByCode"]> {
     const userId = user.userId;
     return this.ticketService.getTicketByCode(userId, ticketCode);
   }
@@ -99,7 +99,7 @@ export class TicketController {
     @CurrentUser() user: JwtPayload,
     @Body("location") location?: string,
     @Body("deviceInfo") deviceInfo?: string
-  ) {
+  ): ReturnType<TicketService["checkInTicket"]> {
     const ipAddress = resolveClientIp(req);
 
     return this.ticketService.checkInTicket(
@@ -118,7 +118,7 @@ export class TicketController {
   async cancelTicket(
     @Body("ticketCode") ticketCode: string,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): ReturnType<TicketService["cancelTicket"]> {
     const userId = user.userId;
     return this.ticketService.cancelTicket(ticketCode, userId);
   }
@@ -131,7 +131,7 @@ export class TicketController {
   async getCheckInHistory(
     @Param("ticketCode") ticketCode: string,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): ReturnType<TicketService["getCheckInHistory"]> {
     return this.ticketService.getCheckInHistory(ticketCode, user);
   }
 
@@ -143,7 +143,7 @@ export class TicketController {
   async getAllTickets(
     @Query() query: QueryTicketDto,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): ReturnType<TicketService["getAllTickets"]> {
     return this.ticketService.getAllTickets(query, user);
   }
 }

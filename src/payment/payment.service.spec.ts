@@ -1064,13 +1064,16 @@ describe("PaymentService – withPaypalTimeout", () => {
 
   it("rejects with timeout error when promise takes too long", async () => {
     jest.useFakeTimers();
-    const slow = new Promise((resolve) =>
-      setTimeout(() => resolve({ result: "slow" }), 60_000)
-    );
-    const p = service.withPaypalTimeout(slow);
-    jest.advanceTimersByTime(service.PAYPAL_TIMEOUT_MS + 100);
-    await expect(p).rejects.toThrow("PayPal request timed out");
-    jest.useRealTimers();
+    try {
+      const slow = new Promise((resolve) =>
+        setTimeout(() => resolve({ result: "slow" }), 60_000)
+      );
+      const p = service.withPaypalTimeout(slow);
+      jest.advanceTimersByTime(service.PAYPAL_TIMEOUT_MS + 100);
+      await expect(p).rejects.toThrow("PayPal request timed out");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -2371,7 +2374,11 @@ describe("PaymentService – getPaymentHistory", () => {
         populate: jest.fn().mockReturnValue({
           sort: jest.fn().mockReturnValue({
             skip: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([]),
+              limit: jest.fn().mockReturnValue({
+                lean: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
             }),
           }),
         }),
@@ -2423,7 +2430,11 @@ describe("PaymentService – getPaymentHistory", () => {
       populate: jest.fn().mockReturnValue({
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue(payments),
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                exec: jest.fn().mockResolvedValue(payments),
+              }),
+            }),
           }),
         }),
       }),
@@ -2460,7 +2471,11 @@ describe("PaymentService – getPaymentHistory", () => {
       populate: jest.fn().mockReturnValue({
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue([]),
+            limit: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                exec: jest.fn().mockResolvedValue([]),
+              }),
+            }),
           }),
         }),
       }),
@@ -2480,7 +2495,9 @@ describe("PaymentService – getPaymentHistory", () => {
       populate: jest.fn().mockReturnThis(),
       sort: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockResolvedValue([]),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
     };
     paymentModel.find.mockReturnValue(chain);
     paymentModel.countDocuments.mockResolvedValue(0);
@@ -2495,7 +2512,9 @@ describe("PaymentService – getPaymentHistory", () => {
       populate: jest.fn().mockReturnThis(),
       sort: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockResolvedValue([]),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
     };
     paymentModel.find.mockReturnValue(chain);
     paymentModel.countDocuments.mockResolvedValue(0);

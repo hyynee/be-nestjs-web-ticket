@@ -222,7 +222,14 @@ describe("TicketService – checkInTicket", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.ticket).toEqual(updatedTicket);
+      expect(result.ticket).toEqual(
+        expect.objectContaining({
+          id: updatedTicket._id.toString(),
+          ticketCode: updatedTicket.ticketCode,
+          status: "used",
+          checkInLocation: location,
+        })
+      );
     });
 
     it("calls findOneAndUpdate with _id AND status: 'valid' (atomic guard)", async () => {
@@ -863,7 +870,13 @@ describe("TicketService – checkInTicket", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.ticket).toEqual(updatedTicket);
+      expect(result.ticket).toEqual(
+        expect.objectContaining({
+          id: updatedTicket._id.toString(),
+          ticketCode: updatedTicket.ticketCode,
+          status: "used",
+        })
+      );
     });
   });
 });
@@ -1780,7 +1793,20 @@ describe("TicketService – createTicketsFromBooking", () => {
       userId
     );
 
-    expect(result).toEqual(createdTickets);
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: "TK1",
+        ticketCode: "TK1",
+        event: { id: eventId.toString() },
+        zone: { id: zoneId.toString() },
+      }),
+      expect.objectContaining({
+        id: "TK2",
+        ticketCode: "TK2",
+        event: { id: eventId.toString() },
+        zone: { id: zoneId.toString() },
+      }),
+    ]);
     expect(ticketModel.insertMany).toHaveBeenCalledTimes(1);
     expect(ticketGateway.emitTicketCreated).toHaveBeenCalled();
   });
@@ -1810,7 +1836,20 @@ describe("TicketService – createTicketsFromBooking", () => {
       userId
     );
 
-    expect(result).toEqual(createdTickets);
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: "TK1",
+        ticketCode: "TK1",
+        event: { id: eventId.toString() },
+        zone: { id: zoneId.toString() },
+      }),
+      expect.objectContaining({
+        id: "TK2",
+        ticketCode: "TK2",
+        event: { id: eventId.toString() },
+        zone: { id: zoneId.toString() },
+      }),
+    ]);
     expect(ticketModel.insertMany).toHaveBeenCalledTimes(1);
   });
 
@@ -1827,7 +1866,9 @@ describe("TicketService – createTicketsFromBooking", () => {
       userId
     );
 
-    expect(result).toEqual(existingTickets);
+    expect(result).toEqual([
+      expect.objectContaining({ id: "EXISTING1", ticketCode: "EXISTING1" }),
+    ]);
     expect(ticketModel.insertMany).not.toHaveBeenCalled();
   });
 
@@ -1856,7 +1897,9 @@ describe("TicketService – createTicketsFromBooking", () => {
       userId
     );
 
-    expect(result).toEqual([{ ticketCode: "EXISTING1" }]);
+    expect(result).toEqual([
+      expect.objectContaining({ id: "EXISTING1", ticketCode: "EXISTING1" }),
+    ]);
     expect(ticketModel.insertMany).not.toHaveBeenCalled();
   });
 
@@ -1880,7 +1923,9 @@ describe("TicketService – createTicketsFromBooking", () => {
       userId
     );
 
-    expect(result).toEqual([{ ticketCode: "FALLBACK" }]);
+    expect(result).toEqual([
+      expect.objectContaining({ id: "FALLBACK", ticketCode: "FALLBACK" }),
+    ]);
   });
 
   it("publishes ticket creation via gateway when no session", async () => {
@@ -1919,7 +1964,10 @@ describe("TicketService – createTicketsFromBooking", () => {
       userId
     );
 
-    expect(result).toEqual(createdTickets);
+    expect(result).toEqual([
+      expect.objectContaining({ id: "TK_QR1", ticketCode: "TK_QR1" }),
+      expect.objectContaining({ id: "TK_QR2", ticketCode: "TK_QR2" }),
+    ]);
     expect(QRCode.toBuffer).toHaveBeenCalled();
     expect(uploadService.uploadQRCodeBuffer).toHaveBeenCalled();
   });

@@ -15,6 +15,25 @@ import {
 import { ExportTicketDto } from "@src/export/dto/export-ticket.dto";
 import { ExportCheckInDto } from "@src/export/dto/export-checkin.dto";
 
+export interface BookingConfirmationQueuePayload {
+  email: string;
+  customerName: string;
+  bookingCode: string;
+  eventTitle: string;
+  eventLocation: string;
+  eventDate: Date | string;
+  zoneName: string;
+  seats: string[];
+  quantity: number;
+  totalPrice: number;
+  currency: string;
+  tickets?: Array<{
+    ticketCode: string;
+    seatNumber?: string;
+    qrCode: string;
+  }>;
+}
+
 export class SendRegisterEmailPayloadDto {
   @IsEmail()
   to: string;
@@ -156,3 +175,12 @@ export class ExportCheckInZonesJobPayloadDto {
   @IsMongoId()
   requestedByUserId: string;
 }
+
+export type QueueJobPayload =
+  | SendRegisterEmailPayloadDto
+  | SendVerificationEmailPayloadDto
+  | SendPasswordResetPayloadDto
+  | BookingConfirmationQueuePayload
+  | RefundFailureAlertPayloadDto
+  | ExportTicketsJobPayloadDto
+  | ExportCheckInZonesJobPayloadDto;

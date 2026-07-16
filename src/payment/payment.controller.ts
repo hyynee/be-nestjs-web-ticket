@@ -55,7 +55,7 @@ export class PaymentController {
   async createCheckoutSession(
     @CurrentUser() user: JwtPayload,
     @Body() createPayment: CreateCheckoutSessionDto
-  ) {
+  ): ReturnType<PaymentService["createCheckoutSession"]> {
     const userId = user.userId;
     return this.paymentService.createCheckoutSession(
       userId,
@@ -69,7 +69,7 @@ export class PaymentController {
     @Headers("stripe-signature") signature: string,
     @Req() req: StripeWebhookRequest,
     @Res() res: Response
-  ) {
+  ): Promise<Response> {
     let event: Stripe.Event;
     try {
       const rawBody = normalizeRawBody(req);
@@ -200,7 +200,7 @@ export class PaymentController {
   async createPaypalTransaction(
     @CurrentUser() user: JwtPayload,
     @Body() createPayment: CreateCheckoutSessionDto
-  ) {
+  ): ReturnType<PaymentService["createPaypalTransaction"]> {
     const userId = user.userId;
     return this.paymentService.createPaypalTransaction(
       userId,
@@ -216,7 +216,7 @@ export class PaymentController {
   async finalizePaypalTransaction(
     @Param("id") id: string,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): ReturnType<PaymentService["finalizePaypalTransaction"]> {
     // PayPal order IDs are 17-character uppercase alphanumeric strings.
     if (!/^[A-Z0-9]{5,22}$/.test(id)) {
       throw new BadRequestException("Invalid PayPal order ID format");
@@ -231,7 +231,7 @@ export class PaymentController {
   async getPaymentHistory(
     @CurrentUser() user: JwtPayload,
     @Query() query: QueryPaymentHistoryDto
-  ) {
+  ): ReturnType<PaymentService["getPaymentHistory"]> {
     const userId = user.userId;
     return this.paymentService.getPaymentHistory(userId, query);
   }
@@ -243,7 +243,7 @@ export class PaymentController {
   async cancelPayment(
     @Body() dto: CancelPaymentDto,
     @CurrentUser() user: JwtPayload
-  ) {
+  ): ReturnType<PaymentService["handlePaymentCancelled"]> {
     return this.paymentService.handlePaymentCancelled(
       user.userId,
       dto.bookingCode

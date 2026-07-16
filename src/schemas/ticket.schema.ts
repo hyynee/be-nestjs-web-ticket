@@ -54,7 +54,7 @@ export class Ticket {
   metadata?: {
     deviceInfo?: string;
     ipAddress?: string;
-    [key: string]: any;
+    extra?: Record<string, unknown>;
   };
 
   @Prop({ type: Date })
@@ -72,29 +72,23 @@ export class Ticket {
 
 export const TicketSchema = SchemaFactory.createForClass(Ticket);
 
-//check vé còn hợp lệ không
 TicketSchema.virtual("isValid").get(function () {
   return this.status === "valid" && !this.isDeleted;
 });
 
-// Indexes
 TicketSchema.index({ eventId: 1, status: 1, isDeleted: 1 });
 TicketSchema.index({ userId: 1, isDeleted: 1 });
 TicketSchema.index({ bookingId: 1 });
 TicketSchema.index({ status: 1, isDeleted: 1 });
 TicketSchema.index({ createdAt: -1 });
-// Compound indexes for statistical aggregations
 TicketSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
 TicketSchema.index({ eventId: 1, status: 1, isDeleted: 1, createdAt: -1 });
 
-// Ngăn duplicate ticket cho seated events (seatNumber tồn tại).
-// sparse: true → chỉ index documents có seatNumber, non-seated tickets (seatNumber undefined)
-// không bị ràng buộc — chúng được bảo vệ bởi Redis distributed lock ở service layer.
 TicketSchema.index(
   { bookingId: 1, seatNumber: 1 },
   {
     unique: true,
-    sparse: true,
+    partialFilterExpression: { seatNumber: { $type: "string" } },
     name: "idx_unique_booking_seat",
   }
 );
