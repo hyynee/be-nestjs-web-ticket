@@ -5,6 +5,12 @@ import { BadRequestException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { RedisService } from "@src/redis/redis.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { AreaCommandService } from "./application/area-command.service";
+import { AreaQueryService } from "./application/area-query.service";
+import { AreaMutationPolicy } from "./domain/policies/area-mutation.policy";
+import { AreaCacheService } from "./infrastructure/cache/area-cache.service";
+import { AreaRepository } from "./infrastructure/persistence/area.repository";
+import { AreaPresenter } from "./presenters/area.presenter";
 
 describe("AreaService", () => {
   let service: AreaService;
@@ -80,6 +86,12 @@ describe("AreaService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AreaService,
+        AreaCommandService,
+        AreaQueryService,
+        AreaRepository,
+        AreaPresenter,
+        AreaCacheService,
+        AreaMutationPolicy,
         { provide: getModelToken("Area"), useValue: mockAreaModel },
         { provide: getModelToken("Zone"), useValue: mockZoneModel },
         { provide: getModelToken("Booking"), useValue: mockBookingModel },

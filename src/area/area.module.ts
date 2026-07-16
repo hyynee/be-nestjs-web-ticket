@@ -1,6 +1,13 @@
 import { Module } from "@nestjs/common";
 import { AreaService } from "./area.service";
-import { AreaController } from "./area.controller";
+import { AreaManagementController } from "./controllers/area-management.controller";
+import { AreaQueryController } from "./controllers/area-query.controller";
+import { AreaCommandService } from "./application/area-command.service";
+import { AreaQueryService } from "./application/area-query.service";
+import { AreaMutationPolicy } from "./domain/policies/area-mutation.policy";
+import { AreaCacheService } from "./infrastructure/cache/area-cache.service";
+import { AreaRepository } from "./infrastructure/persistence/area.repository";
+import { AreaPresenter } from "./presenters/area.presenter";
 import { MongooseModule } from "@nestjs/mongoose";
 import { Area, AreaSchema } from "@src/schemas/area.schema";
 import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
@@ -17,7 +24,16 @@ import { EventOwnershipService } from "@src/event/event-ownership.service";
       { name: Event.name, schema: EventSchema },
     ]),
   ],
-  controllers: [AreaController],
-  providers: [AreaService, EventOwnershipService],
+  controllers: [AreaManagementController, AreaQueryController],
+  providers: [
+    AreaService,
+    AreaCommandService,
+    AreaQueryService,
+    AreaRepository,
+    AreaPresenter,
+    AreaCacheService,
+    AreaMutationPolicy,
+    EventOwnershipService,
+  ],
 })
 export class AreaModule {}

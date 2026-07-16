@@ -1,108 +1,116 @@
-import { Test, TestingModule } from "@nestjs/testing";
-import { Reflector } from "@nestjs/core";
-import { AreaController } from "./area.controller";
-import { AreaService } from "./area.service";
-import { RolesGuard } from "@src/guards/role.guard";
-import { ROLES_KEY } from "@src/common/decorators/roles.decorator";
 import { BadRequestException } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { AuthGuard } from "@nestjs/passport";
+import { Test, TestingModule } from "@nestjs/testing";
+import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
+import { ROLES_KEY } from "@src/common/decorators/roles.decorator";
+import { RolesGuard } from "@src/guards/role.guard";
+import { AreaCommandService } from "./application/area-command.service";
+import { AreaQueryService } from "./application/area-query.service";
+import { AreaManagementController } from "./controllers/area-management.controller";
+import { AreaQueryController } from "./controllers/area-query.controller";
 
-describe("AreaController", () => {
-  let controller: AreaController;
-  let areaService: Record<string, jest.Mock>;
+describe("Area controllers", () => {
+  let managementController: AreaManagementController;
+  let queryController: AreaQueryController;
+  let commandService: Record<string, jest.Mock>;
+  let queryService: Record<string, jest.Mock>;
 
-  const VALID_ID = "64c1f2e1e1e1e1e1e1e1e1e1";
-  const VALID_ZONE_ID = "64c1f2e1e1e1e1e1e1e1e1e2";
-  const mockUser = { userId: "user123", role: "admin" };
+  const validId = "64c1f2e1e1e1e1e1e1e1e1e1";
+  const validZoneId = "64c1f2e1e1e1e1e1e1e1e1e2";
+  const mockUser: JwtPayload = {
+    userId: "user123",
+    role: "admin",
+    iat: 0,
+    exp: 0,
+  };
   const mockArea = {
-    _id: VALID_ID,
-    zoneId: VALID_ZONE_ID,
+    id: validId,
+    eventId: validId,
+    zoneId: validZoneId,
     name: "VIP",
     rowLabel: "A",
     seatCount: 10,
-    seats: ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"],
-    isDeleted: false,
+    seats: ["A1", "A2"],
   };
 
   beforeEach(async () => {
-    areaService = {
+    commandService = {
       createArea: jest.fn(),
-      getAllAreas: jest.fn(),
       softDeleteArea: jest.fn(),
       updateArea: jest.fn(),
+    };
+    queryService = {
+      getAllAreas: jest.fn(),
       getAreaById: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [AreaController],
-      providers: [{ provide: AreaService, useValue: areaService }],
+      controllers: [AreaManagementController, AreaQueryController],
+      providers: [
+        { provide: AreaCommandService, useValue: commandService },
+        { provide: AreaQueryService, useValue: queryService },
+      ],
     })
+      .overrideGuard(AuthGuard("jwt"))
+      .useValue({ canActivate: () => true })
       .overrideGuard(RolesGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
-    controller = module.get<AreaController>(AreaController);
+    managementController = module.get(AreaManagementController);
+    queryController = module.get(AreaQueryController);
   });
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  describe("createArea", () => {
+  it("delegates management endpoints to AreaCommandService", async () => {
     const createDto = {
-      zoneId: VALID_ZONE_ID,
+      zoneId: validZoneId,
       name: "VIP",
       rowLabel: "A",
       seatCount: 10,
     };
-
-    it("should call areaService.createArea and return created area", async () => {
-      areaService.createArea.mockResolvedValue(mockArea);
-
-      const result = await controller.createArea(
-        mockUser as any,
-        createDto as any
-      );
-
-      expect(areaService.createArea).toHaveBeenCalledWith(mockUser, createDto);
-      expect(result).toEqual(mockArea);
+    const updateDto = { name: "premium" };
+    commandService.createArea.mockResolvedValue(mockArea);
+    commandService.softDeleteArea.mockResolvedValue({
+      ...mockArea,
+      isDeleted: true,
+    });
+    commandService.updateArea.mockResolvedValue({
+      ...mockArea,
+      name: "PREMIUM",
     });
 
-    it("should propagate error when service throws", async () => {
-      const err = new BadRequestException("Zone not found");
-      areaService.createArea.mockRejectedValue(err);
+    await expect(
+      managementController.createArea(mockUser, createDto as any)
+    ).resolves.toEqual(mockArea);
+    await expect(
+      managementController.softDeleteArea(mockUser, validId, {
+        isDeleted: true,
+      })
+    ).resolves.toEqual({ ...mockArea, isDeleted: true });
+    await expect(
+      managementController.updateArea(mockUser, validId, updateDto as any)
+    ).resolves.toEqual({ ...mockArea, name: "PREMIUM" });
 
-      await expect(
-        controller.createArea(mockUser as any, createDto as any)
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it("should throw when zoneId is invalid", async () => {
-      const err = new BadRequestException("Invalid zone ID");
-      areaService.createArea.mockRejectedValue(err);
-
-      await expect(
-        controller.createArea(
-          mockUser as any,
-          { ...createDto, zoneId: "bad" } as any
-        )
-      ).rejects.toThrow(BadRequestException);
-    });
+    expect(commandService.createArea).toHaveBeenCalledWith(mockUser, createDto);
+    expect(commandService.softDeleteArea).toHaveBeenCalledWith(
+      mockUser,
+      validId,
+      { isDeleted: true }
+    );
+    expect(commandService.updateArea).toHaveBeenCalledWith(
+      mockUser,
+      validId,
+      updateDto
+    );
   });
 
-  describe("getAllAreas", () => {
-    const emptyPaginated = {
-      items: [],
-      meta: {
-        currentPage: 1,
-        itemsPerPage: 10,
-        totalItems: 0,
-        totalPages: 0,
-        hasPreviousPage: false,
-        hasNextPage: false,
-      },
-    };
-
-    const populatedPaginated = {
+  it("delegates query endpoints to AreaQueryService", async () => {
+    const paginated = {
       items: [mockArea],
       meta: {
         currentPage: 1,
@@ -113,213 +121,62 @@ describe("AreaController", () => {
         hasNextPage: false,
       },
     };
+    const query = {
+      zoneId: validZoneId,
+      page: 1,
+      limit: 10,
+      sortBy: "name",
+      sortOrder: "asc" as const,
+    };
+    queryService.getAllAreas.mockResolvedValue(paginated);
+    queryService.getAreaById.mockResolvedValue(mockArea);
 
-    it("should call areaService.getAllAreas with query and return paginated result", async () => {
-      areaService.getAllAreas.mockResolvedValue(populatedPaginated);
+    await expect(queryController.getAllAreas(query as any)).resolves.toEqual(
+      paginated
+    );
+    await expect(queryController.getAreaById(validId)).resolves.toEqual(
+      mockArea
+    );
 
-      const query = {
-        zoneId: VALID_ZONE_ID,
-        page: 1,
-        limit: 10,
-        sortBy: "name",
-        sortOrder: "asc" as const,
-      };
-      const result = await controller.getAllAreas(query as any);
-
-      expect(areaService.getAllAreas).toHaveBeenCalledWith(query);
-      expect(result).toEqual(populatedPaginated);
-    });
-
-    it("should return empty list when no areas exist", async () => {
-      areaService.getAllAreas.mockResolvedValue(emptyPaginated);
-
-      const result = await controller.getAllAreas({} as any);
-
-      expect(result.items).toHaveLength(0);
-      expect(result.meta.totalItems).toBe(0);
-    });
-
-    it("should pass zoneId filtering to service", async () => {
-      areaService.getAllAreas.mockResolvedValue(emptyPaginated);
-
-      await controller.getAllAreas({ zoneId: VALID_ZONE_ID } as any);
-
-      expect(areaService.getAllAreas).toHaveBeenCalledWith(
-        expect.objectContaining({ zoneId: VALID_ZONE_ID })
-      );
-    });
-
-    it("should propagate error when service throws", async () => {
-      areaService.getAllAreas.mockRejectedValue(
-        new BadRequestException("Invalid zone ID")
-      );
-
-      await expect(
-        controller.getAllAreas({ zoneId: "bad" } as any)
-      ).rejects.toThrow(BadRequestException);
-    });
+    expect(queryService.getAllAreas).toHaveBeenCalledWith(query);
+    expect(queryService.getAreaById).toHaveBeenCalledWith(validId);
   });
 
-  describe("softDeleteArea", () => {
-    it("should call areaService.softDeleteArea with isDeleted: true", async () => {
-      areaService.softDeleteArea.mockResolvedValue({
-        ...mockArea,
-        isDeleted: true,
-      });
+  it("propagates service errors", async () => {
+    commandService.createArea.mockRejectedValue(
+      new BadRequestException("Zone not found")
+    );
+    queryService.getAreaById.mockRejectedValue(
+      new BadRequestException("Area not found or has been deleted")
+    );
 
-      const result = await controller.softDeleteArea(
-        mockUser as any,
-        VALID_ID,
-        { isDeleted: true }
-      );
-
-      expect(areaService.softDeleteArea).toHaveBeenCalledWith(
-        mockUser,
-        VALID_ID,
-        { isDeleted: true }
-      );
-      expect(result.isDeleted).toBe(true);
-    });
-
-    it("should call areaService.softDeleteArea with isDeleted: false (restore)", async () => {
-      areaService.softDeleteArea.mockResolvedValue({
-        ...mockArea,
-        isDeleted: false,
-      });
-
-      const result = await controller.softDeleteArea(
-        mockUser as any,
-        VALID_ID,
-        { isDeleted: false }
-      );
-
-      expect(areaService.softDeleteArea).toHaveBeenCalledWith(
-        mockUser,
-        VALID_ID,
-        { isDeleted: false }
-      );
-      expect(result.isDeleted).toBe(false);
-    });
-
-    it("should propagate error when service throws", async () => {
-      areaService.softDeleteArea.mockRejectedValue(
-        new BadRequestException("Area not found")
-      );
-
-      await expect(
-        controller.softDeleteArea(mockUser as any, VALID_ID, {
-          isDeleted: true,
-        })
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it("should throw when active bookings exist", async () => {
-      areaService.softDeleteArea.mockRejectedValue(
-        new BadRequestException("Cannot delete area: 3 active booking(s) exist")
-      );
-
-      await expect(
-        controller.softDeleteArea(mockUser as any, VALID_ID, {
-          isDeleted: true,
-        })
-      ).rejects.toThrow(BadRequestException);
-    });
+    await expect(
+      managementController.createArea(mockUser, {
+        zoneId: validZoneId,
+        name: "VIP",
+      } as any)
+    ).rejects.toThrow(BadRequestException);
+    await expect(queryController.getAreaById(validId)).rejects.toThrow(
+      BadRequestException
+    );
   });
 
-  describe("updateArea", () => {
-    const updateDto = { name: "premium" };
-
-    it("should call areaService.updateArea with correct params", async () => {
-      areaService.updateArea.mockResolvedValue({
-        ...mockArea,
-        name: "PREMIUM",
-      });
-
-      const result = await controller.updateArea(
-        mockUser as any,
-        VALID_ID,
-        updateDto as any
-      );
-
-      expect(areaService.updateArea).toHaveBeenCalledWith(
-        mockUser,
-        VALID_ID,
-        updateDto
-      );
-      expect(result.name).toBe("PREMIUM");
-    });
-
-    it("should pass zoneId when updating zone", async () => {
-      const newZoneDto = { zoneId: VALID_ZONE_ID, name: "VVIP" };
-      areaService.updateArea.mockResolvedValue(mockArea);
-
-      await controller.updateArea(mockUser as any, VALID_ID, newZoneDto as any);
-
-      expect(areaService.updateArea).toHaveBeenCalledWith(
-        mockUser,
-        VALID_ID,
-        newZoneDto
-      );
-    });
-
-    it("should propagate error when service throws", async () => {
-      areaService.updateArea.mockRejectedValue(
-        new BadRequestException("Area not found or has been deleted")
-      );
-
-      await expect(
-        controller.updateArea(mockUser as any, VALID_ID, updateDto as any)
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe("getAreaById", () => {
-    it("should call areaService.getAreaById with id", async () => {
-      areaService.getAreaById.mockResolvedValue(mockArea);
-
-      const result = await controller.getAreaById(VALID_ID);
-
-      expect(areaService.getAreaById).toHaveBeenCalledWith(VALID_ID);
-      expect(result).toEqual(mockArea);
-    });
-
-    it("should throw when area not found", async () => {
-      areaService.getAreaById.mockRejectedValue(
-        new BadRequestException("Area not found or has been deleted")
-      );
-
-      await expect(controller.getAreaById(VALID_ID)).rejects.toThrow(
-        BadRequestException
-      );
-    });
-
-    it("should throw for invalid ObjectId format", async () => {
-      areaService.getAreaById.mockRejectedValue(
-        new BadRequestException("Invalid area ID")
-      );
-
-      await expect(controller.getAreaById("invalid")).rejects.toThrow(
-        BadRequestException
-      );
-    });
-  });
-
-  describe("role metadata", () => {
+  it("keeps role metadata equivalent after controller split", () => {
     const reflector = new Reflector();
 
-    it("allows both admin and organizer to create/update/delete areas", () => {
-      expect(reflector.get(ROLES_KEY, controller.createArea)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.updateArea)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-      expect(reflector.get(ROLES_KEY, controller.softDeleteArea)).toEqual([
-        "admin",
-        "organizer",
-      ]);
-    });
+    expect(reflector.get(ROLES_KEY, managementController.createArea)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(reflector.get(ROLES_KEY, managementController.updateArea)).toEqual([
+      "admin",
+      "organizer",
+    ]);
+    expect(
+      reflector.get(ROLES_KEY, managementController.softDeleteArea)
+    ).toEqual(["admin", "organizer"]);
+    expect(reflector.get(ROLES_KEY, queryController.getAreaById)).toEqual([
+      "admin",
+    ]);
   });
 });
