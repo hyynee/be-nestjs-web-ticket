@@ -145,6 +145,38 @@ export type BookingForConfirmationMail = {
   };
 };
 
+export type BookingMailReference<T> =
+  T | Types.ObjectId | string | null | undefined;
+
+export interface BookingMailObjectIdObject {
+  _id?: Types.ObjectId | string;
+}
+
+export type BookingMailObjectIdReference =
+  Types.ObjectId | string | BookingMailObjectIdObject;
+
+export type BookingMailPopulatedEvent =
+  BookingForConfirmationMail["eventId"] & {
+    _id?: Types.ObjectId | string;
+  };
+
+export type BookingMailPopulatedZone = BookingForConfirmationMail["zoneId"] & {
+  _id?: Types.ObjectId | string;
+};
+
+export interface BookingMailSource {
+  bookingCode: string;
+  customerEmail: string;
+  customerName?: string;
+  eventId: BookingMailReference<BookingMailPopulatedEvent>;
+  zoneId: BookingMailReference<BookingMailPopulatedZone>;
+  seats?: string[];
+  quantity: number;
+  totalPrice: number;
+  userId?: Types.ObjectId;
+  snapshot?: BookingForConfirmationMail["snapshot"];
+}
+
 export type CreatedTicketForMail = {
   ticketCode: string;
   seatNumber?: string;
@@ -238,4 +270,44 @@ export interface PaymentHistoryItem {
 export interface PaymentCancelResult {
   status: number;
   message: string;
+}
+
+export interface PaymentHistoryEventSource {
+  _id?: Types.ObjectId | string;
+  title?: string;
+  location?: string;
+  startDate?: Date;
+}
+
+export interface PaymentHistoryZoneSource {
+  _id?: Types.ObjectId | string;
+  name?: string;
+  price?: number;
+}
+
+export interface PaymentHistoryBookingSource {
+  _id?: Types.ObjectId | string;
+  bookingCode?: string;
+  eventId?: PaymentHistoryEventSource | Types.ObjectId | string;
+  zoneId?: PaymentHistoryZoneSource | Types.ObjectId | string;
+}
+
+export interface PaymentHistorySource {
+  _id?: Types.ObjectId | string;
+  bookingId?: PaymentHistoryBookingSource | Types.ObjectId | string;
+  stripePaymentIntentId?: string;
+  paypalOrderId?: string;
+  paypalCaptureId?: string;
+  amount: number;
+  currency: string;
+  paymentMethod: string;
+  status: string;
+  errorMessage?: string;
+  metadata?: PaymentMetadata;
+  paidAt?: Date;
+  refundedAt?: Date;
+  stripeRefundId?: string;
+  refundAmount?: number;
+  createdAt?: Date;
+  updatedAt?: Date;
 }

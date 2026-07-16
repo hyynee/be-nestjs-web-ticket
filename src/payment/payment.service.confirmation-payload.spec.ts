@@ -1,4 +1,4 @@
-import { PaymentService } from "./payment.service";
+import { PaymentConfirmationDeliveryService } from "./application/services/payment-confirmation-delivery.service";
 import { BookingForConfirmationMail } from "./types/payment.types";
 
 jest.mock("stripe", () => jest.fn().mockImplementation(() => ({})));
@@ -30,21 +30,11 @@ jest.mock("@src/config/config", () => ({
   },
 }));
 
-// buildBookingConfirmationPayload() is a pure, synchronous field-mapping
-// helper with no DB/Stripe/PayPal calls, so a real PaymentService instance
-// with stubbed constructor deps is enough — no need to reproduce the full
-// webhook transaction mocking that the rest of payment.service.spec.ts uses.
-describe("PaymentService — buildBookingConfirmationPayload (snapshot preference)", () => {
+describe("PaymentConfirmationDeliveryService — buildBookingConfirmationPayload (snapshot preference)", () => {
   let service: any;
 
   beforeEach(() => {
-    service = new PaymentService(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
+    service = new PaymentConfirmationDeliveryService(
       {} as any,
       {} as any,
       {} as any,

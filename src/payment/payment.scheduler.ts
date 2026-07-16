@@ -106,7 +106,11 @@ export class PaymentScheduler {
           keys: [PAYPAL_RECONCILE_LOCK_KEY],
           arguments: [lockValue],
         })
-        .catch(() => {});
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `paypal-reconcile: lock release failed — ${(error as Error)?.message ?? "unknown"}`
+          );
+        });
     }
   }
 }

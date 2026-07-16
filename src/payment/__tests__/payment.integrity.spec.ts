@@ -38,6 +38,8 @@ import { QueueService } from "@src/queue/queue.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { CurrencyService } from "@src/currency/currency.service";
 import { MailService } from "@src/services/mail.service";
+import { paymentTestProviders } from "../testing/payment-test.providers";
+import { PaypalPaymentSettlementService } from "../application/services/paypal-payment-settlement.service";
 
 // ─── Shared mocks ─────────────────────────────────────────────────────────────
 
@@ -109,7 +111,7 @@ const buildPaymentService = async (
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
-      PaymentService,
+      ...paymentTestProviders,
       { provide: getModelToken(Payment.name), useValue: paymentModel },
       { provide: getModelToken(Booking.name), useValue: bookingModel },
       { provide: getModelToken(Zone.name), useValue: zoneModel },
@@ -544,7 +546,7 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: makeZoneModel() },
@@ -576,9 +578,11 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
 
     const service = module.get(PaymentService);
 
+    const settlementUseCase = module.get(PaypalPaymentSettlementService);
+
     // Spy on processPaypalPayment (private) to intercept
     const processPaypalSpy = jest
-      .spyOn(service as any, "processPaypalPayment")
+      .spyOn(settlementUseCase as any, "processPaypalPayment")
       .mockImplementation(async () => {
         callOrder.push("processPaypalPayment");
       });
@@ -591,7 +595,7 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
         purchase_units: [{ payments: { captures: [captureDetail] } }],
       },
     };
-    (service as any).paypalClient = {
+    (service as any).paymentGateway.paypalClient = {
       execute: jest.fn().mockResolvedValue(captureResponse),
     };
 
@@ -654,7 +658,7 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: makeZoneModel() },
@@ -703,13 +707,14 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
         ],
       },
     };
-    (service as any).paypalClient = {
+    (service as any).paymentGateway.paypalClient = {
       execute: jest.fn().mockResolvedValue(captureResponse),
     };
 
     // DB write fails
+    const settlementUseCase = module.get(PaypalPaymentSettlementService);
     jest
-      .spyOn(service as any, "processPaypalPayment")
+      .spyOn(settlementUseCase as any, "processPaypalPayment")
       .mockRejectedValue(
         new Error("MongoNetworkError — simulated DB failure after capture")
       );
@@ -772,7 +777,7 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: makeZoneModel() },
@@ -811,7 +816,7 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
     const service = module.get(PaymentService);
 
     // PayPal API itself fails (capture never attempted)
-    (service as any).paypalClient = {
+    (service as any).paymentGateway.paypalClient = {
       execute: jest.fn().mockRejectedValue(new Error("PayPal API down")),
     };
 

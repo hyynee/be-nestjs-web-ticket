@@ -35,6 +35,7 @@ import { UserEventsService } from "@src/events/user-event.services";
 import { QueueService } from "@src/queue/queue.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { CurrencyService } from "@src/currency/currency.service";
+import { paymentTestProviders } from "./testing/payment-test.providers";
 
 // ── Module-level mocks ──────────────────────────────────────────────────────
 
@@ -200,7 +201,7 @@ const buildPaymentService = async (overrides: ProviderOverrides = {}) => {
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
-      PaymentService,
+      ...paymentTestProviders,
       { provide: getModelToken(Payment.name), useValue: paymentModel },
       { provide: getModelToken(Booking.name), useValue: bookingModel },
       { provide: getModelToken(Zone.name), useValue: zoneModel },
@@ -239,10 +240,13 @@ const buildPaymentService = async (overrides: ProviderOverrides = {}) => {
 
   // Inject mocked stripe and paypalClient if provided
   if (overrides.stripe) {
-    Object.assign((service as any).stripe, overrides.stripe);
+    Object.assign((service as any).paymentGateway.stripe, overrides.stripe);
   }
   if (overrides.paypalClient) {
-    Object.assign((service as any).paypalClient, overrides.paypalClient);
+    Object.assign(
+      (service as any).paymentGateway.paypalClient,
+      overrides.paypalClient
+    );
   }
 
   return {
@@ -302,7 +306,9 @@ describe("A — Stripe Webhook: sai signature / metadata thiếu", () => {
 
   describe("verifyWebhook", () => {
     it("A1-1: throws BadRequestException khi signature sai", () => {
-      (service as any).stripe.webhooks.constructEvent.mockImplementation(() => {
+      (
+        service as any
+      ).paymentGateway.stripe.webhooks.constructEvent.mockImplementation(() => {
         throw new Error(
           "No signatures found matching the expected signature for payload"
         );
@@ -314,7 +320,9 @@ describe("A — Stripe Webhook: sai signature / metadata thiếu", () => {
     });
 
     it("A1-2: message lỗi bao gồm chi tiết của Stripe error", () => {
-      (service as any).stripe.webhooks.constructEvent.mockImplementation(() => {
+      (
+        service as any
+      ).paymentGateway.stripe.webhooks.constructEvent.mockImplementation(() => {
         throw new Error("Stripe signature mismatch");
       });
 
@@ -324,7 +332,9 @@ describe("A — Stripe Webhook: sai signature / metadata thiếu", () => {
     });
 
     it("A1-3: BadRequestException (không phải 5xx) — webhook controller trả 400 cho Stripe", () => {
-      (service as any).stripe.webhooks.constructEvent.mockImplementation(() => {
+      (
+        service as any
+      ).paymentGateway.stripe.webhooks.constructEvent.mockImplementation(() => {
         throw new Error("Invalid signature");
       });
 
@@ -341,7 +351,9 @@ describe("A — Stripe Webhook: sai signature / metadata thiếu", () => {
 
     it("A1-4: signature hợp lệ trả về Stripe.Event", () => {
       const fakeEvent = { id: "evt_test", type: "checkout.session.completed" };
-      (service as any).stripe.webhooks.constructEvent.mockReturnValue(
+      (
+        service as any
+      ).paymentGateway.stripe.webhooks.constructEvent.mockReturnValue(
         fakeEvent
       );
 
@@ -354,7 +366,9 @@ describe("A — Stripe Webhook: sai signature / metadata thiếu", () => {
     });
 
     it("A1-5: throws BadRequestException khi constructEvent throws non-Error", () => {
-      (service as any).stripe.webhooks.constructEvent.mockImplementation(() => {
+      (
+        service as any
+      ).paymentGateway.stripe.webhooks.constructEvent.mockImplementation(() => {
         throw "string error";
       });
 
@@ -1647,11 +1661,8 @@ describe("C — Thanh toán cho giao dịch đã paid / đã finalized", () => {
         },
       });
 
-      // Mock zone gateway for processPaypalPayment's emitZoneTicketUpdate
-      (service as any).zoneGateway.emitZoneTicketUpdate = jest.fn();
-
       // Directly set up paypalClient mock on the service
-      (service as any).paypalClient.execute = jest
+      (service as any).paymentGateway.paypalClient.execute = jest
         .fn()
         .mockImplementationOnce(() =>
           Promise.reject({ details: [{ issue: "ORDER_ALREADY_CAPTURED" }] })

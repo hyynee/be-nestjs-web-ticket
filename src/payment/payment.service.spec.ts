@@ -26,6 +26,11 @@ import { UserEventsService } from "@src/events/user-event.services";
 import { QueueService } from "@src/queue/queue.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { CurrencyService } from "@src/currency/currency.service";
+import { paymentTestProviders } from "./testing/payment-test.providers";
+import { PaymentGatewayService } from "./infrastructure/gateway/payment-gateway.service";
+import { PaymentIdempotencyService } from "./infrastructure/idempotency/payment-idempotency.service";
+import { IssueAdminRefundUseCase } from "./application/use-case/issue-admin-refund.use-case";
+import { toPaymentObjectId } from "./domain/utils/payment-document.utils";
 
 jest.mock("stripe", () => jest.fn().mockImplementation(() => ({})));
 
@@ -144,7 +149,7 @@ describe("PaymentService – handleChargeRefunded", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },
@@ -421,14 +426,13 @@ describe("PaymentService – handleChargeRefunded", () => {
 
 // ─── PayPal already-captured detection ───────────────────────────────────────
 // Verifies the fix for the fragile 422-only detection that caused false positives.
-describe("PaymentService – isPaypalAlreadyCapturedError", () => {
-  // Access the private method via type coercion for white-box testing
-  let service: any;
+describe("PaymentGatewayService – isPaypalAlreadyCapturedError", () => {
+  let service: PaymentGatewayService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         { provide: getModelToken(Booking.name), useValue: {} },
         { provide: getModelToken(Zone.name), useValue: {} },
@@ -471,7 +475,7 @@ describe("PaymentService – isPaypalAlreadyCapturedError", () => {
         },
       ],
     }).compile();
-    service = module.get<PaymentService>(PaymentService);
+    service = module.get(PaymentGatewayService);
   });
 
   it("returns true when details[0].issue === ORDER_ALREADY_CAPTURED", () => {
@@ -539,7 +543,7 @@ describe("PaymentService – webhook idempotency", () => {
     redisClient = redisMock;
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         {
           provide: getModelToken(Booking.name),
@@ -677,7 +681,7 @@ xdescribe("PaymentService – createCheckoutSession guard clauses", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: {} },
@@ -799,7 +803,7 @@ describe("PaymentService – handlePaymentCancelled", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },
@@ -894,7 +898,7 @@ describe("PaymentService – payment intent event handlers", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: {} },
@@ -1011,7 +1015,7 @@ describe("PaymentService – withPaypalTimeout", () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         {
           provide: getModelToken(Booking.name),
@@ -1053,7 +1057,11 @@ describe("PaymentService – withPaypalTimeout", () => {
         },
       ],
     }).compile();
-    service = module.get(PaymentService);
+    service = module.get(PaymentGatewayService);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("resolves when the promise completes before timeout", async () => {
@@ -1063,17 +1071,14 @@ describe("PaymentService – withPaypalTimeout", () => {
   });
 
   it("rejects with timeout error when promise takes too long", async () => {
-    jest.useFakeTimers();
-    try {
-      const slow = new Promise((resolve) =>
-        setTimeout(() => resolve({ result: "slow" }), 60_000)
-      );
-      const p = service.withPaypalTimeout(slow);
-      jest.advanceTimersByTime(service.PAYPAL_TIMEOUT_MS + 100);
-      await expect(p).rejects.toThrow("PayPal request timed out");
-    } finally {
-      jest.useRealTimers();
-    }
+    jest.spyOn(global, "setTimeout").mockImplementation((callback: any) => {
+      callback();
+      return { unref: jest.fn() } as unknown as NodeJS.Timeout;
+    });
+    const slow = new Promise(() => undefined);
+    const p = service.withPaypalTimeout(slow);
+
+    await expect(p).rejects.toThrow("PayPal request timed out");
   });
 });
 
@@ -1082,73 +1087,39 @@ describe("PaymentService – withPaypalTimeout", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("PaymentService – toObjectId", () => {
-  let service: any;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        PaymentService,
-        { provide: getModelToken(Payment.name), useValue: {} },
-        {
-          provide: getModelToken(Booking.name),
-          useValue: { db: { startSession: jest.fn() } },
-        },
-        { provide: getModelToken(Zone.name), useValue: {} },
-        { provide: getModelToken(Ticket.name), useValue: {} },
-        { provide: TicketService, useValue: {} },
-        { provide: MailService, useValue: {} },
-        { provide: ZoneGateway, useValue: {} },
-        { provide: UserEventsService, useValue: {} },
-        { provide: QueueService, useValue: { addJob: jest.fn() } },
-        { provide: RedisService, useValue: { client: {} } },
-        {
-          provide: MetricsService,
-          useValue: {
-            paymentsTotal: { inc: jest.fn() },
-            refundFailuresTotal: { inc: jest.fn() },
-            bookingsTotal: { inc: jest.fn() },
-            checkinsTotal: { inc: jest.fn() },
-          },
-        },
-        { provide: CurrencyService, useValue: { getVndPerUsd: jest.fn() } },
-      ],
-    }).compile();
-    service = module.get(PaymentService);
-  });
-
   it("returns ObjectId as-is when input is already a Types.ObjectId", () => {
     const id = new Types.ObjectId();
-    expect(service.toObjectId(id, "field")).toBe(id);
+    expect(toPaymentObjectId(id, "field")).toBe(id);
   });
 
   it("converts a string to ObjectId", () => {
     const str = new Types.ObjectId().toString();
-    const result = service.toObjectId(str, "field");
+    const result = toPaymentObjectId(str, "field");
     expect(result).toBeInstanceOf(Types.ObjectId);
     expect(result.toString()).toBe(str);
   });
 
   it("extracts _id from object when _id is ObjectId", () => {
     const id = new Types.ObjectId();
-    const result = service.toObjectId({ _id: id }, "field");
+    const result = toPaymentObjectId({ _id: id }, "field");
     expect(result).toBe(id);
   });
 
   it("converts string _id from object to ObjectId", () => {
     const str = new Types.ObjectId().toString();
-    const result = service.toObjectId({ _id: str }, "field");
+    const result = toPaymentObjectId({ _id: str }, "field");
     expect(result).toBeInstanceOf(Types.ObjectId);
     expect(result.toString()).toBe(str);
   });
 
   it("throws BadRequestException when field is missing (undefined)", () => {
-    expect(() => service.toObjectId(undefined, "myField")).toThrow(
+    expect(() => toPaymentObjectId(undefined, "myField")).toThrow(
       BadRequestException
     );
   });
 
   it("throws BadRequestException when value has no _id", () => {
-    expect(() => service.toObjectId({}, "emptyField")).toThrow(
+    expect(() => toPaymentObjectId({}, "emptyField")).toThrow(
       BadRequestException
     );
   });
@@ -1169,7 +1140,7 @@ describe("PaymentService – enqueueRefundFailureAlert", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         {
           provide: getModelToken(Booking.name),
@@ -1195,7 +1166,7 @@ describe("PaymentService – enqueueRefundFailureAlert", () => {
         { provide: CurrencyService, useValue: { getVndPerUsd: jest.fn() } },
       ],
     }).compile();
-    service = module.get(PaymentService);
+    service = module.get(IssueAdminRefundUseCase);
 
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
   });
@@ -1244,7 +1215,7 @@ describe("PaymentService – acquirePaypalLock error branch", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         {
           provide: getModelToken(Booking.name),
@@ -1270,7 +1241,7 @@ describe("PaymentService – acquirePaypalLock error branch", () => {
         { provide: CurrencyService, useValue: { getVndPerUsd: jest.fn() } },
       ],
     }).compile();
-    service = module.get(PaymentService);
+    service = module.get(PaymentIdempotencyService);
 
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
   });
@@ -1372,7 +1343,7 @@ describe("PaymentService – createCheckoutSession extended", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: {} },
@@ -1403,7 +1374,7 @@ describe("PaymentService – createCheckoutSession extended", () => {
     }).compile();
     service = module.get(PaymentService);
 
-    mockStripe = service.stripe;
+    mockStripe = (service as any).paymentGateway.stripe;
     mockStripe.checkout = {
       sessions: {
         create: jest.fn(),
@@ -1699,7 +1670,7 @@ describe("PaymentService – createPaypalTransaction success", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: {} },
@@ -1728,7 +1699,7 @@ describe("PaymentService – createPaypalTransaction success", () => {
     service = module.get(PaymentService);
 
     // Set up paypalClient and SDK mocks
-    service.paypalClient = { execute: jest.fn() };
+    (service as any).paymentGateway.paypalClient = { execute: jest.fn() };
 
     const paypalModule = require("@paypal/checkout-server-sdk");
     paypalModule.orders.OrdersCreateRequest = jest
@@ -1757,7 +1728,7 @@ describe("PaymentService – createPaypalTransaction success", () => {
     const booking = makeValidBooking();
     bookingModel.findOne.mockReturnValue(makeChain(booking));
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockResolvedValue({
       result: {
         id: "PAYPAL_ORDER_ABC123",
@@ -1790,7 +1761,7 @@ describe("PaymentService – createPaypalTransaction success", () => {
     const booking = makeValidBooking();
     bookingModel.findOne.mockReturnValue(makeChain(booking));
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockRejectedValue(new Error("ECONNREFUSED"));
 
     await expect(
@@ -1895,7 +1866,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },
@@ -1921,7 +1892,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
     service = module.get(PaymentService);
 
     // Set up paypalClient
-    service.paypalClient = { execute: jest.fn() };
+    (service as any).paymentGateway.paypalClient = { execute: jest.fn() };
 
     const paypalModule = require("@paypal/checkout-server-sdk");
     paypalModule.orders.OrdersCaptureRequest = jest
@@ -1998,7 +1969,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
       }),
     });
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockResolvedValue({
       result: {
         id: orderId,
@@ -2100,7 +2071,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
 
     ticketService.publishTicketCreation.mockRejectedValue(new Error("WS down"));
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockResolvedValue({
       result: {
         id: orderId,
@@ -2182,7 +2153,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
       }),
     });
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockResolvedValue({
       result: {
         id: orderId,
@@ -2268,7 +2239,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
       }),
     });
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockResolvedValue({
       result: {
         id: orderId,
@@ -2337,7 +2308,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
       }),
     });
 
-    const paypalExecute = service.paypalClient.execute;
+    const paypalExecute = (service as any).paymentGateway.paypalClient.execute;
     paypalExecute.mockResolvedValue({
       result: {
         id: orderId,
@@ -2388,7 +2359,7 @@ describe("PaymentService – getPaymentHistory", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         {
           provide: getModelToken(Booking.name),
@@ -2547,7 +2518,7 @@ describe("PaymentService – handleChargeDisputeCreated", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: {} },
@@ -2652,7 +2623,7 @@ describe("PaymentService – handleCheckoutSessionExpired", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: {} },
         {
           provide: getModelToken(Booking.name),
@@ -2784,7 +2755,7 @@ describe("PaymentService – handleCheckoutSessionCompleted additional branches"
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },
@@ -3291,7 +3262,7 @@ describe("PaymentService – issueAdminRefund", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PaymentService,
+        ...paymentTestProviders,
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         {
           provide: getModelToken(Booking.name),
@@ -3323,8 +3294,8 @@ describe("PaymentService – issueAdminRefund", () => {
     service = module.get(PaymentService);
 
     // Override stripe with mock
-    Object.assign(service.stripe, mockStripe);
-    service.paypalClient = { execute: jest.fn() };
+    Object.assign((service as any).paymentGateway.stripe, mockStripe);
+    (service as any).paymentGateway.paypalClient = { execute: jest.fn() };
 
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
     jest.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
@@ -3390,7 +3361,8 @@ describe("PaymentService – issueAdminRefund", () => {
         }),
       });
 
-      const paypalExecute = service.paypalClient.execute;
+      const paypalExecute = (service as any).paymentGateway.paypalClient
+        .execute;
       paypalExecute.mockResolvedValue({ result: { status: "COMPLETED" } });
 
       await service.issueAdminRefund(
@@ -3415,7 +3387,8 @@ describe("PaymentService – issueAdminRefund", () => {
         }),
       });
 
-      const paypalExecute = service.paypalClient.execute;
+      const paypalExecute = (service as any).paymentGateway.paypalClient
+        .execute;
       paypalExecute.mockRejectedValue(new Error("PayPal API error"));
 
       await service.issueAdminRefund(
@@ -3449,7 +3422,9 @@ describe("PaymentService – issueAdminRefund", () => {
       expect(Logger.prototype.warn).toHaveBeenCalledWith(
         expect.stringContaining("no refundable payment found")
       );
-      expect(service.paypalClient.execute).not.toHaveBeenCalled();
+      expect(
+        (service as any).paymentGateway.paypalClient.execute
+      ).not.toHaveBeenCalled();
     });
 
     it("warns and returns early when payment has no paypalCaptureId", async () => {

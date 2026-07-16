@@ -28,6 +28,8 @@ import { Model, Types } from "mongoose";
 const supertest = require("supertest") as typeof import("supertest");
 import { PaymentController } from "../payment.controller";
 import { PaymentService } from "../payment.service";
+import { paymentTestProviders } from "../testing/payment-test.providers";
+import { PaypalPaymentSettlementService } from "../application/services/paypal-payment-settlement.service";
 import {
   Booking,
   BookingSchema,
@@ -100,7 +102,7 @@ beforeAll(async () => {
     ],
     controllers: [PaymentController],
     providers: [
-      PaymentService,
+      ...paymentTestProviders,
       { provide: RedisService, useValue: { client: redisClient } },
       {
         provide: TicketService,
@@ -387,12 +389,15 @@ describe("PAY-003 — PayPal atomicity: PendingConfirmation record khi DB write 
       },
     };
     jest
-      .spyOn((paymentService as any).paypalClient, "execute")
+      .spyOn((paymentService as any).paymentGateway.paypalClient, "execute")
       .mockResolvedValue(mockCaptureResponse);
 
     // Inject lỗi DB: processPaypalPayment ném lỗi (mô phỏng DB crash sau khi tiền đã bị thu)
+    const settlementOrchestrator = testingModule.get(
+      PaypalPaymentSettlementService
+    );
     jest
-      .spyOn(paymentService as any, "processPaypalPayment")
+      .spyOn(settlementOrchestrator as any, "processPaypalPayment")
       .mockRejectedValue(
         new Error("MongoNetworkError: DB connection lost after capture")
       );
@@ -440,7 +445,7 @@ describe("PAY-003 — PayPal atomicity: PendingConfirmation record khi DB write 
     });
 
     jest
-      .spyOn((paymentService as any).paypalClient, "execute")
+      .spyOn((paymentService as any).paymentGateway.paypalClient, "execute")
       .mockResolvedValue({
         result: {
           id: orderId,
@@ -461,8 +466,11 @@ describe("PAY-003 — PayPal atomicity: PendingConfirmation record khi DB write 
         },
       });
 
+    const settlementOrchestrator = testingModule.get(
+      PaypalPaymentSettlementService
+    );
     jest
-      .spyOn(paymentService as any, "processPaypalPayment")
+      .spyOn(settlementOrchestrator as any, "processPaypalPayment")
       .mockRejectedValue(new Error("MongoNetworkError: DB crash"));
 
     const releaseEvalCalls: unknown[][] = [];
