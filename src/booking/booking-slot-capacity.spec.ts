@@ -7,6 +7,18 @@ import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
 import { BookingService } from "./booking.service";
+import { BookingWorkflowService } from "./application/booking-workflow.service";
+import { BookingCommandService } from "./application/booking-command.service";
+import { BookingMutationService } from "./application/use-case/booking-mutation.use-case";
+import { CreateBookingUseCase } from "./application/use-case/create-booking.use-case";
+import { CancelBookingUseCase } from "./application/use-case/cancel-booking.use-case";
+import { AdminCancelBookingUseCase } from "./application/use-case/admin-cancel-booking.use-case";
+import { BookingQueryService } from "./application/booking-query.service";
+import { BookingMaintenanceService } from "./application/booking-maintenance.service";
+import { BookingCacheService } from "./infrastructure/cache/booking-cache.service";
+import { BookingZoneNotifierService } from "./infrastructure/realtime/booking-zone-notifier.service";
+import { BookingPresenter } from "./presenters/booking.presenter";
+import { BookingCodeService } from "./domain/services/booking-code.service";
 import { Booking, SeatLock } from "@src/schemas/booking.schema";
 import { SeatState } from "@src/schemas/seat-state.schema";
 import { Event } from "@src/schemas/event.schema";
@@ -156,6 +168,18 @@ describe("BookingService — Slot Capacity", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingService,
+        BookingWorkflowService,
+        BookingCommandService,
+        BookingMutationService,
+        CreateBookingUseCase,
+        CancelBookingUseCase,
+        AdminCancelBookingUseCase,
+        BookingQueryService,
+        BookingMaintenanceService,
+        BookingCacheService,
+        BookingZoneNotifierService,
+        BookingPresenter,
+        BookingCodeService,
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },

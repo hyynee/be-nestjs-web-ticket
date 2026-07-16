@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { BookingService } from "./booking.service";
-import { BookingController } from "./booking.controller";
+import { BookingAdminController } from "./controllers/booking-admin.controller";
+import { BookingCommandController } from "./controllers/booking-command.controller";
+import { BookingQueryController } from "./controllers/booking-query.controller";
 import { MongooseModule } from "@nestjs/mongoose";
 import {
   Booking,
@@ -19,6 +21,18 @@ import { ZoneModule } from "@src/zone/zone.module";
 import { PaymentModule } from "@src/payment/payment.module";
 import { UploadModule } from "@src/upload/upload.module";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { BookingWorkflowService } from "./application/booking-workflow.service";
+import { BookingCommandService } from "./application/booking-command.service";
+import { BookingMutationService } from "./application/use-case/booking-mutation.use-case";
+import { CreateBookingUseCase } from "./application/use-case/create-booking.use-case";
+import { CancelBookingUseCase } from "./application/use-case/cancel-booking.use-case";
+import { AdminCancelBookingUseCase } from "./application/use-case/admin-cancel-booking.use-case";
+import { BookingQueryService } from "./application/booking-query.service";
+import { BookingMaintenanceService } from "./application/booking-maintenance.service";
+import { BookingCacheService } from "./infrastructure/cache/booking-cache.service";
+import { BookingZoneNotifierService } from "./infrastructure/realtime/booking-zone-notifier.service";
+import { BookingPresenter } from "./presenters/booking.presenter";
+import { BookingCodeService } from "./domain/services/booking-code.service";
 
 @Module({
   imports: [
@@ -36,8 +50,28 @@ import { EventOwnershipService } from "@src/event/event-ownership.service";
     PaymentModule,
     UploadModule,
   ],
-  controllers: [BookingController],
-  providers: [BookingService, BookingScheduler, EventOwnershipService],
+  controllers: [
+    BookingAdminController,
+    BookingCommandController,
+    BookingQueryController,
+  ],
+  providers: [
+    BookingService,
+    BookingCommandService,
+    BookingMutationService,
+    CreateBookingUseCase,
+    CancelBookingUseCase,
+    AdminCancelBookingUseCase,
+    BookingQueryService,
+    BookingMaintenanceService,
+    BookingCacheService,
+    BookingZoneNotifierService,
+    BookingPresenter,
+    BookingCodeService,
+    BookingWorkflowService,
+    BookingScheduler,
+    EventOwnershipService,
+  ],
   exports: [BookingService],
 })
 export class BookingModule {}

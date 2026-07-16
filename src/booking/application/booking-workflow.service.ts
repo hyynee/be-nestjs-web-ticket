@@ -1,9 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
-import { CreateBookingDto } from "./dto/create-booking.dto";
-import { QueryBookingDto } from "./dto/query-booking.dto";
-import { CancelBookingDto } from "./dto/cancel-booking.dto";
+import { CreateBookingDto } from "../dto/create-booking.dto";
+import { QueryBookingDto } from "../dto/query-booking.dto";
+import { CancelBookingDto } from "../dto/cancel-booking.dto";
+import { BookingCommandService } from "./booking-command.service";
+import { BookingQueryService } from "./booking-query.service";
+import { BookingMaintenanceService } from "./booking-maintenance.service";
 import {
   BookingCreateResult,
   BookingDetailResult,
@@ -12,10 +15,7 @@ import {
   BookingMessageResult,
   ExpirePendingBookingsResult,
   ZoneBookingInfoResult,
-} from "./application/booking-workflow.service";
-import { BookingCommandService } from "./application/booking-command.service";
-import { BookingQueryService } from "./application/booking-query.service";
-import { BookingMaintenanceService } from "./application/booking-maintenance.service";
+} from "../domain/types/booking-response.types";
 
 export type {
   BookingCreateResult,
@@ -29,15 +29,39 @@ export type {
   ZoneBookingEventView,
   ZoneBookingInfoResult,
   ZoneBookingZoneView,
-} from "./application/booking-workflow.service";
+} from "../domain/types/booking-response.types";
 
 @Injectable()
-export class BookingService {
+export class BookingWorkflowService {
   constructor(
     private readonly bookingCommandService: BookingCommandService,
     private readonly bookingQueryService: BookingQueryService,
     private readonly bookingMaintenanceService: BookingMaintenanceService
   ) {}
+
+  get redisService(): unknown {
+    return (this.bookingCommandService as unknown as { redisService?: unknown })
+      .redisService;
+  }
+
+  get eventOwnershipService(): unknown {
+    return (
+      this.bookingQueryService as unknown as {
+        eventOwnershipService?: unknown;
+      }
+    ).eventOwnershipService;
+  }
+
+  get auditService(): unknown {
+    return (this.bookingCommandService as unknown as { auditService?: unknown })
+      .auditService;
+  }
+
+  get uploadService(): unknown {
+    return (
+      this.bookingCommandService as unknown as { uploadService?: unknown }
+    ).uploadService;
+  }
 
   createBooking(
     userId: string,
