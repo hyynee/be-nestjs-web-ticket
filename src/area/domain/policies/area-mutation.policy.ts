@@ -1,9 +1,19 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { EventStatus } from "@src/schemas/event.schema";
 import { ClientSession, Types } from "mongoose";
 import { CreateAreaDTO } from "../../dto/create.dto";
 import { UpdateAreaDTO } from "../../dto/update.dto";
 import { AreaRepository } from "../../infrastructure/persistence/area.repository";
+
+const AREA_MODIFIABLE_EVENT_STATUSES = new Set<EventStatus>([
+  EventStatus.DRAFT,
+  EventStatus.INACTIVE,
+]);
 
 @Injectable()
 export class AreaMutationPolicy {
@@ -93,14 +103,22 @@ export class AreaMutationPolicy {
   ): Promise<void> {
     const event = await this.areaRepository.findEventStatus(eventId, session);
     if (!event) {
-      throw new BadRequestException("Event not found or has been deleted");
+      throw new NotFoundException("Event not found or has been deleted");
     }
 
-    if (event.status === EventStatus.ENDED) {
-      throw new BadRequestException(
-        "Cannot modify areas for an event that has already ended"
-      );
+    if (!AREA_MODIFIABLE_EVENT_STATUSES.has(event.status)) {
+      throw new ConflictException({
+        code: "EVENT_NOT_MODIFIABLE",
+        message: `Areas cannot be modified while the event is "${event.status}"`,
+      });
     }
+  }
+
+  areSeatsEqual(a: string[] = [], b: string[] = []): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+    return a.every((seat, index) => seat === b[index]);
   }
 
   getAreaSeatCount(area: { seatCount?: number; seats?: string[] }): number {

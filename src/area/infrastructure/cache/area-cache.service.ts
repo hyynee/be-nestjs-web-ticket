@@ -1,13 +1,25 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
+import { MetricsService } from "@src/metrics/metrics.service";
 import { RedisService } from "@src/redis/redis.service";
-import { QueryAreaDto } from "../../dto/query.dto";
 import {
   AREA_CACHE_TTL_SEC,
   AREA_RESPONSE_SCHEMA_VERSION,
   AreaSortField,
 } from "../../area.constants";
 import type { AreaView } from "../../domain/types/area.types";
+
+interface AreaListCacheKeyInput {
+  zoneId?: string;
+  name?: string;
+  search?: string;
+  hasSeating?: boolean;
+  isDeleted?: boolean;
+  page?: number;
+  limit?: number;
+  sortBy?: AreaSortField;
+  sortOrder?: "asc" | "desc";
+}
 
 @Injectable()
 export class AreaCacheService {
@@ -16,10 +28,13 @@ export class AreaCacheService {
   private readonly detailPrefix = `area:${AREA_RESPONSE_SCHEMA_VERSION}:`;
   private readonly listIndexKey = `areas:list:index:${AREA_RESPONSE_SCHEMA_VERSION}`;
 
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly metricsService: MetricsService
+  ) {}
 
   async getAreaList(
-    query: QueryAreaDto,
+    query: AreaListCacheKeyInput,
     sortBy: AreaSortField,
     loader: () => Promise<PaginatedResponse<AreaView>>
   ): Promise<PaginatedResponse<AreaView>> {
@@ -90,13 +105,16 @@ export class AreaCacheService {
       const toDelete = [...listKeys, this.listIndexKey, this.detailKey(areaId)];
       await this.redisService.client.del(toDelete);
     } catch (error: unknown) {
+      this.metricsService.cacheInvalidationFailureTotal.inc({
+        source: "area",
+      });
       this.logger.warn(
         `Failed to invalidate area cache for ${areaId}: ${this.errorMessage(error)}`
       );
     }
   }
 
-  private generateListCacheKey(query: QueryAreaDto): string {
+  private generateListCacheKey(query: AreaListCacheKeyInput): string {
     const {
       zoneId,
       name,

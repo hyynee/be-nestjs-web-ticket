@@ -1,14 +1,30 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
 import { escapeRegex } from "@src/common/utils/regex.utils";
 import { Area } from "@src/schemas/area.schema";
 import { FilterQuery, Types } from "mongoose";
-import { ALLOWED_AREA_SORT_FIELDS, AreaSortField } from "../area.constants";
+import { AreaSortField } from "../area.constants";
 import type { AreaView } from "../domain/types/area.types";
 import { QueryAreaDto } from "../dto/query.dto";
 import { AreaCacheService } from "../infrastructure/cache/area-cache.service";
 import { AreaRepository } from "../infrastructure/persistence/area.repository";
 import { AreaPresenter } from "../presenters/area.presenter";
+
+interface NormalizedAreaQuery {
+  zoneId?: string;
+  name?: string;
+  search?: string;
+  hasSeating?: boolean;
+  isDeleted: boolean;
+  page: number;
+  limit: number;
+  sortBy: AreaSortField;
+  sortOrder: "asc" | "desc";
+}
 
 @Injectable()
 export class AreaQueryService {
@@ -19,14 +35,16 @@ export class AreaQueryService {
   ) {}
 
   async getAllAreas(query: QueryAreaDto): Promise<PaginatedResponse<AreaView>> {
-    const sortBy = this.resolveSortBy(query.sortBy);
-
     if (query.zoneId && !Types.ObjectId.isValid(query.zoneId)) {
       throw new BadRequestException("Invalid zone ID");
     }
 
-    return this.areaCacheService.getAreaList(query, sortBy, async () =>
-      this.loadAreas(query, sortBy)
+    const normalizedQuery = this.normalizeQuery(query);
+
+    return this.areaCacheService.getAreaList(
+      normalizedQuery,
+      normalizedQuery.sortBy,
+      () => this.loadAreas(normalizedQuery)
     );
   }
 
@@ -40,68 +58,74 @@ export class AreaQueryService {
         new Types.ObjectId(id)
       );
       if (!area) {
-        throw new BadRequestException("Area not found or has been deleted");
+        throw new NotFoundException("Area not found or has been deleted");
       }
       return this.areaPresenter.toAreaView(area);
     });
   }
 
   private async loadAreas(
-    query: QueryAreaDto,
-    sortBy: AreaSortField
+    query: NormalizedAreaQuery
   ): Promise<PaginatedResponse<AreaView>> {
-    const {
-      zoneId,
-      name,
-      search,
-      hasSeating,
-      isDeleted = false,
-      page = 1,
-      limit = 10,
-      sortOrder = "desc",
-    } = query;
-
-    const skip = (page - 1) * limit;
-    const match: FilterQuery<Area> = { isDeleted };
-    const sort: Partial<Record<AreaSortField, 1 | -1>> = {
-      [sortBy]: sortOrder === "asc" ? 1 : -1,
+    const match = this.buildMatch(query);
+    const direction: 1 | -1 = query.sortOrder === "asc" ? 1 : -1;
+    const sort: Partial<Record<AreaSortField | "_id", 1 | -1>> = {
+      [query.sortBy]: direction,
+      _id: direction,
     };
 
-    if (zoneId) {
-      match.zoneId = new Types.ObjectId(zoneId);
+    const { areas, total } = await this.areaRepository.findAreasPage({
+      match,
+      sort,
+      skip: (query.page - 1) * query.limit,
+      limit: query.limit,
+    });
+    return this.areaPresenter.toAreaPage(areas, query.page, query.limit, total);
+  }
+
+  private buildMatch(query: NormalizedAreaQuery): FilterQuery<Area> {
+    const match: FilterQuery<Area> = { isDeleted: query.isDeleted };
+
+    if (query.zoneId) {
+      match.zoneId = new Types.ObjectId(query.zoneId);
     }
-    if (name) {
+    if (query.name) {
       match.name = {
-        $regex: `^${escapeRegex(name.trim().toUpperCase())}`,
+        $regex: `^${escapeRegex(query.name)}`,
         $options: "i",
       };
     }
-    if (search) {
-      const escapedSearch = escapeRegex(search);
+    if (query.search) {
+      const escapedSearch = escapeRegex(query.search);
       match.$or = [
         { name: { $regex: escapedSearch, $options: "i" } },
         { description: { $regex: escapedSearch, $options: "i" } },
       ];
     }
-    if (hasSeating === true) {
+    if (query.hasSeating === true) {
       match.seatCount = { $gt: 0 };
     }
-    if (hasSeating === false) {
+    if (query.hasSeating === false) {
       match.seatCount = 0;
     }
 
-    const { areas, total } = await this.areaRepository.findAreasPage({
-      match,
-      sort,
-      skip,
-      limit,
-    });
-    return this.areaPresenter.toAreaPage(areas, page, limit, total);
+    return match;
   }
 
-  private resolveSortBy(sortBy?: string): AreaSortField {
-    return ALLOWED_AREA_SORT_FIELDS.includes(sortBy as AreaSortField)
-      ? (sortBy as AreaSortField)
-      : "createdAt";
+  private normalizeQuery(query: QueryAreaDto): NormalizedAreaQuery {
+    const name = query.name?.trim().toUpperCase() || undefined;
+    const search = query.search?.trim() || undefined;
+
+    return {
+      zoneId: query.zoneId,
+      name,
+      search,
+      hasSeating: query.hasSeating,
+      isDeleted: false,
+      page: query.page ?? 1,
+      limit: query.limit ?? 10,
+      sortBy: query.sortBy ?? "createdAt",
+      sortOrder: query.sortOrder ?? "desc",
+    };
   }
 }

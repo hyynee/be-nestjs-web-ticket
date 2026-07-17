@@ -1,10 +1,17 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { AreaService } from "./area.service";
 import { getModelToken, getConnectionToken } from "@nestjs/mongoose";
-import { BadRequestException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
 import { Types } from "mongoose";
+import { EventStatus } from "@src/schemas/event.schema";
 import { RedisService } from "@src/redis/redis.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { MetricsService } from "@src/metrics/metrics.service";
+import { ZoneService } from "@src/zone/zone.service";
 import { AreaCommandService } from "./application/area-command.service";
 import { AreaQueryService } from "./application/area-query.service";
 import { AreaMutationPolicy } from "./domain/policies/area-mutation.policy";
@@ -24,6 +31,15 @@ describe("AreaService", () => {
   const mockEventOwnershipService = {
     assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
     getManagedEventIds: jest.fn().mockResolvedValue([]),
+  };
+
+  const mockZoneService = {
+    invalidateZoneAvailabilityCache: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const mockMetricsService = {
+    zoneCapacityInconsistentTotal: { inc: jest.fn() },
+    cacheInvalidationFailureTotal: { inc: jest.fn() },
   };
 
   const mockAreaModel = Object.assign(
@@ -102,6 +118,14 @@ describe("AreaService", () => {
           provide: EventOwnershipService,
           useValue: mockEventOwnershipService,
         },
+        {
+          provide: ZoneService,
+          useValue: mockZoneService,
+        },
+        {
+          provide: MetricsService,
+          useValue: mockMetricsService,
+        },
       ],
     }).compile();
 
@@ -164,7 +188,7 @@ describe("AreaService", () => {
       mockZoneModel.findOne.mockReturnValue(mockFindOneChain(null));
 
       await expect(service.createArea(mockUser, baseDto)).rejects.toThrow(
-        BadRequestException
+        NotFoundException
       );
     });
 
@@ -174,7 +198,7 @@ describe("AreaService", () => {
       );
 
       await expect(service.createArea(mockUser, baseDto)).rejects.toThrow(
-        new BadRequestException("This zone does not support seats/areas")
+        new ConflictException("This zone does not support seats/areas")
       );
     });
 
@@ -183,7 +207,7 @@ describe("AreaService", () => {
         mockFindOneChain({ eventId: VALID_ID, hasSeating: true })
       );
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
         _id: new Types.ObjectId(VALID_ZONE_ID),
@@ -201,7 +225,7 @@ describe("AreaService", () => {
 
       expect(
         mockEventOwnershipService.assertCanManageEvent
-      ).toHaveBeenCalledWith(mockUser, VALID_ID);
+      ).toHaveBeenCalledWith(mockUser, VALID_ID, expect.anything());
     });
 
     it("propagates ForbiddenException from the ownership check without creating an area", async () => {
@@ -225,11 +249,11 @@ describe("AreaService", () => {
       );
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "ended" })
+        mockEventFindOne({ status: EventStatus.ENDED })
       );
 
       await expect(service.createArea(mockUser, baseDto)).rejects.toThrow(
-        BadRequestException
+        ConflictException
       );
     });
 
@@ -247,7 +271,7 @@ describe("AreaService", () => {
           rowLabel: "A",
         })
       ).rejects.toThrow(
-        new BadRequestException("Event not found or has been deleted")
+        new NotFoundException("Event not found or has been deleted")
       );
     });
 
@@ -257,7 +281,7 @@ describe("AreaService", () => {
       );
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
@@ -288,7 +312,7 @@ describe("AreaService", () => {
       );
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
@@ -326,7 +350,7 @@ describe("AreaService", () => {
         });
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce(null);
@@ -337,7 +361,7 @@ describe("AreaService", () => {
           seatCount: 3,
           rowLabel: "A",
         })
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
 
     it("should throw if zone not found in capacity increment fallback", async () => {
@@ -354,7 +378,7 @@ describe("AreaService", () => {
         });
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce(null);
@@ -366,7 +390,7 @@ describe("AreaService", () => {
           rowLabel: "A",
         })
       ).rejects.toThrow(
-        new BadRequestException("Zone not found or has been deleted")
+        new NotFoundException("Zone not found or has been deleted")
       );
     });
 
@@ -376,7 +400,7 @@ describe("AreaService", () => {
       );
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
@@ -386,6 +410,7 @@ describe("AreaService", () => {
 
       const dupError: any = new Error("duplicate key");
       dupError.code = 11000;
+      dupError.keyPattern = { zoneId: 1, name: 1 };
       mockAreaModel.create.mockRejectedValueOnce(dupError);
 
       await expect(
@@ -394,7 +419,7 @@ describe("AreaService", () => {
           seatCount: 1,
           rowLabel: "Z",
         })
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
 
     it("should re-throw non-duplicate errors from create", async () => {
@@ -403,7 +428,7 @@ describe("AreaService", () => {
       );
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
@@ -429,7 +454,7 @@ describe("AreaService", () => {
       );
 
       mockEventModel.findOne.mockReturnValueOnce(
-        mockEventFindOne({ status: "UPCOMING" })
+        mockEventFindOne({ status: EventStatus.DRAFT })
       );
 
       const createdArea = areaSource({
@@ -523,7 +548,7 @@ describe("AreaService", () => {
       });
 
       await expect(service.getAreaById(VALID_ID)).rejects.toThrow(
-        BadRequestException
+        NotFoundException
       );
     });
   });
@@ -634,14 +659,14 @@ describe("AreaService", () => {
       expect($match.$match.seatCount).toBe(0);
     });
 
-    it("should fallback sortBy to createdAt for invalid field", async () => {
+    it("should default sortBy to createdAt when not provided", async () => {
       mockRedisService.client.get.mockResolvedValueOnce(null);
 
       mockAreaModel.aggregate.mockResolvedValueOnce([
         { data: [], count: [{ total: 0 }] },
       ]);
 
-      await service.getAllAreas({ sortBy: "invalidField" } as any);
+      await service.getAllAreas({} as any);
 
       const matchArg = mockAreaModel.aggregate.mock.calls[0][0];
       const $sort = matchArg.find((stage: any) => stage.$sort);
@@ -752,7 +777,7 @@ describe("AreaService", () => {
 
       await expect(
         service.updateArea(mockUser, VALID_ID, { name: "premium" } as any)
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(NotFoundException);
     });
 
     it("should throw if zone not found", async () => {
@@ -770,7 +795,7 @@ describe("AreaService", () => {
 
       await expect(
         service.updateArea(mockUser, VALID_ID, {} as any)
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(NotFoundException);
     });
 
     it("should throw if zone has no seating", async () => {
@@ -790,7 +815,7 @@ describe("AreaService", () => {
 
       await expect(
         service.updateArea(mockUser, VALID_ID, {} as any)
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
 
     it("should throw if event is ended", async () => {
@@ -809,14 +834,14 @@ describe("AreaService", () => {
       mockEventModel.findOne.mockReturnValueOnce({
         select: () => ({
           lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "ended" }),
+            session: jest.fn().mockResolvedValue({ status: EventStatus.ENDED }),
           }),
         }),
       });
 
       await expect(
         service.updateArea(mockUser, VALID_ID, {} as any)
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
 
     it("should throw when seatCount provided without rowLabel or seats", async () => {
@@ -839,7 +864,7 @@ describe("AreaService", () => {
       mockEventModel.findOne.mockReturnValueOnce({
         select: () => ({
           lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "UPCOMING" }),
+            session: jest.fn().mockResolvedValue({ status: EventStatus.DRAFT }),
           }),
         }),
       });
@@ -869,9 +894,13 @@ describe("AreaService", () => {
       mockEventModel.findOne.mockReturnValueOnce({
         select: () => ({
           lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "UPCOMING" }),
+            session: jest.fn().mockResolvedValue({ status: EventStatus.DRAFT }),
           }),
         }),
+      });
+
+      mockBookingModel.countDocuments.mockReturnValueOnce({
+        session: jest.fn().mockResolvedValue(0),
       });
 
       mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
@@ -918,7 +947,7 @@ describe("AreaService", () => {
       mockEventModel.findOne.mockReturnValueOnce({
         select: () => ({
           lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "UPCOMING" }),
+            session: jest.fn().mockResolvedValue({ status: EventStatus.DRAFT }),
           }),
         }),
       });
@@ -959,7 +988,7 @@ describe("AreaService", () => {
       mockEventModel.findOne.mockReturnValueOnce({
         select: () => ({
           lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "UPCOMING" }),
+            session: jest.fn().mockResolvedValue({ status: EventStatus.DRAFT }),
           }),
         }),
       });
@@ -973,7 +1002,11 @@ describe("AreaService", () => {
 
       expect(
         mockEventOwnershipService.assertCanManageEvent
-      ).toHaveBeenCalledWith(mockUser, currentArea.eventId.toString());
+      ).toHaveBeenCalledWith(
+        mockUser,
+        currentArea.eventId.toString(),
+        expect.anything()
+      );
     });
 
     it("propagates ForbiddenException from the ownership check without updating", async () => {
@@ -991,7 +1024,7 @@ describe("AreaService", () => {
       expect(mockAreaModel.findOneAndUpdate).not.toHaveBeenCalled();
     });
 
-    it("should handle moving zone", async () => {
+    it("rejects moving an area to a zone in a different event", async () => {
       const newZoneId = "64c1f2e1e1e1e1e1e1e1e1e3";
       const newZoneObjectId = new Types.ObjectId(newZoneId);
       const newTargetZone = {
@@ -1012,17 +1045,56 @@ describe("AreaService", () => {
         }),
       }));
 
-      mockEventModel.findOne.mockReturnValueOnce({
-        select: () => ({
-          lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "UPCOMING" }),
-          }),
-        }),
+      await expect(
+        service.updateArea(mockUser, VALID_ID, {
+          zoneId: newZoneId,
+          name: "moved",
+        } as any)
+      ).rejects.toThrow(ConflictException);
+
+      expect(mockAreaModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it("should handle moving zone within the same event", async () => {
+      const newZoneId = "64c1f2e1e1e1e1e1e1e1e1e3";
+      const newZoneObjectId = new Types.ObjectId(newZoneId);
+      const newTargetZone = {
+        _id: newZoneObjectId,
+        eventId: currentArea.eventId,
+        hasSeating: true,
+      };
+
+      mockAreaModel.findOne.mockReturnValueOnce({
+        session: jest.fn().mockResolvedValue(currentArea),
       });
 
-      mockZoneModel.findOneAndUpdate
-        .mockResolvedValueOnce({ _id: currentArea.zoneId })
-        .mockResolvedValueOnce({ _id: newZoneObjectId });
+      mockZoneModel.findOne.mockImplementation(() => ({
+        select: () => ({
+          lean: () => ({
+            session: jest.fn().mockResolvedValue(newTargetZone),
+          }),
+        }),
+      }));
+
+      mockEventModel.findOne.mockImplementation(() => ({
+        select: () => ({
+          lean: () => ({
+            session: jest.fn().mockResolvedValue({ status: EventStatus.DRAFT }),
+          }),
+        }),
+      }));
+
+      mockBookingModel.countDocuments.mockReturnValueOnce({
+        session: jest.fn().mockResolvedValue(0),
+      });
+
+      mockZoneModel.updateOne.mockResolvedValue({
+        matchedCount: 1,
+        modifiedCount: 1,
+      });
+      mockZoneModel.findOneAndUpdate.mockResolvedValueOnce({
+        _id: newZoneObjectId,
+      });
 
       mockAreaModel.findOneAndUpdate.mockResolvedValue(
         areaSource({
@@ -1059,7 +1131,7 @@ describe("AreaService", () => {
       mockEventModel.findOne.mockReturnValueOnce({
         select: () => ({
           lean: () => ({
-            session: jest.fn().mockResolvedValue({ status: "UPCOMING" }),
+            session: jest.fn().mockResolvedValue({ status: EventStatus.DRAFT }),
           }),
         }),
       });
@@ -1071,13 +1143,14 @@ describe("AreaService", () => {
 
       const dupError: any = new Error("duplicate key");
       dupError.code = 11000;
+      dupError.keyPattern = { zoneId: 1, name: 1 };
       mockAreaModel.findOneAndUpdate.mockRejectedValue(dupError);
 
       await expect(
         service.updateArea(mockUser, VALID_ID, {
           name: "duplicate",
         } as any)
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
   });
 
@@ -1098,7 +1171,7 @@ describe("AreaService", () => {
 
       await expect(
         service.softDeleteArea(mockUser, VALID_ID, { isDeleted: true })
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(NotFoundException);
     });
 
     it("should soft delete area with isDeleted: true", async () => {
@@ -1119,13 +1192,20 @@ describe("AreaService", () => {
         }),
       });
 
+      mockEventModel.findOne.mockReturnValueOnce(
+        mockEventFindOne({ status: EventStatus.DRAFT })
+      );
+
       mockBookingModel.countDocuments.mockReturnValueOnce({
         session: jest.fn().mockResolvedValue(0),
       });
 
       mockAreaModel.findOneAndUpdate.mockResolvedValue(area);
 
-      mockZoneModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
+      mockZoneModel.updateOne.mockResolvedValue({
+        matchedCount: 1,
+        modifiedCount: 1,
+      });
 
       const result = await service.softDeleteArea(mockUser, VALID_ID, {
         isDeleted: true,
@@ -1159,6 +1239,14 @@ describe("AreaService", () => {
           }),
         }),
       });
+
+      mockEventModel.findOne.mockReturnValueOnce(
+        mockEventFindOne({ status: EventStatus.DRAFT })
+      );
+
+      mockZoneModel.findOne.mockReturnValueOnce(
+        mockFindOneChain({ eventId: area.eventId, hasSeating: true })
+      );
 
       await mockBookingModel.countDocuments;
 
@@ -1195,13 +1283,17 @@ describe("AreaService", () => {
         }),
       });
 
+      mockEventModel.findOne.mockReturnValueOnce(
+        mockEventFindOne({ status: EventStatus.DRAFT })
+      );
+
       mockBookingModel.countDocuments.mockReturnValueOnce({
         session: jest.fn().mockResolvedValue(3),
       });
 
       await expect(
         service.softDeleteArea(mockUser, VALID_ID, { isDeleted: true })
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
 
     it("should throw if area not found (second lookup)", async () => {
@@ -1219,6 +1311,10 @@ describe("AreaService", () => {
         }),
       });
 
+      mockEventModel.findOne.mockReturnValueOnce(
+        mockEventFindOne({ status: EventStatus.DRAFT })
+      );
+
       mockBookingModel.countDocuments.mockReturnValueOnce({
         session: jest.fn().mockResolvedValue(0),
       });
@@ -1227,7 +1323,7 @@ describe("AreaService", () => {
 
       await expect(
         service.softDeleteArea(mockUser, VALID_ID, { isDeleted: true })
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
     });
   });
 });

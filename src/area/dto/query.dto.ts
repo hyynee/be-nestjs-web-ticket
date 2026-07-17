@@ -3,11 +3,15 @@ import {
   IsString,
   IsBoolean,
   IsMongoId,
+  IsIn,
   IsInt,
   Min,
+  Max,
+  MaxLength,
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { Area } from "@src/schemas/area.schema";
+import { ALLOWED_AREA_SORT_FIELDS, AreaSortField } from "../area.constants";
 
 export interface PaginatedArea {
   data: Area[];
@@ -24,29 +28,22 @@ export class QueryAreaDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   name?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   search?: string;
 
-  @IsBoolean()
   @IsOptional()
   @Transform(({ value }) => {
     if (value === "true") return true;
     if (value === "false") return false;
-    return Boolean(value);
+    return value;
   })
+  @IsBoolean()
   hasSeating?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  @Transform(({ value }) => {
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return Boolean(value);
-  })
-  isDeleted?: boolean;
 
   @IsOptional()
   @IsInt()
@@ -57,14 +54,15 @@ export class QueryAreaDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(100)
   @Type(() => Number)
   limit?: number = 10;
 
   @IsOptional()
-  @IsString()
-  sortBy?: string = "createdAt";
+  @IsIn(ALLOWED_AREA_SORT_FIELDS)
+  sortBy?: AreaSortField = "createdAt";
 
   @IsOptional()
-  @IsString()
+  @IsIn(["asc", "desc"])
   sortOrder?: "asc" | "desc" = "desc";
 }

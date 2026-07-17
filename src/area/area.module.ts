@@ -14,6 +14,7 @@ import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 import { Booking, BookingSchema } from "@src/schemas/booking.schema";
 import { Event, EventSchema } from "@src/schemas/event.schema";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { ZoneModule } from "@src/zone/zone.module";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { EventOwnershipService } from "@src/event/event-ownership.service";
       { name: Booking.name, schema: BookingSchema },
       { name: Event.name, schema: EventSchema },
     ]),
+    ZoneModule,
   ],
   controllers: [AreaManagementController, AreaQueryController],
   providers: [

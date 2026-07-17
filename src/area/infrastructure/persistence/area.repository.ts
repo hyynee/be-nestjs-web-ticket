@@ -1,5 +1,10 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { InjectConnection, InjectModel } from "@nestjs/mongoose";
+import { MetricsService } from "@src/metrics/metrics.service";
 import { Area } from "@src/schemas/area.schema";
 import { Booking, BookingStatus } from "@src/schemas/booking.schema";
 import { Event, EventStatus } from "@src/schemas/event.schema";
@@ -11,6 +16,11 @@ import type {
   AreaZoneMutationSource,
 } from "../../domain/types/area.types";
 
+interface AreaPageResult {
+  areas: AreaViewSource[];
+  total: number;
+}
+
 @Injectable()
 export class AreaRepository {
   constructor(
@@ -18,7 +28,8 @@ export class AreaRepository {
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
-    @InjectConnection() private readonly connection: Connection
+    @InjectConnection() private readonly connection: Connection,
+    private readonly metricsService: MetricsService
   ) {}
 
   startSession(): Promise<ClientSession> {
@@ -57,23 +68,38 @@ export class AreaRepository {
     }
 
     if (seatDelta < 0) {
-      await this.zoneModel.updateOne(
-        { _id: zoneId, isDeleted: false },
-        [
-          {
-            $set: {
-              currentTotalSeats: {
-                $max: [
-                  { $add: [{ $ifNull: ["$currentTotalSeats", 0] }, seatDelta] },
-                  0,
-                ],
-              },
-            },
-          },
-        ],
+      const decrement = Math.abs(seatDelta);
+      const result = await this.zoneModel.updateOne(
+        {
+          _id: zoneId,
+          isDeleted: false,
+          currentTotalSeats: { $gte: decrement },
+        },
+        { $inc: { currentTotalSeats: -decrement } },
         { session }
       );
-      return;
+
+      if (result.matchedCount === 1) {
+        return;
+      }
+
+      const zone = await this.zoneModel
+        .findOne({ _id: zoneId, isDeleted: false })
+        .select("currentTotalSeats")
+        .lean<{ currentTotalSeats?: number }>()
+        .session(session ?? null);
+
+      if (!zone) {
+        throw new NotFoundException("Zone not found or has been deleted");
+      }
+
+      this.metricsService.zoneCapacityInconsistentTotal.inc({
+        direction: "decrement",
+      });
+      throw new ConflictException({
+        code: "ZONE_CAPACITY_INCONSISTENT",
+        message: `Zone seat capacity is inconsistent: cannot decrement ${decrement} from ${zone.currentTotalSeats ?? 0}`,
+      });
     }
 
     const updated = await this.zoneModel.findOneAndUpdate(
@@ -102,12 +128,16 @@ export class AreaRepository {
       .session(session ?? null);
 
     if (!zone) {
-      throw new BadRequestException("Zone not found or has been deleted");
+      throw new NotFoundException("Zone not found or has been deleted");
     }
 
-    throw new BadRequestException(
-      `Total seats (${(zone.currentTotalSeats ?? 0) + seatDelta}) would exceed zone capacity (${zone.capacity})`
-    );
+    this.metricsService.zoneCapacityInconsistentTotal.inc({
+      direction: "increment",
+    });
+    throw new ConflictException({
+      code: "ZONE_CAPACITY_EXCEEDED",
+      message: `Total seats (${(zone.currentTotalSeats ?? 0) + seatDelta}) would exceed zone capacity (${zone.capacity})`,
+    });
   }
 
   async createArea(
@@ -129,10 +159,10 @@ export class AreaRepository {
 
   async findAreasPage(input: {
     match: FilterQuery<Area>;
-    sort: Partial<Record<AreaSortField, 1 | -1>>;
+    sort: Partial<Record<AreaSortField | "_id", 1 | -1>>;
     skip: number;
     limit: number;
-  }): Promise<{ areas: AreaViewSource[]; total: number }> {
+  }): Promise<AreaPageResult> {
     const result = await this.areaModel.aggregate<{
       data: AreaViewSource[];
       count: Array<{ total: number }>;
@@ -212,7 +242,7 @@ export class AreaRepository {
 
   updateArea(
     areaId: Types.ObjectId,
-    updatePayload: Record<string, unknown>,
+    updatePayload: AreaUpdateInput,
     session: ClientSession
   ): Promise<Area | null> {
     return this.areaModel.findOneAndUpdate(
@@ -221,4 +251,15 @@ export class AreaRepository {
       { new: true, session }
     );
   }
+}
+
+export interface AreaUpdateInput {
+  eventId: Types.ObjectId;
+  zoneId?: Types.ObjectId;
+  name?: string;
+  description?: string;
+  rowLabel?: string;
+  seatCount: number;
+  seats: string[];
+  updatedBy: string;
 }
