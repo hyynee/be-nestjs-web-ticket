@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { PaymentService } from "./payment.service";
 import { PaymentController } from "./payment.controller";
 import { PaymentScheduler } from "./payment.scheduler";
@@ -27,6 +27,8 @@ import { PaymentSettlementOrchestrator } from "./application/orchestrators/payme
 import { PaymentConfirmationDeliveryService } from "./application/services/payment-confirmation-delivery.service";
 import { StripePaymentSettlementService } from "./application/services/stripe-payment-settlement.service";
 import { PaypalPaymentSettlementService } from "./application/services/paypal-payment-settlement.service";
+import { PaymentOpsModule } from "@src/payment-ops/payment-ops.module";
+import { NotificationModule } from "@src/notification/notification.module";
 
 @Module({
   imports: [
@@ -41,6 +43,8 @@ import { PaypalPaymentSettlementService } from "./application/services/paypal-pa
     ZoneModule,
     EventsModule,
     QueueModule,
+    NotificationModule,
+    forwardRef(() => PaymentOpsModule),
   ],
   controllers: [PaymentController],
   providers: [

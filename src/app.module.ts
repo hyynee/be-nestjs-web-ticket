@@ -50,6 +50,10 @@ import { HealthModule } from "./health/health.module";
 import { AiccModule } from "./aicc/aicc.module";
 import { InvoiceModule } from "./invoice/invoice.module";
 import { ApiResponseInterceptor } from "./common/http/api-response.interceptor";
+import { PaymentOpsModule } from "./payment-ops/payment-ops.module";
+import { RefundModule } from "./refund/refund.module";
+import { NotificationModule } from "./notification/notification.module";
+import { PromotionModule } from "./promotion/promotion.module";
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -124,6 +128,10 @@ import { ApiResponseInterceptor } from "./common/http/api-response.interceptor";
     HealthModule,
     AiccModule,
     InvoiceModule,
+    NotificationModule,
+    PromotionModule,
+    PaymentOpsModule,
+    RefundModule,
   ],
   controllers: [AppController, UploadController],
   providers: [

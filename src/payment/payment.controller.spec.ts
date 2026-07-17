@@ -3,6 +3,7 @@ import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { Test, TestingModule } from "@nestjs/testing";
 import { PaymentController } from "./payment.controller";
 import { PaymentService } from "./payment.service";
+import { PaymentOpsService } from "@src/payment-ops/payment-ops.service";
 import { VerifiedUserGuard } from "@src/guards/verified-user.guard";
 import type { Request, Response } from "express";
 import Stripe from "stripe";
@@ -29,6 +30,23 @@ const makeRes = () => {
 const makeReq = (body: Buffer = Buffer.from("{}")) =>
   ({ rawBody: body, body }) as unknown as Request;
 
+const makePaymentOpsService = (): jest.Mocked<
+  Pick<
+    PaymentOpsService,
+    | "recordReceivedStripeEvent"
+    | "markProcessing"
+    | "markSucceeded"
+    | "markIgnored"
+    | "markFailed"
+  >
+> => ({
+  recordReceivedStripeEvent: jest.fn().mockResolvedValue({ id: "webhook_1" }),
+  markProcessing: jest.fn().mockResolvedValue(undefined),
+  markSucceeded: jest.fn().mockResolvedValue(undefined),
+  markIgnored: jest.fn().mockResolvedValue(undefined),
+  markFailed: jest.fn().mockResolvedValue(undefined),
+});
+
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
 describe("PaymentController – handleWebhook idempotency", () => {
@@ -44,6 +62,7 @@ describe("PaymentController – handleWebhook idempotency", () => {
       | "handlePaymentIntentSucceeded"
     >
   >;
+  let paymentOpsService: ReturnType<typeof makePaymentOpsService>;
 
   const req = makeReq();
   const event = makeEvent();
@@ -57,6 +76,7 @@ describe("PaymentController – handleWebhook idempotency", () => {
       handleCheckoutSessionCompleted: jest.fn().mockResolvedValue(undefined),
       handlePaymentIntentSucceeded: jest.fn(),
     };
+    paymentOpsService = makePaymentOpsService();
 
     // Silence logger output during tests
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
@@ -64,7 +84,10 @@ describe("PaymentController – handleWebhook idempotency", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: paymentOpsService },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -371,7 +394,10 @@ describe("PaymentController – normalizeRawBody fallback paths", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -441,7 +467,10 @@ describe("PaymentController – webhook event type dispatch", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -528,7 +557,10 @@ describe("PaymentController – createCheckoutSession", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -578,7 +610,10 @@ describe("PaymentController – createPaypalTransaction", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -630,7 +665,10 @@ describe("PaymentController – finalizePaypalTransaction", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -717,7 +755,10 @@ describe("PaymentController – getPaymentHistory", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -776,7 +817,10 @@ describe("PaymentController – cancelPayment", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: paymentService }],
+      providers: [
+        { provide: PaymentService, useValue: paymentService },
+        { provide: PaymentOpsService, useValue: makePaymentOpsService() },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);

@@ -22,6 +22,8 @@ import { ApiCookieAuth } from "@nestjs/swagger";
 import { CreateCheckoutSessionDto } from "./dto/create-checkout.dto";
 import { QueryPaymentHistoryDto } from "./dto/query-payment-history.dto";
 import { CancelPaymentDto } from "./dto/cancel-payment.dto";
+import { PaymentWebhookProvider } from "@src/schemas/payment-webhook-event.schema";
+import { PaymentOpsService } from "@src/payment-ops/payment-ops.service";
 import Stripe from "stripe";
 import type { Request, Response } from "express";
 
@@ -45,7 +47,10 @@ const normalizeRawBody = (req: StripeWebhookRequest): Buffer => {
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
 
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly paymentOpsService: PaymentOpsService
+  ) {}
 
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiCookieAuth("access_token")
@@ -80,6 +85,18 @@ export class PaymentController {
       return res.status(400).send(`Webhook Error: ${message}`);
     }
 
+    try {
+      await this.paymentOpsService.recordReceivedStripeEvent(event);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      this.logger.error(
+        `Could not persist webhook event ${event.id} (${event.type}): ${message}`
+      );
+      return res
+        .status(503)
+        .send("Service temporarily unavailable. Stripe will retry.");
+    }
+
     let idempotencyStatus: WebhookIdempotencyStatus;
     try {
       idempotencyStatus = await this.paymentService.acquireWebhookIdempotency(
@@ -105,6 +122,10 @@ export class PaymentController {
     }
 
     if (idempotencyStatus === "succeeded") {
+      await this.paymentOpsService.markSucceeded(
+        PaymentWebhookProvider.STRIPE,
+        event.id
+      );
       return res.status(200).json({ received: true, deduplicated: true });
     }
 
@@ -117,7 +138,13 @@ export class PaymentController {
         .json({ message: "Event is currently being processed, retry later" });
     }
 
+    let webhookIgnored = false;
     try {
+      await this.paymentOpsService.markProcessing(
+        PaymentWebhookProvider.STRIPE,
+        event.id
+      );
+
       switch (event.type) {
         case "payment_intent.succeeded":
           await this.paymentService.handlePaymentIntentSucceeded(
@@ -156,8 +183,24 @@ export class PaymentController {
           this.logger.warn(
             `Unhandled Stripe webhook event type: ${event.type}`
           );
+          await this.paymentOpsService.markIgnored(
+            PaymentWebhookProvider.STRIPE,
+            event.id
+          );
+          webhookIgnored = true;
       }
     } catch (err) {
+      try {
+        await this.paymentOpsService.markFailed(
+          PaymentWebhookProvider.STRIPE,
+          event.id,
+          err
+        );
+      } catch (storeErr) {
+        this.logger.error(
+          `Failed to persist webhook failure for event ${event.id}: ${storeErr instanceof Error ? storeErr.message : "unknown"}`
+        );
+      }
       this.logger.error(
         `Webhook handler error for event ${event.id}: ${err instanceof Error ? err.message : "unknown error"}`
       );
@@ -186,6 +229,12 @@ export class PaymentController {
         .send("Service temporarily unavailable. Retry will be attempted.");
     }
 
+    if (!webhookIgnored) {
+      await this.paymentOpsService.markSucceeded(
+        PaymentWebhookProvider.STRIPE,
+        event.id
+      );
+    }
     await this.paymentService.markWebhookSucceeded(event.id);
 
     return res.status(200).json({ received: true });

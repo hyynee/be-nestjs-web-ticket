@@ -10,6 +10,7 @@ import { Payment } from "@src/schemas/payment.schema";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { QueueService } from "@src/queue/queue.service";
 import { Model, Types } from "mongoose";
+import type { AdminRefundResult } from "@src/payment/types/payment.types";
 
 @Injectable()
 export class IssueAdminRefundUseCase {
@@ -28,18 +29,17 @@ export class IssueAdminRefundUseCase {
     stripePaymentIntentId: string | undefined,
     adminId: string,
     reason: string
-  ): Promise<void> {
+  ): Promise<AdminRefundResult> {
     if (stripePaymentIntentId) {
-      await this.issueStripeRefund(
+      return this.issueStripeRefund(
         bookingId,
         stripePaymentIntentId,
         adminId,
         reason
       );
-      return;
     }
 
-    await this.issuePaypalRefund(bookingId, reason);
+    return this.issuePaypalRefund(bookingId, reason);
   }
 
   private async issueStripeRefund(
@@ -47,9 +47,9 @@ export class IssueAdminRefundUseCase {
     stripePaymentIntentId: string,
     adminId: string,
     reason: string
-  ): Promise<void> {
+  ): Promise<AdminRefundResult> {
     try {
-      await this.paymentGateway.stripe.refunds.create(
+      const refund = await this.paymentGateway.stripe.refunds.create(
         {
           payment_intent: stripePaymentIntentId,
           metadata: { reason, bookingId, adminId, source: "admin_cancel" },
@@ -60,6 +60,17 @@ export class IssueAdminRefundUseCase {
         `[REFUND] Stripe admin refund issued: bookingId=${bookingId}, pi=${stripePaymentIntentId}`
       );
       await this.markBookingRefunded(bookingId);
+      await this.markPaymentRefunded(
+        bookingId,
+        "stripe",
+        refund.id,
+        refund.amount
+      );
+      return {
+        provider: "stripe",
+        status: "succeeded",
+        providerRefundId: refund.id,
+      };
     } catch (err) {
       const errMsg = getPaymentErrorMessage(err);
       this.logger.error(
@@ -73,13 +84,14 @@ export class IssueAdminRefundUseCase {
         "stripe",
         errMsg
       );
+      return { provider: "stripe", status: "failed", errorMessage: errMsg };
     }
   }
 
   private async issuePaypalRefund(
     bookingId: string,
     reason: string
-  ): Promise<void> {
+  ): Promise<AdminRefundResult> {
     const paymentDoc = await this.paymentModel
       .findOne({
         bookingId: new Types.ObjectId(bookingId),
@@ -87,15 +99,16 @@ export class IssueAdminRefundUseCase {
         status: "succeeded",
         isDeleted: false,
       })
-      .select("paypalCaptureId")
-      .lean<{ paypalCaptureId?: string }>();
+      .select("paypalCaptureId amount")
+      .lean<{ paypalCaptureId?: string; amount?: number }>();
 
     if (!paymentDoc?.paypalCaptureId) {
+      const errorMessage = "No refundable PayPal payment found";
       this.logger.warn(
         `issueAdminRefund: no refundable payment found for bookingId=${bookingId}`
       );
       await this.markBookingPaid(bookingId);
-      return;
+      return { provider: "paypal", status: "failed", errorMessage };
     }
 
     try {
@@ -105,13 +118,25 @@ export class IssueAdminRefundUseCase {
       refundRequest.requestBody({
         note_to_payer: reason || "Admin cancellation",
       });
-      await this.paymentGateway.withPaypalTimeout(
+      const refundResult = await this.paymentGateway.withPaypalTimeout(
         this.paymentGateway.paypalClient.execute(refundRequest)
       );
+      const paypalRefundId = this.extractPaypalRefundId(refundResult.result);
       this.logger.log(
         `[REFUND] PayPal admin refund issued: bookingId=${bookingId}, captureId=${paymentDoc.paypalCaptureId}`
       );
       await this.markBookingRefunded(bookingId);
+      await this.markPaymentRefunded(
+        bookingId,
+        "paypal",
+        paypalRefundId,
+        paymentDoc.amount
+      );
+      return {
+        provider: "paypal",
+        status: "succeeded",
+        ...(paypalRefundId ? { providerRefundId: paypalRefundId } : {}),
+      };
     } catch (err) {
       const errMsg = getPaymentErrorMessage(err);
       this.logger.error(
@@ -125,6 +150,7 @@ export class IssueAdminRefundUseCase {
         errMsg
       );
       await this.markBookingPaid(bookingId);
+      return { provider: "paypal", status: "failed", errorMessage: errMsg };
     }
   }
 
@@ -146,6 +172,40 @@ export class IssueAdminRefundUseCase {
       },
       { $set: { paymentStatus: PaymentStatus.PAID } }
     );
+  }
+
+  private async markPaymentRefunded(
+    bookingId: string,
+    provider: "stripe" | "paypal",
+    providerRefundId: string | undefined,
+    refundAmount: number | undefined
+  ): Promise<void> {
+    await this.paymentModel.updateOne(
+      {
+        bookingId: new Types.ObjectId(bookingId),
+        status: "succeeded",
+        isDeleted: false,
+      },
+      {
+        $set: {
+          status: "refunded",
+          refundedAt: new Date(),
+          ...(refundAmount ? { refundAmount } : {}),
+          ...(provider === "stripe" && providerRefundId
+            ? { stripeRefundId: providerRefundId }
+            : {}),
+          ...(provider === "paypal" && providerRefundId
+            ? { paypalRefundId: providerRefundId }
+            : {}),
+        },
+      }
+    );
+  }
+
+  private extractPaypalRefundId(result: unknown): string | undefined {
+    if (!result || typeof result !== "object") return undefined;
+    const candidate = result as { id?: unknown };
+    return typeof candidate.id === "string" ? candidate.id : undefined;
   }
 
   private async enqueueRefundFailureAlert(

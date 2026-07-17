@@ -44,6 +44,7 @@ import { PaymentService } from "@src/payment/payment.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { AuditService } from "@src/audit/audit.service";
 import { UploadService } from "@src/upload/upload.service";
+import { NotificationService } from "@src/notification/notification.service";
 import { SLOT_SOLD_KEY_PREFIX } from "@src/booking/booking.constants";
 import { EventCacheService } from "../infrastructure/cache/event-cache.service";
 import { EventRepository } from "../infrastructure/persistence/event.repository";
@@ -65,6 +66,7 @@ import { BookingCodeService } from "@src/booking/domain/services/booking-code.se
 import { BookingCacheService } from "@src/booking/infrastructure/cache/booking-cache.service";
 import { BookingZoneNotifierService } from "@src/booking/infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "@src/booking/presenters/booking.presenter";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 const HOUR_MS = 60 * 60 * 1000;
@@ -800,6 +802,20 @@ describe("Edge Case — Slot Capacity Boundary (BookingService.createBooking)", 
           useValue: {
             assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
             getManagedEventIds: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: NotificationService,
+          useValue: {
+            notifyBookingCreated: jest.fn().mockResolvedValue(undefined),
+            notifyBookingCancelled: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: PromotionService,
+          useValue: {
+            applyPromotionToBooking: jest.fn(),
+            releaseUsageForBooking: jest.fn(),
           },
         },
       ],
