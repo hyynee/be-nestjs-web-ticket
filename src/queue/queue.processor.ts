@@ -11,11 +11,13 @@ import { Model } from "mongoose";
 import { MailService } from "@src/services/mail.service";
 import { ExportService } from "@src/export/export.service";
 import { TicketService } from "@src/ticket/ticket.service";
+import { InvoiceService } from "@src/invoice/invoice.service";
 import { User } from "@src/schemas/user.schema";
 import { ExportTicketDto } from "@src/export/dto/export-ticket.dto";
 import { ExportCheckInDto } from "@src/export/dto/export-checkin.dto";
 import { FAILED_JOB_ALERT_THRESHOLD } from "./queue.service";
 import type { BookingConfirmationData } from "@src/types/booking-modules";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 type ExportRow = Record<string, string | number | boolean | null>;
 
@@ -40,6 +42,7 @@ export class QueueProcessor extends WorkerHost {
     private readonly mailService: MailService,
     private readonly exportService: ExportService,
     private readonly ticketService: TicketService,
+    private readonly invoiceService: InvoiceService,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectQueue("default") private readonly queue: Queue,
     @InjectQueue("dead-letter") private readonly dlqQueue: Queue
@@ -47,7 +50,7 @@ export class QueueProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job) {
+  async process(job: Job): Promise<boolean> {
     try {
       if (!job.data || !job.data.type) {
         throw new Error("Invalid job data");
@@ -92,6 +95,12 @@ export class QueueProcessor extends WorkerHost {
               qrCode: ticket.qrCode || "",
             })),
           });
+          break;
+        }
+
+        case "resend-invoice-email": {
+          const { bookingCode } = payload as { bookingCode: string };
+          await this.invoiceService.deliverInvoiceEmail(bookingCode);
           break;
         }
 
@@ -195,14 +204,14 @@ export class QueueProcessor extends WorkerHost {
       return true;
     } catch (error) {
       this.logger.error(
-        `Job failed — id=${job.id}, type=${job.data?.type}, attempt=${job.attemptsMade}: ${(error as Error)?.message}`
+        `Job failed — id=${job.id}, type=${job.data?.type}, attempt=${job.attemptsMade}: ${getErrorMessage(error)}`
       );
       throw error;
     }
   }
 
   @OnWorkerEvent("failed")
-  async onFailed(job: Job, error: Error) {
+  async onFailed(job: Job, error: Error): Promise<void> {
     const maxAttempts = job.opts.attempts ?? 1;
     if (job.attemptsMade < maxAttempts) {
       return;
@@ -239,9 +248,9 @@ export class QueueProcessor extends WorkerHost {
           `Job permanently failed — id=${job.id}, type=${job.data?.type}, totalFailed=${failedCount}, error="${error.message}"`
         );
       }
-    } catch {
+    } catch (alertError) {
       this.logger.warn(
-        `Job permanently failed — id=${job.id}, type=${job.data?.type}, error="${error.message}" (failed count unavailable)`
+        `Job permanently failed — id=${job.id}, type=${job.data?.type}, error="${error.message}" (failed count unavailable: ${getErrorMessage(alertError)})`
       );
     }
   }

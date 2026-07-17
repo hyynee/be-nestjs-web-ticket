@@ -104,7 +104,6 @@ export class QueueService {
     });
   }
 
-  /** Admin-facing wrapper around {@link addJob} — payload already DTO-validated by controller. */
   async addAdminJob(data: QueueJobData): Promise<Job<QueueJobData>> {
     return this.addJob(data);
   }
@@ -289,12 +288,12 @@ export class QueueService {
 
     try {
       await job.remove();
-    } catch {
+    } catch (removeErr) {
       try {
         await dlqJob.remove();
       } catch (rollbackErr) {
         this.logger.error(
-          `moveToDeadLetter: job ${id} could not be removed from the default queue AND rollback of its dead-letter copy (jobId=${dlqJobId}) failed — manual reconciliation required. payload=${JSON.stringify(sanitizeSensitiveFields(dlqPayload))}: ${getErrorMessage(rollbackErr)}`
+          `moveToDeadLetter: job ${id} could not be removed from the default queue (${getErrorMessage(removeErr)}) AND rollback of its dead-letter copy (jobId=${dlqJobId}) failed — manual reconciliation required. payload=${JSON.stringify(sanitizeSensitiveFields(dlqPayload))}: ${getErrorMessage(rollbackErr)}`
         );
       }
       throw new ConflictException(

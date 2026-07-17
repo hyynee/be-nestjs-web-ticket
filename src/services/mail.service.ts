@@ -440,6 +440,33 @@ export class MailService {
     });
   }
 
+  async deliverInvoiceEmail(data: {
+    to: string;
+    customerName: string;
+    bookingCode: string;
+    pdfBuffer: Buffer;
+  }): Promise<void> {
+    const safeName = this.escapeHtml(data.customerName);
+    const safeCode = this.escapeHtml(data.bookingCode);
+
+    await this.transporter.sendMail({
+      from: `"Ticket System" <${config.SMTP_USER}>`,
+      to: data.to,
+      subject: `Hóa đơn đặt vé #${safeCode}`,
+      html: `
+        <p>Xin chào ${safeName},</p>
+        <p>Đính kèm là hóa đơn cho đơn đặt vé <strong>${safeCode}</strong> của bạn.</p>
+      `,
+      attachments: [
+        {
+          filename: `invoice-${data.bookingCode}.pdf`,
+          content: data.pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    });
+  }
+
   async sendBookingCancellation(data: {
     email: string;
     customerName: string;

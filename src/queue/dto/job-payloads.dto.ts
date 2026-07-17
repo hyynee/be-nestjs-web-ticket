@@ -135,6 +135,12 @@ export class BookingConfirmationPayloadDto {
   tickets?: BookingConfirmationTicketDto[];
 }
 
+export class ResendInvoiceEmailPayloadDto {
+  @IsString()
+  @IsNotEmpty()
+  bookingCode: string;
+}
+
 export class RefundFailureAlertPayloadDto {
   @IsString()
   @IsNotEmpty()
@@ -183,4 +189,5 @@ export type QueueJobPayload =
   | BookingConfirmationQueuePayload
   | RefundFailureAlertPayloadDto
   | ExportTicketsJobPayloadDto
-  | ExportCheckInZonesJobPayloadDto;
+  | ExportCheckInZonesJobPayloadDto
+  | ResendInvoiceEmailPayloadDto;

@@ -3,6 +3,7 @@ import { QueueProcessor } from "./queue.processor";
 import { MailService } from "@src/services/mail.service";
 import { ExportService } from "@src/export/export.service";
 import { TicketService } from "@src/ticket/ticket.service";
+import { InvoiceService } from "@src/invoice/invoice.service";
 import { getModelToken } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
 import { getQueueToken } from "@nestjs/bullmq";
@@ -16,6 +17,7 @@ describe("QueueProcessor", () => {
   let exportService: jest.Mocked<ExportService>;
   let userModel: any;
   let ticketService: jest.Mocked<TicketService>;
+  let invoiceService: jest.Mocked<InvoiceService>;
   let queue: jest.Mocked<Queue>;
 
   const mockJob = (data: any, opts?: any) =>
@@ -51,6 +53,10 @@ describe("QueueProcessor", () => {
       generateMissingQRCodesForBooking: jest.fn().mockResolvedValue(undefined),
     } as any;
 
+    invoiceService = {
+      deliverInvoiceEmail: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
     queue = {
       add: jest.fn().mockResolvedValue(undefined),
       getJobCounts: jest.fn(),
@@ -62,6 +68,7 @@ describe("QueueProcessor", () => {
         { provide: MailService, useValue: mailService },
         { provide: ExportService, useValue: exportService },
         { provide: TicketService, useValue: ticketService },
+        { provide: InvoiceService, useValue: invoiceService },
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: getQueueToken("default"), useValue: queue },
         { provide: getQueueToken("dead-letter"), useValue: queue },
@@ -118,6 +125,20 @@ describe("QueueProcessor", () => {
           "user@test.com",
           "hex-token-abc",
           "Alice"
+        );
+        expect(result).toBe(true);
+      });
+    });
+
+    describe("resend-invoice-email", () => {
+      it("calls InvoiceService.deliverInvoiceEmail with the bookingCode", async () => {
+        const job = mockJob({
+          type: "resend-invoice-email",
+          payload: { bookingCode: "BK123" },
+        });
+        const result = await processor.process(job);
+        expect(invoiceService.deliverInvoiceEmail).toHaveBeenCalledWith(
+          "BK123"
         );
         expect(result).toBe(true);
       });

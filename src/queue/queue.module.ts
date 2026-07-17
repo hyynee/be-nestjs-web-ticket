@@ -1,15 +1,8 @@
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { MongooseModule } from "@nestjs/mongoose";
 import { QueueService } from "./queue.service";
 import { QueueController } from "./queue.controller";
-import { QueueProcessor } from "./queue.processor";
-import { MailModule } from "@src/services/mail.module";
-import { forwardRef } from "@nestjs/common";
-import { ExportModule } from "@src/export/export.module";
-import { User, UserSchema } from "@src/schemas/user.schema";
-import { TicketModule } from "@src/ticket/ticket.module";
 
 const queueRegistrations = BullModule.registerQueue(
   {
@@ -57,13 +50,9 @@ const queueRegistrations = BullModule.registerQueue(
       }),
     }),
     queueRegistrations,
-    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
-    forwardRef(() => MailModule),
-    forwardRef(() => ExportModule),
-    TicketModule,
   ],
   controllers: [QueueController],
-  providers: [QueueProcessor, QueueService],
+  providers: [QueueService],
   exports: [QueueService, queueRegistrations],
 })
 export class QueueModule {}

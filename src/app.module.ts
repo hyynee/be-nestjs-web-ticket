@@ -41,12 +41,14 @@ import { CorrelationIdMiddleware } from "./middleware/correlation-id.middleware"
 import { StripeIpMiddleware } from "./middleware/stripe-ip.middleware";
 import { validateEnvironment } from "./config/env.validation";
 import { QueueModule } from "@src/queue/queue.module";
+import { QueueWorkerModule } from "@src/queue/queue-worker.module";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 import { MetricsModule } from "./metrics/metrics.module";
 import { CurrencyModule } from "./currency/currency.module";
 import { AuditModule } from "./audit/audit.module";
 import { HealthModule } from "./health/health.module";
 import { AiccModule } from "./aicc/aicc.module";
+import { InvoiceModule } from "./invoice/invoice.module";
 import { ApiResponseInterceptor } from "./common/http/api-response.interceptor";
 @Module({
   imports: [
@@ -115,11 +117,13 @@ import { ApiResponseInterceptor } from "./common/http/api-response.interceptor";
     EventsModule,
     ExportModule,
     QueueModule,
+    QueueWorkerModule,
     MetricsModule,
     CurrencyModule,
     AuditModule,
     HealthModule,
     AiccModule,
+    InvoiceModule,
   ],
   controllers: [AppController, UploadController],
   providers: [
