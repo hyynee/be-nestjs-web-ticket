@@ -31,6 +31,7 @@ import {
 } from "../domain/types/booking-response.types";
 import { BookingCacheService } from "../infrastructure/cache/booking-cache.service";
 import { BookingPresenter } from "../presenters/booking.presenter";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 const RELEASE_LOCK_SCRIPT = `
   if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -167,7 +168,12 @@ export class BookingQueryService {
         NX: true,
         EX: ZONE_INFO_STAMPEDE_LOCK_TTL_SEC,
       })
-      .catch(() => null);
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `BookingQueryService: zone info lock acquire failed for eventId=${eventId}, zoneId=${zoneId}: ${getErrorMessage(error)}`
+        );
+        return null;
+      });
 
     if (!lockAcquired) {
       for (let i = 0; i < ZONE_INFO_STAMPEDE_MAX_POLLS; i++) {
@@ -290,7 +296,11 @@ export class BookingQueryService {
             keys: [lockKey],
             arguments: [lockValue],
           })
-          .catch(() => {});
+          .catch((error: unknown) => {
+            this.logger.warn(
+              `BookingQueryService: zone info lock release failed for eventId=${eventId}, zoneId=${zoneId}: ${getErrorMessage(error)}`
+            );
+          });
       }
     }
   }

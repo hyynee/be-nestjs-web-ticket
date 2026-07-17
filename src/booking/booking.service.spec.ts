@@ -65,6 +65,27 @@ describe("BookingService", () => {
   let seatStateModel: any;
   let zoneGateway: { emitZoneTicketUpdate: jest.Mock };
   let paymentService: { issueAdminRefund: jest.Mock };
+  let redisService: {
+    client: {
+      scan: jest.Mock;
+      del: jest.Mock;
+      set: jest.Mock;
+      get: jest.Mock;
+      eval: jest.Mock;
+      sMembers: jest.Mock;
+      sAdd: jest.Mock;
+      expire: jest.Mock;
+    };
+  };
+  let auditService: { record: jest.Mock };
+  let uploadService: {
+    uploadImage: jest.Mock;
+    deleteQRCode: jest.Mock;
+  };
+  let eventOwnershipService: {
+    assertCanManageEvent: jest.Mock;
+    getManagedEventIds: jest.Mock;
+  };
 
   const mockCreateContext = (zone: any, event?: any) => {
     eventModel.findById.mockReturnValue({
@@ -184,7 +205,7 @@ describe("BookingService", () => {
       issueAdminRefund: jest.fn().mockResolvedValue(undefined),
     };
 
-    const mockRedisService = {
+    redisService = {
       client: {
         scan: jest.fn().mockResolvedValue({ cursor: 0, keys: [] }),
         del: jest.fn().mockResolvedValue(0),
@@ -195,6 +216,15 @@ describe("BookingService", () => {
         sAdd: jest.fn().mockResolvedValue(1),
         expire: jest.fn().mockResolvedValue(1),
       },
+    };
+    auditService = { record: jest.fn().mockResolvedValue(undefined) };
+    uploadService = {
+      uploadImage: jest.fn(),
+      deleteQRCode: jest.fn().mockResolvedValue(undefined),
+    };
+    eventOwnershipService = {
+      assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
+      getManagedEventIds: jest.fn().mockResolvedValue([]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -225,7 +255,7 @@ describe("BookingService", () => {
           provide: ZoneService,
           useValue: { invalidateZoneAvailabilityCache: jest.fn() },
         },
-        { provide: RedisService, useValue: mockRedisService },
+        { provide: RedisService, useValue: redisService },
         { provide: PaymentService, useValue: paymentService },
         {
           provide: MetricsService,
@@ -239,22 +269,16 @@ describe("BookingService", () => {
         },
         {
           provide: AuditService,
-          useValue: { record: jest.fn().mockResolvedValue(undefined) },
+          useValue: auditService,
         },
         {
           provide: UploadService,
-          useValue: {
-            uploadImage: jest.fn(),
-            deleteQRCode: jest.fn().mockResolvedValue(undefined),
-          },
+          useValue: uploadService,
         },
         {
           provide: require("@src/event/event-ownership.service")
             .EventOwnershipService,
-          useValue: {
-            assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
-            getManagedEventIds: jest.fn().mockResolvedValue([]),
-          },
+          useValue: eventOwnershipService,
         },
       ],
     }).compile();
@@ -836,7 +860,7 @@ describe("BookingService", () => {
     });
 
     it("throws BadRequestException when concurrent user booking lock is held", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.set.mockResolvedValue(null);
 
       await expect(
@@ -887,7 +911,7 @@ describe("BookingService", () => {
           hasNextPage: false,
         },
       };
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(JSON.stringify(cachedData));
 
       const result = await service.getMyBookings(userId, "confirmed", 1, 10);
@@ -897,7 +921,7 @@ describe("BookingService", () => {
     });
 
     it("queries DB when cache misses and returns paginated result with status filter", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
 
       const bookings = [{ _id: new Types.ObjectId(), status: "confirmed" }];
@@ -924,7 +948,7 @@ describe("BookingService", () => {
     });
 
     it("falls through to DB when Redis GET fails", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockRejectedValue(new Error("Redis down"));
 
       const bookings = [{ _id: new Types.ObjectId() }];
@@ -944,7 +968,7 @@ describe("BookingService", () => {
     });
 
     it("overlays the booking's snapshot onto the populated eventId/zoneId/areaId, so a renamed event/zone doesn't rewrite booking history", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
 
       const bookings = [
@@ -1182,7 +1206,7 @@ describe("BookingService", () => {
         soldCount: 10,
       });
 
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.set.mockRejectedValue(new Error("Redis down"));
       mockRedisClient.get.mockResolvedValue(null);
 
@@ -1577,7 +1601,7 @@ describe("BookingService", () => {
           hasNextPage: false,
         },
       };
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(JSON.stringify(cachedData));
 
       const result = await service.getAllBookings(baseQuery as any, adminUser);
@@ -1587,7 +1611,7 @@ describe("BookingService", () => {
     });
 
     it("queries DB and returns result with eventId filter", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
       bookingModel.aggregate.mockResolvedValue([]);
       bookingModel.countDocuments.mockResolvedValue(0);
@@ -1613,7 +1637,7 @@ describe("BookingService", () => {
     });
 
     it("overlays each booking's snapshot onto its aggregated eventId/zoneId", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
       bookingModel.aggregate.mockResolvedValue([
         {
@@ -1640,7 +1664,7 @@ describe("BookingService", () => {
     });
 
     it("applies search filter when search term is provided", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
       bookingModel.aggregate.mockResolvedValue([]);
       bookingModel.countDocuments.mockResolvedValue(0);
@@ -1662,7 +1686,7 @@ describe("BookingService", () => {
     });
 
     it("does not add $or when search is whitespace only", async () => {
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
       bookingModel.aggregate.mockResolvedValue([]);
       bookingModel.countDocuments.mockResolvedValue(0);
@@ -1682,8 +1706,7 @@ describe("BookingService", () => {
         userId: new Types.ObjectId().toString(),
         role: "organizer",
       } as any;
-      const eventOwnershipService = (service as any).eventOwnershipService;
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
       bookingModel.aggregate.mockResolvedValue([]);
       bookingModel.countDocuments.mockResolvedValue(0);
@@ -1705,11 +1728,10 @@ describe("BookingService", () => {
         role: "organizer",
       } as any;
       const managedId = new Types.ObjectId();
-      const eventOwnershipService = (service as any).eventOwnershipService;
       eventOwnershipService.getManagedEventIds.mockResolvedValueOnce([
         managedId,
       ]);
-      const mockRedisClient = (service as any).redisService.client;
+      const mockRedisClient = redisService.client;
       mockRedisClient.get.mockResolvedValue(null);
       bookingModel.aggregate.mockResolvedValue([]);
       bookingModel.countDocuments.mockResolvedValue(0);
@@ -1726,7 +1748,6 @@ describe("BookingService", () => {
         userId: new Types.ObjectId().toString(),
         role: "organizer",
       } as any;
-      const eventOwnershipService = (service as any).eventOwnershipService;
       eventOwnershipService.getManagedEventIds.mockResolvedValueOnce([]);
 
       const result = await service.getAllBookings(
@@ -1745,7 +1766,6 @@ describe("BookingService", () => {
         userId: new Types.ObjectId().toString(),
         role: "organizer",
       } as any;
-      const eventOwnershipService = (service as any).eventOwnershipService;
       eventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
         new ForbiddenException("nope")
       );
@@ -1917,7 +1937,6 @@ describe("BookingService", () => {
         }),
       });
 
-      const auditService = (service as any).auditService;
       auditService.record.mockRejectedValue(new Error("Audit DB unavailable"));
 
       const result = await service.adminCancelBooking(bookingId, adminId);
@@ -1952,7 +1971,6 @@ describe("BookingService", () => {
           ]),
       };
       ticketModel.find.mockReturnValue(chainableQuery);
-      const uploadService = (service as any).uploadService;
       uploadService.deleteQRCode.mockRejectedValue(
         new Error("QR upload failed")
       );

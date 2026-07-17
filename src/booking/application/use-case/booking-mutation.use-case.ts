@@ -17,23 +17,6 @@ export class BookingMutationService {
     private readonly adminCancelBookingUseCase: AdminCancelBookingUseCase
   ) {}
 
-  get redisService(): unknown {
-    return (this.createBookingUseCase as unknown as { redisService?: unknown })
-      .redisService;
-  }
-
-  get auditService(): unknown {
-    return (
-      this.adminCancelBookingUseCase as unknown as { auditService?: unknown }
-    ).auditService;
-  }
-
-  get uploadService(): unknown {
-    return (
-      this.adminCancelBookingUseCase as unknown as { uploadService?: unknown }
-    ).uploadService;
-  }
-
   createBooking(
     userId: string,
     data: CreateBookingDto

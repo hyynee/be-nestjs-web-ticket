@@ -12,6 +12,7 @@ import { ExpirePendingBookingsResult } from "../domain/types/booking-response.ty
 import { BookingCacheService } from "../infrastructure/cache/booking-cache.service";
 import { BookingZoneNotifierService } from "../infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "../presenters/booking.presenter";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Injectable()
 export class BookingMaintenanceService {
@@ -158,7 +159,11 @@ export class BookingMaintenanceService {
           [...committedSlotTotals.entries()].map(([slotId, qty]) =>
             this.bookingCacheService.client
               .decrBy(`${SLOT_SOLD_KEY_PREFIX}${slotId}`, qty)
-              .catch(() => {})
+              .catch((error: unknown) => {
+                this.logger.warn(
+                  `BookingMaintenanceService: failed to release slot counter slotId=${slotId}, quantity=${qty}: ${getErrorMessage(error)}`
+                );
+              })
           )
         );
       }

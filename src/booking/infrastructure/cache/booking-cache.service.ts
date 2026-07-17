@@ -1,12 +1,14 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { RedisService } from "@src/redis/redis.service";
 import { BOOKING_CACHE_TTL_MS } from "../../booking.constants";
 import { QueryBookingDto } from "../../dto/query-booking.dto";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 export const BOOKING_RESPONSE_SCHEMA_VERSION = "v1";
 
 @Injectable()
 export class BookingCacheService {
+  private readonly logger = new Logger(BookingCacheService.name);
   private readonly bookingListIndex = `bookings:list:index:${BOOKING_RESPONSE_SCHEMA_VERSION}`;
   private readonly ttlSec = Math.ceil(BOOKING_CACHE_TTL_MS / 1000);
 
@@ -47,7 +49,14 @@ export class BookingCacheService {
   }
 
   async getJson<T>(key: string): Promise<T | null> {
-    const cachedRaw = await this.redisService.client.get(key).catch(() => null);
+    const cachedRaw = await this.redisService.client
+      .get(key)
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `BookingCacheService: cache read failed for key=${key}: ${getErrorMessage(error)}`
+        );
+        return null;
+      });
     return cachedRaw ? (JSON.parse(cachedRaw) as T) : null;
   }
 
@@ -60,8 +69,10 @@ export class BookingCacheService {
         this.redisService.client.sAdd(this.bookingListIndex, key),
         this.redisService.client.expire(this.bookingListIndex, this.ttlSec * 2),
       ]);
-    } catch {
-      // Cache failure is non-fatal; DB remains the source of truth.
+    } catch (error) {
+      this.logger.warn(
+        `BookingCacheService: list cache write failed for key=${key}: ${getErrorMessage(error)}`
+      );
     }
   }
 
@@ -79,8 +90,10 @@ export class BookingCacheService {
         this.redisService.client.sAdd(userIndexKey, key),
         this.redisService.client.expire(userIndexKey, this.ttlSec * 2),
       ]);
-    } catch {
-      // Cache failure is non-fatal; DB remains the source of truth.
+    } catch (error) {
+      this.logger.warn(
+        `BookingCacheService: user cache write failed for userId=${userId}, key=${key}: ${getErrorMessage(error)}`
+      );
     }
   }
 
@@ -91,7 +104,11 @@ export class BookingCacheService {
   ): Promise<void> {
     await this.redisService.client
       .set(key, JSON.stringify(value), { EX: ttlSec })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `BookingCacheService: zone booking info cache write failed for key=${key}: ${getErrorMessage(error)}`
+        );
+      });
   }
 
   async invalidateBookingCache(
@@ -107,8 +124,10 @@ export class BookingCacheService {
         toDelete.push(this.generateZoneBookingInfoCacheKey(eventId, zoneId));
       }
       await this.redisService.client.del(toDelete);
-    } catch {
-      // Cache invalidation is best effort.
+    } catch (error) {
+      this.logger.warn(
+        `BookingCacheService: booking list cache invalidation failed: ${getErrorMessage(error)}`
+      );
     }
   }
 
@@ -118,8 +137,10 @@ export class BookingCacheService {
       const keys = await this.redisService.client.sMembers(indexKey);
       const toDelete = [...keys, indexKey];
       await this.redisService.client.del(toDelete);
-    } catch {
-      // Cache invalidation is best effort.
+    } catch (error) {
+      this.logger.warn(
+        `BookingCacheService: user cache invalidation failed for userId=${userId}: ${getErrorMessage(error)}`
+      );
     }
   }
 }

@@ -41,6 +41,7 @@ import { BookingCacheService } from "../../infrastructure/cache/booking-cache.se
 import { BookingZoneNotifierService } from "../../infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "../../presenters/booking.presenter";
 import { BookingCodeService } from "../../domain/services/booking-code.service";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 const RELEASE_LOCK_SCRIPT = `
   if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -123,7 +124,11 @@ export class CreateBookingUseCase {
           );
           await this.redisService.client
             .expire(counterKey, ttlSec)
-            .catch(() => {});
+            .catch((error: unknown) => {
+              this.logger.warn(
+                `createBooking: failed to set slot counter TTL counterKey=${counterKey}: ${getErrorMessage(error)}`
+              );
+            });
           if (newCount > targetSlot.capacity) {
             await this.redisService.client.decrBy(counterKey, data.quantity);
             throw new BadRequestException(
@@ -443,7 +448,11 @@ export class CreateBookingUseCase {
       if (!bookingCommitted && slotCapacity && slotCapacityReserved) {
         await this.redisService.client
           .decrBy(slotCapacity.counterKey, data.quantity)
-          .catch(() => {});
+          .catch((releaseError: unknown) => {
+            this.logger.warn(
+              `createBooking: failed to release slot reservation counterKey=${slotCapacity?.counterKey}, quantity=${data.quantity}: ${getErrorMessage(releaseError)}`
+            );
+          });
         slotCapacityReserved = false;
       }
       this.metricsService.bookingsTotal.inc({ status: "error" });
@@ -464,7 +473,11 @@ export class CreateBookingUseCase {
           keys: [userEventLockKey],
           arguments: [userEventLockValue],
         })
-        .catch(() => {});
+        .catch((releaseError: unknown) => {
+          this.logger.warn(
+            `createBooking: failed to release user-event lock userId=${userId}, eventId=${data.eventId}: ${getErrorMessage(releaseError)}`
+          );
+        });
     }
   }
 }

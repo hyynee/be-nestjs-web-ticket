@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import axios from "axios";
 import { RedisService } from "@src/redis/redis.service";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 const REDIS_KEY = "currency:vnd_per_usd";
 const CACHE_TTL_SEC = 60 * 60; // 1 hour
@@ -28,8 +29,10 @@ export class CurrencyService {
         const rate = parseFloat(cached);
         if (this.isRateValid(rate)) return rate;
       }
-    } catch {
-      // Redis unavailable — fall through to live fetch
+    } catch (error) {
+      this.logger.warn(
+        `CurrencyService: Redis cache read failed — ${getErrorMessage(error)}`
+      );
     }
 
     // 2. Live fetch
@@ -44,7 +47,11 @@ export class CurrencyService {
       if (typeof vndPerUsd === "number" && this.isRateValid(vndPerUsd)) {
         await this.redisService.client
           .set(REDIS_KEY, String(vndPerUsd), { EX: CACHE_TTL_SEC })
-          .catch(() => {});
+          .catch((error: unknown) =>
+            this.logger.warn(
+              `CurrencyService: Redis cache write failed — ${getErrorMessage(error)}`
+            )
+          );
         this.logger.log(`CurrencyService: refreshed VND/USD rate=${vndPerUsd}`);
         return vndPerUsd;
       }
@@ -54,7 +61,7 @@ export class CurrencyService {
       );
     } catch (err) {
       this.logger.warn(
-        `CurrencyService: rate fetch failed — using env fallback. Error: ${(err as Error)?.message}`
+        `CurrencyService: rate fetch failed — using env fallback. Error: ${getErrorMessage(err)}`
       );
     }
 

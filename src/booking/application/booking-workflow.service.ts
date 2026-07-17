@@ -39,30 +39,6 @@ export class BookingWorkflowService {
     private readonly bookingMaintenanceService: BookingMaintenanceService
   ) {}
 
-  get redisService(): unknown {
-    return (this.bookingCommandService as unknown as { redisService?: unknown })
-      .redisService;
-  }
-
-  get eventOwnershipService(): unknown {
-    return (
-      this.bookingQueryService as unknown as {
-        eventOwnershipService?: unknown;
-      }
-    ).eventOwnershipService;
-  }
-
-  get auditService(): unknown {
-    return (this.bookingCommandService as unknown as { auditService?: unknown })
-      .auditService;
-  }
-
-  get uploadService(): unknown {
-    return (
-      this.bookingCommandService as unknown as { uploadService?: unknown }
-    ).uploadService;
-  }
-
   createBooking(
     userId: string,
     data: CreateBookingDto

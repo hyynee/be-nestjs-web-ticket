@@ -28,6 +28,7 @@ import { BookingCacheService } from "../../infrastructure/cache/booking-cache.se
 import { BookingZoneNotifierService } from "../../infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "../../presenters/booking.presenter";
 import { BookingCodeService } from "../../domain/services/booking-code.service";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Injectable()
 export class CancelBookingUseCase {
@@ -147,7 +148,11 @@ export class CancelBookingUseCase {
             `${SLOT_SOLD_KEY_PREFIX}${cancelledTimeSlotId}`,
             cancelledQuantity
           )
-          .catch(() => {});
+          .catch((error: unknown) => {
+            this.logger.warn(
+              `cancelBooking: failed to release slot counter slotId=${cancelledTimeSlotId}, quantity=${cancelledQuantity}: ${getErrorMessage(error)}`
+            );
+          });
       }
 
       await Promise.all([

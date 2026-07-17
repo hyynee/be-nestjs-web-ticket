@@ -4,6 +4,7 @@ import * as paypal from "@paypal/checkout-server-sdk";
 import Stripe from "stripe";
 import { PAYPAL_TIMEOUT_MS } from "@src/payment/payment.constants";
 import type {
+  PaypalExecutionResult,
   PaypalHttpClient,
   PaypalSdk,
 } from "@src/payment/types/payment.types";
@@ -50,8 +51,8 @@ export class PaymentGatewayService {
   }
 
   withPaypalTimeout<T>(
-    promise: Promise<{ result: T }>
-  ): Promise<{ result: T }> {
+    promise: Promise<PaypalExecutionResult<T>>
+  ): Promise<PaypalExecutionResult<T>> {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(

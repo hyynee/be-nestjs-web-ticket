@@ -13,24 +13,6 @@ export class BookingCommandService {
     private readonly bookingMutationService: BookingMutationService
   ) {}
 
-  get redisService(): unknown {
-    return (
-      this.bookingMutationService as unknown as { redisService?: unknown }
-    ).redisService;
-  }
-
-  get auditService(): unknown {
-    return (
-      this.bookingMutationService as unknown as { auditService?: unknown }
-    ).auditService;
-  }
-
-  get uploadService(): unknown {
-    return (
-      this.bookingMutationService as unknown as { uploadService?: unknown }
-    ).uploadService;
-  }
-
   createBooking(
     userId: string,
     data: CreateBookingDto

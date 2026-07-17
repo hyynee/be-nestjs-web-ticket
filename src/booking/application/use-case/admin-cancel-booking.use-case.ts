@@ -33,6 +33,7 @@ import { BookingCacheService } from "../../infrastructure/cache/booking-cache.se
 import { BookingZoneNotifierService } from "../../infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "../../presenters/booking.presenter";
 import { BookingCodeService } from "../../domain/services/booking-code.service";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Injectable()
 export class AdminCancelBookingUseCase {
@@ -217,7 +218,11 @@ export class AdminCancelBookingUseCase {
             `${SLOT_SOLD_KEY_PREFIX}${adminCancelledSlotId}`,
             adminCancelledQuantity
           )
-          .catch(() => {});
+          .catch((error: unknown) => {
+            this.logger.warn(
+              `adminCancelBooking: failed to release slot counter slotId=${adminCancelledSlotId}, quantity=${adminCancelledQuantity}: ${getErrorMessage(error)}`
+            );
+          });
       }
 
       await Promise.all([
@@ -244,11 +249,15 @@ export class AdminCancelBookingUseCase {
               .deleteQRCode(code)
               .catch((err: unknown) =>
                 this.logger.warn(
-                  `adminCancelBooking: QR cleanup failed for ${code}: ${(err as Error)?.message}`
+                  `adminCancelBooking: QR cleanup failed for ${code}: ${getErrorMessage(err)}`
                 )
               )
           )
-        ).catch(() => {});
+        ).catch((error: unknown) => {
+          this.logger.warn(
+            `adminCancelBooking: QR cleanup batch failed for bookingId=${bookingId}: ${getErrorMessage(error)}`
+          );
+        });
       }
 
       if (wasConfirmedAndPaid) {

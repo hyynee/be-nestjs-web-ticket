@@ -51,8 +51,12 @@ export interface PaypalOrdersCaptureRequest {
   requestBody(body: Record<string, never>): void;
 }
 
+export interface PaypalExecutionResult<T> {
+  result: T;
+}
+
 export interface PaypalHttpClient {
-  execute<T>(request: unknown): Promise<{ result: T }>;
+  execute<T>(request: unknown): Promise<PaypalExecutionResult<T>>;
 }
 
 export interface PaymentMetadata {

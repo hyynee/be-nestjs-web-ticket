@@ -109,8 +109,10 @@ export class CreateCheckoutSessionUseCase {
             existingSession.url
           );
         }
-      } catch {
-        // Session expired or invalid: create a fresh checkout session below.
+      } catch (error) {
+        this.logger.warn(
+          `CreateCheckoutSessionUseCase: existing Stripe session lookup failed for bookingCode=${booking.bookingCode}; creating a fresh checkout session: ${getPaymentErrorMessage(error)}`
+        );
       }
     }
 

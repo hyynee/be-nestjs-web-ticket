@@ -114,9 +114,9 @@ export class PaymentIdempotencyService {
       await this.redisService.client.set(key, "succeeded", {
         EX: PAYMENT_SUCCEEDED_TTL_SEC,
       });
-    } catch {
+    } catch (error) {
       this.logger.warn(
-        `Redis unavailable when marking webhook ${eventId} succeeded — event was processed, returning 200 regardless`
+        `Redis unavailable when marking webhook ${eventId} succeeded — event was processed, returning 200 regardless: ${getPaymentErrorMessage(error)}`
       );
     }
   }
@@ -128,8 +128,10 @@ export class PaymentIdempotencyService {
         keys: [key],
         arguments: ["processing"],
       });
-    } catch {
-      // Non-fatal: the short processing TTL is the safety net.
+    } catch (error) {
+      this.logger.warn(
+        `Redis unavailable when releasing webhook ${eventId} processing lock — processing TTL is the safety net: ${getPaymentErrorMessage(error)}`
+      );
     }
   }
 
