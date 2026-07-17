@@ -6,7 +6,6 @@ import { AuthGuard } from "@nestjs/passport";
 import { RolesGuard } from "@src/guards/role.guard";
 import { ROLES_KEY } from "@src/common/decorators/roles.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
-import type { Response } from "express";
 
 describe("ExportController", () => {
   let controller: ExportController;
@@ -18,13 +17,6 @@ describe("ExportController", () => {
     iat: 0,
     exp: 0,
   };
-
-  const mockRes = {
-    status: jest.fn().mockReturnThis(),
-    json: jest.fn().mockReturnThis(),
-    setHeader: jest.fn(),
-    send: jest.fn(),
-  } as unknown as Response;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -52,7 +44,7 @@ describe("ExportController", () => {
   afterEach(() => jest.clearAllMocks());
 
   describe("exportTickets", () => {
-    it("calls exportService.exportTickets with query, userId, and res", async () => {
+    it("calls exportService.exportTickets with query and user", async () => {
       const query = {
         eventId: "507f1f77bcf86cd799439011",
         format: "csv",
@@ -60,13 +52,9 @@ describe("ExportController", () => {
       const serviceResponse = { message: "Queued", status: "queued" };
       exportService.exportTickets.mockResolvedValue(serviceResponse);
 
-      const result = await controller.exportTickets(query, mockUser, mockRes);
+      const result = await controller.exportTickets(query, mockUser);
 
-      expect(exportService.exportTickets).toHaveBeenCalledWith(
-        query,
-        mockUser,
-        mockRes
-      );
+      expect(exportService.exportTickets).toHaveBeenCalledWith(query, mockUser);
       expect(result).toBe(serviceResponse);
     });
 
@@ -81,18 +69,14 @@ describe("ExportController", () => {
       } as any;
       exportService.exportTickets.mockResolvedValue({ status: "queued" });
 
-      await controller.exportTickets(query, mockUser, mockRes);
+      await controller.exportTickets(query, mockUser);
 
-      expect(exportService.exportTickets).toHaveBeenCalledWith(
-        query,
-        mockUser,
-        mockRes
-      );
+      expect(exportService.exportTickets).toHaveBeenCalledWith(query, mockUser);
     });
   });
 
   describe("exportCheckInZones", () => {
-    it("calls exportService.exportCheckInZones with query, userId, and res", async () => {
+    it("calls exportService.exportCheckInZones with query and user", async () => {
       const query = {
         eventId: "507f1f77bcf86cd799439011",
         format: "csv",
@@ -100,16 +84,11 @@ describe("ExportController", () => {
       const serviceResponse = { message: "Queued", status: "queued" };
       exportService.exportCheckInZones.mockResolvedValue(serviceResponse);
 
-      const result = await controller.exportCheckInZones(
-        query,
-        mockUser,
-        mockRes
-      );
+      const result = await controller.exportCheckInZones(query, mockUser);
 
       expect(exportService.exportCheckInZones).toHaveBeenCalledWith(
         query,
-        mockUser,
-        mockRes
+        mockUser
       );
       expect(result).toBe(serviceResponse);
     });
@@ -121,12 +100,11 @@ describe("ExportController", () => {
       } as any;
       exportService.exportCheckInZones.mockResolvedValue({ status: "queued" });
 
-      await controller.exportCheckInZones(query, mockUser, mockRes);
+      await controller.exportCheckInZones(query, mockUser);
 
       expect(exportService.exportCheckInZones).toHaveBeenCalledWith(
         query,
-        mockUser,
-        mockRes
+        mockUser
       );
     });
   });
@@ -137,7 +115,7 @@ describe("ExportController", () => {
         new Error("Export queue full")
       );
       await expect(
-        controller.exportTickets({} as any, mockUser, mockRes)
+        controller.exportTickets({} as any, mockUser)
       ).rejects.toThrow("Export queue full");
     });
 
@@ -146,7 +124,7 @@ describe("ExportController", () => {
         new Error("Event not found")
       );
       await expect(
-        controller.exportCheckInZones({} as any, mockUser, mockRes)
+        controller.exportCheckInZones({} as any, mockUser)
       ).rejects.toThrow("Event not found");
     });
   });

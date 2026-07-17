@@ -8,6 +8,8 @@ import {
   IsBoolean,
 } from "class-validator";
 import { Transform } from "class-transformer";
+const USER_ROLE_FILTER_VALUES = ["user", "organizer", "checkin_staff", "admin"];
+
 export class QueryUserDTO {
   @ApiProperty({ description: "Tìm kiếm theo tiêu đề", required: false })
   @IsString()
@@ -29,10 +31,10 @@ export class QueryUserDTO {
 
   @ApiProperty({
     description: "Lọc theo vai trò",
-    enum: ["user", "admin"],
+    enum: USER_ROLE_FILTER_VALUES,
     required: false,
   })
-  @IsEnum(["user", "admin"])
+  @IsEnum(USER_ROLE_FILTER_VALUES)
   @IsOptional()
   role?: string;
 

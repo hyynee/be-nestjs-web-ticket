@@ -9,7 +9,7 @@ import {
   Query,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { UserService } from "./user.service";
+import { UserService, UserSpendingResult } from "./user.service";
 import { RolesGuard } from "@src/guards/role.guard";
 import { Roles } from "@src/common/decorators/roles.decorator";
 import { AuthGuard } from "@nestjs/passport";
@@ -41,7 +41,7 @@ export class UserController {
   getUserSpending(
     @CurrentUser() user: JwtPayload,
     @Query() query: UserSpendingQueryDto
-  ): Promise<{ totalSpending: number }> {
+  ): Promise<UserSpendingResult> {
     const userId = user.userId;
 
     if (query.day) {

@@ -4,6 +4,9 @@ import { UserController } from "./user.controller";
 import { MongooseModule } from "@nestjs/mongoose/dist/mongoose.module";
 import { UserSchema } from "@src/schemas/user.schema";
 import { Payment, PaymentSchema } from "@src/schemas/payment.schema";
+import { UserCacheService } from "./infrastructure/cache/user-cache.service";
+import { UserRepository } from "./infrastructure/persistence/user.repository";
+import { UserPresenter } from "./presenters/user.presenter";
 
 @Module({
   imports: [
@@ -13,7 +16,7 @@ import { Payment, PaymentSchema } from "@src/schemas/payment.schema";
     ]),
   ],
   controllers: [UserController],
-  providers: [UserService],
+  providers: [UserService, UserRepository, UserCacheService, UserPresenter],
   exports: [UserService],
 })
 export class UserModule {}

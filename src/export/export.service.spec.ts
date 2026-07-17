@@ -4,21 +4,6 @@ import { ExportService } from "./export.service";
 import { Ticket } from "@src/schemas/ticket.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { Types } from "mongoose";
-import { exportCSV, exportExcel } from "@src/helper/export.helper";
-
-jest.mock("@src/helper/export.helper", () => ({
-  exportCSV: jest.fn().mockReturnValue("csv-content"),
-  exportExcel: jest.fn().mockResolvedValue(undefined),
-}));
-
-const mockResponse = () => {
-  const res: any = {};
-  res.setHeader = jest.fn().mockReturnValue(res);
-  res.send = jest.fn().mockReturnValue(res);
-  res.json = jest.fn().mockReturnValue(res);
-  res.status = jest.fn().mockReturnValue(res);
-  return res;
-};
 
 describe("ExportService", () => {
   let service: ExportService;
@@ -31,6 +16,7 @@ describe("ExportService", () => {
     ticketModel = {
       find: jest.fn(),
       countDocuments: jest.fn(),
+      aggregate: jest.fn(),
     };
 
     zoneModel = {
@@ -77,6 +63,10 @@ describe("ExportService", () => {
 
   const makeLeanChain = (resolvedValue: any) => ({
     lean: jest.fn().mockReturnThis(),
+    exec: jest.fn().mockResolvedValue(resolvedValue),
+  });
+
+  const makeAggregateChain = (resolvedValue: any) => ({
     exec: jest.fn().mockResolvedValue(resolvedValue),
   });
 
@@ -347,9 +337,12 @@ describe("ExportService", () => {
 
     it("queries zones and counts check-ins", async () => {
       zoneModel.find.mockReturnValue(makeLeanChain(mockZones));
-      ticketModel.countDocuments
-        .mockResolvedValueOnce(10)
-        .mockResolvedValueOnce(20);
+      ticketModel.aggregate.mockReturnValue(
+        makeAggregateChain([
+          { _id: mockZones[0]._id, totalCheckIns: 10 },
+          { _id: mockZones[1]._id, totalCheckIns: 20 },
+        ])
+      );
 
       const result = await (service as any).getCheckInZoneData({
         eventId: new Types.ObjectId().toString(),
@@ -363,7 +356,7 @@ describe("ExportService", () => {
       expect(result[1].zoneName).toBe("Normal");
       expect(result[1].totalCheckIns).toBe(20);
       expect(result[1].capacity).toBe(200);
-      expect(ticketModel.countDocuments).toHaveBeenCalledTimes(2);
+      expect(ticketModel.aggregate).toHaveBeenCalledTimes(1);
     });
 
     it("handles zone with null name and capacity", async () => {
@@ -371,7 +364,7 @@ describe("ExportService", () => {
         { _id: new Types.ObjectId(), name: undefined, capacity: null },
       ];
       zoneModel.find.mockReturnValue(makeLeanChain(nullZone));
-      ticketModel.countDocuments.mockResolvedValueOnce(0);
+      ticketModel.aggregate.mockReturnValue(makeAggregateChain([]));
 
       const result = await (service as any).getCheckInZoneData({
         eventId: new Types.ObjectId().toString(),
@@ -384,90 +377,28 @@ describe("ExportService", () => {
 
     it("counts only tickets with status 'used' and isDeleted false", async () => {
       zoneModel.find.mockReturnValue(makeLeanChain(mockZones));
-      ticketModel.countDocuments.mockResolvedValue(5);
+      ticketModel.aggregate.mockReturnValue(makeAggregateChain([]));
 
       await (service as any).getCheckInZoneData({
         eventId: new Types.ObjectId().toString(),
         format: "csv",
       });
 
-      expect(ticketModel.countDocuments).toHaveBeenCalledWith({
-        zoneId: expect.any(Types.ObjectId),
-        status: "used",
-        isDeleted: false,
-      });
-    });
-  });
-
-  // ── exportByFormat ──────────────────────────────────────────────────────
-
-  describe("exportByFormat", () => {
-    it("exports CSV format with data", async () => {
-      const res = mockResponse();
-      const data = [{ ticketCode: "TK1", status: "valid" }];
-
-      await (service as any).exportByFormat(data, "csv", res, "tickets");
-
-      expect(exportCSV).toHaveBeenCalledWith(data, ["ticketCode", "status"]);
-      expect(res.setHeader).toHaveBeenCalledWith("Content-Type", "text/csv");
-      expect(res.send).toHaveBeenCalledWith("csv-content");
-    });
-
-    it("exports Excel format with data", async () => {
-      const res = mockResponse();
-      const data = [{ ticketCode: "TK1", status: "valid" }];
-
-      await (service as any).exportByFormat(data, "xlsx", res, "tickets");
-
-      expect(exportExcel).toHaveBeenCalledWith(
-        data,
-        [
-          { header: "ticketCode", key: "ticketCode" },
-          { header: "status", key: "status" },
-        ],
-        res,
-        "tickets"
-      );
-      expect(res.setHeader).toHaveBeenCalledWith(
-        "Content-Type",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      );
-    });
-
-    it("exports empty CSV with message when data is empty", async () => {
-      const res = mockResponse();
-
-      await (service as any).exportByFormat([], "csv", res, "tickets");
-
-      expect(exportCSV).toHaveBeenCalledWith(
-        [{ message: "No data to export" }],
-        ["message"]
-      );
-      expect(res.send).toHaveBeenCalledWith("csv-content");
-    });
-
-    it("exports empty Excel with message when data is empty", async () => {
-      const res = mockResponse();
-
-      await (service as any).exportByFormat([], "xlsx", res, "tickets");
-
-      expect(exportExcel).toHaveBeenCalledWith(
-        [{ message: "No data to export" }],
-        [{ header: "message", key: "message" }],
-        res,
-        "tickets"
-      );
-    });
-
-    it("exports CSV with null/undefined data gracefully", async () => {
-      const res = mockResponse();
-
-      await (service as any).exportByFormat(null, "csv", res, "tickets");
-
-      expect(exportCSV).toHaveBeenCalledWith(
-        [{ message: "No data to export" }],
-        ["message"]
-      );
+      expect(ticketModel.aggregate).toHaveBeenCalledWith([
+        {
+          $match: {
+            zoneId: { $in: mockZones.map((zone) => zone._id) },
+            status: "used",
+            isDeleted: false,
+          },
+        },
+        {
+          $group: {
+            _id: "$zoneId",
+            totalCheckIns: { $sum: 1 },
+          },
+        },
+      ]);
     });
   });
 
@@ -476,32 +407,29 @@ describe("ExportService", () => {
   describe("exportTickets", () => {
     const currentUser = { userId: "user-id", role: "admin" } as any;
 
-    it("queues job and returns 202", async () => {
-      const res = mockResponse();
+    it("queues job and returns queued result", async () => {
       const dto = {
         eventId: new Types.ObjectId().toString(),
         format: "csv",
       };
 
-      await service.exportTickets(dto as any, currentUser, res);
+      const result = await service.exportTickets(dto as any, currentUser);
 
       expect(mockQueueService.addJob).toHaveBeenCalledWith({
         type: "export-tickets",
         payload: { dto, requestedByUserId: "user-id" },
         requestedAt: expect.any(String),
       });
-      expect(res.status).toHaveBeenCalledWith(202);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(result).toEqual({
         message: expect.any(String),
         status: "queued",
       });
     });
 
     it("checks event ownership before queuing the export job", async () => {
-      const res = mockResponse();
       const dto = { eventId: new Types.ObjectId().toString(), format: "csv" };
 
-      await service.exportTickets(dto as any, currentUser, res);
+      await service.exportTickets(dto as any, currentUser);
 
       expect(
         mockEventOwnershipService.assertCanManageEvent
@@ -510,20 +438,18 @@ describe("ExportService", () => {
 
     it("propagates ForbiddenException from the ownership check without queuing", async () => {
       const { ForbiddenException } = require("@nestjs/common");
-      const res = mockResponse();
       const dto = { eventId: new Types.ObjectId().toString(), format: "csv" };
       mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
         new ForbiddenException("nope")
       );
 
       await expect(
-        service.exportTickets(dto as any, currentUser, res)
+        service.exportTickets(dto as any, currentUser)
       ).rejects.toThrow(ForbiddenException);
       expect(mockQueueService.addJob).not.toHaveBeenCalled();
     });
 
     it("queues job with all optional fields in dto", async () => {
-      const res = mockResponse();
       const dto = {
         eventId: new Types.ObjectId().toString(),
         zoneId: new Types.ObjectId().toString(),
@@ -533,7 +459,7 @@ describe("ExportService", () => {
         format: "xlsx",
       };
 
-      await service.exportTickets(dto as any, currentUser, res);
+      await service.exportTickets(dto as any, currentUser);
 
       expect(mockQueueService.addJob).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -549,32 +475,29 @@ describe("ExportService", () => {
   describe("exportCheckInZones", () => {
     const currentUser = { userId: "user-id", role: "admin" } as any;
 
-    it("queues job and returns 202", async () => {
-      const res = mockResponse();
+    it("queues job and returns queued result", async () => {
       const dto = {
         eventId: new Types.ObjectId().toString(),
         format: "csv",
       };
 
-      await service.exportCheckInZones(dto as any, currentUser, res);
+      const result = await service.exportCheckInZones(dto as any, currentUser);
 
       expect(mockQueueService.addJob).toHaveBeenCalledWith({
         type: "export-checkin-zones",
         payload: { dto, requestedByUserId: "user-id" },
         requestedAt: expect.any(String),
       });
-      expect(res.status).toHaveBeenCalledWith(202);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(result).toEqual({
         message: expect.any(String),
         status: "queued",
       });
     });
 
     it("checks event ownership before queuing the export job", async () => {
-      const res = mockResponse();
       const dto = { eventId: new Types.ObjectId().toString(), format: "csv" };
 
-      await service.exportCheckInZones(dto as any, currentUser, res);
+      await service.exportCheckInZones(dto as any, currentUser);
 
       expect(
         mockEventOwnershipService.assertCanManageEvent
@@ -583,14 +506,13 @@ describe("ExportService", () => {
 
     it("propagates ForbiddenException from the ownership check without queuing", async () => {
       const { ForbiddenException } = require("@nestjs/common");
-      const res = mockResponse();
       const dto = { eventId: new Types.ObjectId().toString(), format: "csv" };
       mockEventOwnershipService.assertCanManageEvent.mockRejectedValueOnce(
         new ForbiddenException("nope")
       );
 
       await expect(
-        service.exportCheckInZones(dto as any, currentUser, res)
+        service.exportCheckInZones(dto as any, currentUser)
       ).rejects.toThrow(ForbiddenException);
       expect(mockQueueService.addJob).not.toHaveBeenCalled();
     });
@@ -635,7 +557,9 @@ describe("ExportService", () => {
       ];
 
       zoneModel.find.mockReturnValue(makeLeanChain(mockZones));
-      ticketModel.countDocuments.mockResolvedValueOnce(5);
+      ticketModel.aggregate.mockReturnValue(
+        makeAggregateChain([{ _id: mockZones[0]._id, totalCheckIns: 5 }])
+      );
 
       const result = await service.getCheckInZoneExportData({
         eventId: new Types.ObjectId().toString(),

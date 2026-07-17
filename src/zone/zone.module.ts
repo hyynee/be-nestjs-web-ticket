@@ -7,6 +7,8 @@ import { Event, EventSchema } from "@src/schemas/event.schema";
 import { ZoneGateway } from "./zone.gateway";
 import { Area, AreaSchema } from "@src/schemas/area.schema";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { ZoneCacheService } from "./infrastructure/cache/zone-cache.service";
+import { ZonePresenter } from "./presenters/zone.presenter";
 
 @Module({
   imports: [
@@ -17,7 +19,13 @@ import { EventOwnershipService } from "@src/event/event-ownership.service";
     ]),
   ],
   controllers: [ZoneController],
-  providers: [ZoneService, ZoneGateway, EventOwnershipService],
+  providers: [
+    ZoneService,
+    ZoneGateway,
+    ZoneCacheService,
+    ZonePresenter,
+    EventOwnershipService,
+  ],
   exports: [ZoneService, ZoneGateway],
 })
 export class ZoneModule {}

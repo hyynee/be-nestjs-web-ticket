@@ -6,6 +6,9 @@ import { CACHE_MANAGER } from "@nestjs/cache-manager";
 import { UserService } from "./user.service";
 import { User } from "@src/schemas/user.schema";
 import { Payment } from "@src/schemas/payment.schema";
+import { UserCacheService } from "./infrastructure/cache/user-cache.service";
+import { UserRepository } from "./infrastructure/persistence/user.repository";
+import { UserPresenter } from "./presenters/user.presenter";
 
 describe("UserService", () => {
   let service: UserService;
@@ -36,6 +39,9 @@ describe("UserService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
+        UserRepository,
+        UserCacheService,
+        UserPresenter,
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         { provide: CACHE_MANAGER, useValue: cacheManager },

@@ -8,6 +8,8 @@ import { RedisService } from "@src/redis/redis.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
 import { Types } from "mongoose";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ZoneCacheService } from "./infrastructure/cache/zone-cache.service";
+import { ZonePresenter } from "./presenters/zone.presenter";
 
 describe("ZoneService", () => {
   let service: ZoneService;
@@ -65,6 +67,8 @@ describe("ZoneService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ZoneService,
+        ZoneCacheService,
+        ZonePresenter,
         { provide: getModelToken(Zone.name), useValue: mockZoneModel },
         { provide: getModelToken(Event.name), useValue: mockEventModel },
         { provide: getModelToken(Area.name), useValue: mockAreaModel },

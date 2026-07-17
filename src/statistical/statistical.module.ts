@@ -8,6 +8,8 @@ import { Ticket, TicketSchema } from "@src/schemas/ticket.schema";
 import { MongooseModule } from "@nestjs/mongoose";
 import { EventSchema, Event } from "@src/schemas/event.schema";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { StatisticalCacheService } from "./infrastructure/cache/statistical-cache.service";
+import { StatisticalRepository } from "./infrastructure/persistence/statistical.repository";
 
 @Module({
   imports: [
@@ -19,6 +21,12 @@ import { EventOwnershipService } from "@src/event/event-ownership.service";
     ]),
   ],
   controllers: [StatisticalController],
-  providers: [StatisticalService, StatisticalScheduler, EventOwnershipService],
+  providers: [
+    StatisticalService,
+    StatisticalScheduler,
+    StatisticalRepository,
+    StatisticalCacheService,
+    EventOwnershipService,
+  ],
 })
 export class StatisticalModule {}

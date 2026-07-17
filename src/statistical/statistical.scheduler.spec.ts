@@ -154,16 +154,18 @@ describe("StatisticalScheduler", () => {
       await expect(scheduler.warmDashboardCache()).resolves.toBeUndefined();
     });
 
-    it("uses 'unknown' fallback when lock acquire fails with non-Error", async () => {
+    it("logs string rejection when lock acquire fails with non-Error", async () => {
       const errorSpy = jest.spyOn(Logger.prototype, "error");
       redisClient.set.mockRejectedValueOnce("string error");
 
       await scheduler.warmDashboardCache();
 
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("string error")
+      );
     });
 
-    it("uses 'unknown error' when warmGlobalCache fails with non-Error", async () => {
+    it("logs string rejection when warmGlobalCache fails with non-Error", async () => {
       const errorSpy = jest.spyOn(Logger.prototype, "error");
       statisticalService.warmGlobalCache.mockRejectedValueOnce(
         "string rejection"
@@ -172,17 +174,19 @@ describe("StatisticalScheduler", () => {
       await scheduler.warmDashboardCache();
 
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("unknown error")
+        expect.stringContaining("string rejection")
       );
     });
 
-    it("uses 'unknown' when lock release fails with non-Error", async () => {
+    it("logs string rejection when lock release fails with non-Error", async () => {
       const errorSpy = jest.spyOn(Logger.prototype, "error");
       redisClient.eval.mockRejectedValueOnce("string eval error");
 
       await scheduler.warmDashboardCache();
 
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("string eval error")
+      );
     });
   });
 });

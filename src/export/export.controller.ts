@@ -1,4 +1,11 @@
-import { Controller, Get, Query, Res, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { ExportService } from "./export.service";
 import { ApiCookieAuth } from "@nestjs/swagger";
@@ -9,7 +16,6 @@ import { ExportTicketDto } from "./dto/export-ticket.dto";
 import { ExportCheckInDto } from "./dto/export-checkin.dto";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
-import type { Response } from "express";
 
 @ApiCookieAuth("access_token")
 @Controller("export")
@@ -20,21 +26,21 @@ export class ExportController {
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Get("tickets")
+  @HttpCode(HttpStatus.ACCEPTED)
   exportTickets(
     @Query() query: ExportTicketDto,
-    @CurrentUser() user: JwtPayload,
-    @Res() res: Response
+    @CurrentUser() user: JwtPayload
   ): ReturnType<ExportService["exportTickets"]> {
-    return this.exportService.exportTickets(query, user, res);
+    return this.exportService.exportTickets(query, user);
   }
 
   @Throttle({ short: { limit: 5, ttl: 60000 } })
   @Get("checkin-zones")
+  @HttpCode(HttpStatus.ACCEPTED)
   exportCheckInZones(
     @Query() query: ExportCheckInDto,
-    @CurrentUser() user: JwtPayload,
-    @Res() res: Response
+    @CurrentUser() user: JwtPayload
   ): ReturnType<ExportService["exportCheckInZones"]> {
-    return this.exportService.exportCheckInZones(query, user, res);
+    return this.exportService.exportCheckInZones(query, user);
   }
 }

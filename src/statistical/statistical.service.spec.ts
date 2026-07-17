@@ -9,6 +9,8 @@ import { Ticket } from "@src/schemas/ticket.schema";
 import { Event } from "@src/schemas/event.schema";
 import { RedisService } from "@src/redis/redis.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import { StatisticalCacheService } from "./infrastructure/cache/statistical-cache.service";
+import { StatisticalRepository } from "./infrastructure/persistence/statistical.repository";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,7 +36,9 @@ const makeModels = () => {
   const eventModel = {
     findById: jest.fn().mockReturnValue({
       select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ title: "Test Event" }),
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue({ title: "Test Event" }),
+        }),
       }),
     }),
     aggregate: jest.fn().mockResolvedValue([]),
@@ -72,6 +76,8 @@ describe("StatisticalService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StatisticalService,
+        StatisticalRepository,
+        StatisticalCacheService,
         { provide: getModelToken(Booking.name), useValue: models.bookingModel },
         { provide: getModelToken(Payment.name), useValue: models.paymentModel },
         { provide: getModelToken(Ticket.name), useValue: models.ticketModel },
@@ -357,7 +363,9 @@ describe("StatisticalService", () => {
       const mockEvent = { _id: new Types.ObjectId(eventId), title: "My Event" };
       models.eventModel.findById.mockReturnValue({
         select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue(mockEvent),
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue(mockEvent),
+          }),
         }),
       });
       models.paymentModel.aggregate.mockResolvedValue([
@@ -379,7 +387,9 @@ describe("StatisticalService", () => {
       redisService.client.get.mockResolvedValue(null);
       models.eventModel.findById.mockReturnValue({
         select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue(null),
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue(null),
+          }),
         }),
       });
 
@@ -392,9 +402,11 @@ describe("StatisticalService", () => {
       redisService.client.get.mockResolvedValue(null);
       models.eventModel.findById.mockReturnValue({
         select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({
-            _id: new Types.ObjectId(eventId),
-            title: "My Event",
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({
+              _id: new Types.ObjectId(eventId),
+              title: "My Event",
+            }),
           }),
         }),
       });
@@ -504,7 +516,7 @@ describe("StatisticalService", () => {
       );
     });
 
-    it("logs warn when Redis SET fails with non-Error in queryAndStore", async () => {
+    it("logs warn with rejection context when Redis SET fails in queryAndStore", async () => {
       const warnSpy = jest
         .spyOn(Logger.prototype, "warn")
         .mockImplementation(() => {});
@@ -515,7 +527,9 @@ describe("StatisticalService", () => {
 
       await service.warmGlobalCache();
 
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("string error")
+      );
       warnSpy.mockRestore();
     });
   });

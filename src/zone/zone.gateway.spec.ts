@@ -20,157 +20,165 @@ const buildRedisUrl = (): string => {
 };
 
 const REDIS_URL = buildRedisUrl();
+const shouldRunRedisSocketIntegration =
+  process.env.RUN_REDIS_SOCKET_INTEGRATION === "true";
+const describeRedisSocketIntegration = shouldRunRedisSocketIntegration
+  ? describe
+  : describe.skip;
 
-describe("Socket.IO cross-instance propagation via Redis adapter", () => {
-  let serverA: Server;
-  let serverB: Server;
-  let httpA: http.Server;
-  let httpB: http.Server;
-  let portB: number;
-  let pubA: ReturnType<typeof createClient>;
-  let subA: ReturnType<typeof createClient>;
-  let pubB: ReturnType<typeof createClient>;
-  let subB: ReturnType<typeof createClient>;
+describeRedisSocketIntegration(
+  "Socket.IO cross-instance propagation via Redis adapter",
+  () => {
+    let serverA: Server;
+    let serverB: Server;
+    let httpA: http.Server;
+    let httpB: http.Server;
+    let portB: number;
+    let pubA: ReturnType<typeof createClient>;
+    let subA: ReturnType<typeof createClient>;
+    let pubB: ReturnType<typeof createClient>;
+    let subB: ReturnType<typeof createClient>;
 
-  beforeAll(async () => {
-    pubA = createClient({ url: REDIS_URL });
-    subA = pubA.duplicate();
-    pubB = createClient({ url: REDIS_URL });
-    subB = pubB.duplicate();
+    beforeAll(async () => {
+      pubA = createClient({ url: REDIS_URL });
+      subA = pubA.duplicate();
+      pubB = createClient({ url: REDIS_URL });
+      subB = pubB.duplicate();
 
-    pubA.on("error", () => undefined);
-    subA.on("error", () => undefined);
-    pubB.on("error", () => undefined);
-    subB.on("error", () => undefined);
+      pubA.on("error", () => undefined);
+      subA.on("error", () => undefined);
+      pubB.on("error", () => undefined);
+      subB.on("error", () => undefined);
 
-    await Promise.all([
-      pubA.connect(),
-      subA.connect(),
-      pubB.connect(),
-      subB.connect(),
-    ]);
+      await Promise.all([
+        pubA.connect(),
+        subA.connect(),
+        pubB.connect(),
+        subB.connect(),
+      ]);
 
-    httpA = http.createServer();
-    serverA = new Server(httpA, { cors: { origin: "*" } });
-    serverA.adapter(createAdapter(pubA, subA));
-    await new Promise<void>((resolve) => httpA.listen(0, resolve));
-    const _portA = (httpA.address() as AddressInfo).port;
+      httpA = http.createServer();
+      serverA = new Server(httpA, { cors: { origin: "*" } });
+      serverA.adapter(createAdapter(pubA, subA));
+      await new Promise<void>((resolve) => httpA.listen(0, resolve));
+      const _portA = (httpA.address() as AddressInfo).port;
 
-    httpB = http.createServer();
-    serverB = new Server(httpB, { cors: { origin: "*" } });
-    serverB.adapter(createAdapter(pubB, subB));
-    // Auto-join client to the room it requests via query param
-    serverB.on("connection", (socket) => {
-      const room = socket.handshake.query.room as string;
-      if (room) void socket.join(room);
-    });
-    await new Promise<void>((resolve) => httpB.listen(0, resolve));
-    portB = (httpB.address() as AddressInfo).port;
-  });
-
-  afterAll(async () => {
-    // Close both servers in parallel so their adapters can unsubscribe from Redis
-    await Promise.all([
-      new Promise<void>((resolve) => serverA.close(() => resolve())),
-      new Promise<void>((resolve) => serverB.close(() => resolve())),
-    ]);
-    // Brief delay for the Redis adapter to flush its internal subscriptions
-    // before we send QUIT, preventing unhandled DisconnectsClientError rejections
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    await Promise.allSettled([
-      pubA.quit(),
-      subA.quit(),
-      pubB.quit(),
-      subB.quit(),
-    ]);
-  });
-
-  function connectToB(room: string): Promise<ClientSocket> {
-    return new Promise((resolve) => {
-      const client = ioClient(`http://localhost:${portB}`, {
-        transports: ["websocket"],
-        query: { room },
+      httpB = http.createServer();
+      serverB = new Server(httpB, { cors: { origin: "*" } });
+      serverB.adapter(createAdapter(pubB, subB));
+      // Auto-join client to the room it requests via query param
+      serverB.on("connection", (socket) => {
+        const room = socket.handshake.query.room as string;
+        if (room) void socket.join(room);
       });
-      client.on("connect", () => resolve(client));
+      await new Promise<void>((resolve) => httpB.listen(0, resolve));
+      portB = (httpB.address() as AddressInfo).port;
     });
+
+    afterAll(async () => {
+      // Close both servers in parallel so their adapters can unsubscribe from Redis
+      await Promise.all([
+        new Promise<void>((resolve) => serverA.close(() => resolve())),
+        new Promise<void>((resolve) => serverB.close(() => resolve())),
+      ]);
+      // Brief delay for the Redis adapter to flush its internal subscriptions
+      // before we send QUIT, preventing unhandled DisconnectsClientError rejections
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await Promise.allSettled([
+        pubA.quit(),
+        subA.quit(),
+        pubB.quit(),
+        subB.quit(),
+      ]);
+    });
+
+    function connectToB(room: string): Promise<ClientSocket> {
+      return new Promise((resolve) => {
+        const client = ioClient(`http://localhost:${portB}`, {
+          transports: ["websocket"],
+          query: { room },
+        });
+        client.on("connect", () => resolve(client));
+      });
+    }
+
+    it("zone.ticket_update: emitted on instance A, received by client on instance B", async () => {
+      const room = "event:zone-cross-test";
+      const payload = {
+        zoneId: "zone-1",
+        eventId: "zone-cross-test",
+        capacity: 100,
+        soldCount: 10,
+        confirmedSoldCount: 8,
+        availableTickets: 90,
+      };
+
+      const client = await connectToB(room);
+      // Give Redis pub/sub time to propagate the join
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      const received = new Promise((resolve) =>
+        client.once("zone.ticket_update", resolve)
+      );
+      serverA.to(room).emit("zone.ticket_update", payload);
+      const data = await received;
+
+      expect(data).toMatchObject(payload);
+      client.disconnect();
+    }, 10_000);
+
+    it("ticket.created: emitted on instance A, received by client on instance B", async () => {
+      const room = "event:ticket-created-cross-test";
+      const payload = {
+        bookingCode: "BK-CROSS-001",
+        tickets: [
+          {
+            ticketCode: "TK-001",
+            eventId: "ticket-created-cross-test",
+            zoneId: "zone-1",
+            seatNumber: null,
+            price: 150_000,
+            status: "valid",
+          },
+        ],
+      };
+
+      const client = await connectToB(room);
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      const received = new Promise((resolve) =>
+        client.once("ticket.created", resolve)
+      );
+      serverA.to(room).emit("ticket.created", payload);
+      const data = await received;
+
+      expect(data).toMatchObject(payload);
+      client.disconnect();
+    }, 10_000);
+
+    it("ticket.checked_in: emitted on instance A, received by client on instance B", async () => {
+      const room = "event:ticket-checkin-cross-test";
+      const payload = {
+        ticketCode: "TK-CHECKIN-001",
+        eventId: "ticket-checkin-cross-test",
+        zoneId: "zone-1",
+        seatNumber: "A1",
+      };
+
+      const client = await connectToB(room);
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      const received = new Promise((resolve) =>
+        client.once("ticket.checked_in", resolve)
+      );
+      serverA.to(room).emit("ticket.checked_in", payload);
+      const data = await received;
+
+      expect(data).toMatchObject(payload);
+      client.disconnect();
+    }, 10_000);
   }
-
-  it("zone.ticket_update: emitted on instance A, received by client on instance B", async () => {
-    const room = "event:zone-cross-test";
-    const payload = {
-      zoneId: "zone-1",
-      eventId: "zone-cross-test",
-      capacity: 100,
-      soldCount: 10,
-      confirmedSoldCount: 8,
-      availableTickets: 90,
-    };
-
-    const client = await connectToB(room);
-    // Give Redis pub/sub time to propagate the join
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
-
-    const received = new Promise((resolve) =>
-      client.once("zone.ticket_update", resolve)
-    );
-    serverA.to(room).emit("zone.ticket_update", payload);
-    const data = await received;
-
-    expect(data).toMatchObject(payload);
-    client.disconnect();
-  }, 10_000);
-
-  it("ticket.created: emitted on instance A, received by client on instance B", async () => {
-    const room = "event:ticket-created-cross-test";
-    const payload = {
-      bookingCode: "BK-CROSS-001",
-      tickets: [
-        {
-          ticketCode: "TK-001",
-          eventId: "ticket-created-cross-test",
-          zoneId: "zone-1",
-          seatNumber: null,
-          price: 150_000,
-          status: "valid",
-        },
-      ],
-    };
-
-    const client = await connectToB(room);
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
-
-    const received = new Promise((resolve) =>
-      client.once("ticket.created", resolve)
-    );
-    serverA.to(room).emit("ticket.created", payload);
-    const data = await received;
-
-    expect(data).toMatchObject(payload);
-    client.disconnect();
-  }, 10_000);
-
-  it("ticket.checked_in: emitted on instance A, received by client on instance B", async () => {
-    const room = "event:ticket-checkin-cross-test";
-    const payload = {
-      ticketCode: "TK-CHECKIN-001",
-      eventId: "ticket-checkin-cross-test",
-      zoneId: "zone-1",
-      seatNumber: "A1",
-    };
-
-    const client = await connectToB(room);
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
-
-    const received = new Promise((resolve) =>
-      client.once("ticket.checked_in", resolve)
-    );
-    serverA.to(room).emit("ticket.checked_in", payload);
-    const data = await received;
-
-    expect(data).toMatchObject(payload);
-    client.disconnect();
-  }, 10_000);
-});
+);
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 

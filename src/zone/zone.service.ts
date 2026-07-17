@@ -16,78 +16,23 @@ import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
 import { escapeRegex } from "@src/common/utils/regex.utils";
 import { Event, EventStatus } from "@src/schemas/event.schema";
 import { Area } from "@src/schemas/area.schema";
-import { RedisService } from "@src/redis/redis.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
+import {
+  ALLOWED_ZONE_SORT_FIELDS,
+  ZoneSortField,
+  ZoneView,
+  ZoneViewSource,
+  ZoneWithAreasView,
+} from "./domain/types/zone.types";
+import { ZoneCacheService } from "./infrastructure/cache/zone-cache.service";
+import { ZonePresenter } from "./presenters/zone.presenter";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
-const ALLOWED_SORT_FIELDS = [
-  "createdAt",
-  "name",
-  "price",
-  "capacity",
-  "soldCount",
-  "confirmedSoldCount",
-] as const;
-type SortField = (typeof ALLOWED_SORT_FIELDS)[number];
-const ZONE_RESPONSE_SCHEMA_VERSION = "v1";
-
-interface ZoneAreaViewSource {
-  _id?: Types.ObjectId | string;
-  id?: string;
-  name: string;
-  description?: string;
-  rowLabel?: string;
-  seatCount?: number;
-  seats?: string[];
-}
-
-interface ZoneViewSource {
-  _id?: Types.ObjectId | string;
-  id?: string;
-  eventId: Types.ObjectId | string;
-  name: string;
-  description?: string;
-  price: number;
-  capacity: number;
-  currentTotalSeats?: number;
-  soldCount?: number;
-  confirmedSoldCount?: number;
-  hasSeating: boolean;
-  saleStartDate?: Date;
-  saleEndDate?: Date;
-  createdAt?: Date;
-  updatedAt?: Date;
-  areas?: ZoneAreaViewSource[];
-}
-
-export interface ZoneAreaView {
-  id: string;
-  name: string;
-  description?: string;
-  rowLabel?: string;
-  seatCount: number;
-  seats: string[];
-}
-
-export interface ZoneView {
-  id: string;
-  eventId: string;
-  name: string;
-  description?: string;
-  price: number;
-  capacity: number;
-  currentTotalSeats: number;
-  soldCount: number;
-  confirmedSoldCount: number;
-  hasSeating: boolean;
-  saleStartDate?: Date;
-  saleEndDate?: Date;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface ZoneWithAreasView extends ZoneView {
-  areas: ZoneAreaView[];
-}
+export type {
+  ZoneAreaView,
+  ZoneView,
+  ZoneWithAreasView,
+} from "./domain/types/zone.types";
 
 function isMongoDuplicateKeyError(
   err: unknown
@@ -102,16 +47,13 @@ function isMongoDuplicateKeyError(
 @Injectable()
 export class ZoneService {
   private readonly logger = new Logger(ZoneService.name);
-  private readonly CACHE_LIST_PREFIX = `zones:list:${ZONE_RESPONSE_SCHEMA_VERSION}`;
-  private readonly ZONE_LIST_INDEX = `zones:list:index:${ZONE_RESPONSE_SCHEMA_VERSION}`;
-  private readonly ZONE_CACHE_TTL_SEC = 30;
-  private readonly ZONE_DETAIL_PREFIX = `zone:detail:${ZONE_RESPONSE_SCHEMA_VERSION}:`;
 
   constructor(
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(Area.name) private readonly areaModel: Model<Area>,
-    private readonly redisService: RedisService,
+    private readonly zoneCache: ZoneCacheService,
+    private readonly zonePresenter: ZonePresenter,
     private readonly eventOwnershipService: EventOwnershipService
   ) {}
 
@@ -136,99 +78,16 @@ export class ZoneService {
     }
   }
 
-  private generateListCacheKey(query: QueryZoneDto): string {
-    const {
-      eventId,
-      search,
-      hasSeating,
-      page = 1,
-      limit = 10,
-      sortBy = "createdAt",
-      sortOrder = "desc",
-    } = query;
-    return `${this.CACHE_LIST_PREFIX}:event=${eventId || "all"}:search=${search || ""}:hasSeating=${hasSeating ?? "all"}:page=${page}:limit=${limit}:sort=${sortBy}:order=${sortOrder}`;
-  }
-
-  private toZoneAreaView(area: ZoneAreaViewSource): ZoneAreaView {
-    const id = area._id?.toString() ?? area.id;
-    if (!id) {
-      throw new BadRequestException("Area ID is missing");
-    }
-
-    return {
-      id,
-      name: area.name,
-      description: area.description,
-      rowLabel: area.rowLabel,
-      seatCount: area.seats?.length ?? area.seatCount ?? 0,
-      seats: area.seats ?? [],
-    };
-  }
-
-  private toZoneView(zone: ZoneViewSource): ZoneView {
-    const id = zone._id?.toString() ?? zone.id;
-    if (!id) {
-      throw new BadRequestException("Zone ID is missing");
-    }
-
-    return {
-      id,
-      eventId: zone.eventId.toString(),
-      name: zone.name,
-      description: zone.description,
-      price: zone.price,
-      capacity: zone.capacity,
-      currentTotalSeats: zone.currentTotalSeats ?? 0,
-      soldCount: zone.soldCount ?? 0,
-      confirmedSoldCount: zone.confirmedSoldCount ?? 0,
-      hasSeating: zone.hasSeating,
-      saleStartDate: zone.saleStartDate,
-      saleEndDate: zone.saleEndDate,
-      createdAt: zone.createdAt,
-      updatedAt: zone.updatedAt,
-    };
-  }
-
-  private toZoneWithAreasView(zone: ZoneViewSource): ZoneWithAreasView {
-    return {
-      ...this.toZoneView(zone),
-      areas: (zone.areas ?? []).map((area) => this.toZoneAreaView(area)),
-    };
-  }
-
-  private async invalidateZoneCache(): Promise<void> {
-    try {
-      const keys = await this.redisService.client.sMembers(
-        this.ZONE_LIST_INDEX
-      );
-      const toDelete = [...keys, this.ZONE_LIST_INDEX];
-      await this.redisService.client.del(toDelete);
-    } catch {
-      /* Non-fatal */
-    }
-  }
-
-  /**
-   * Invalidates the zones:list cache and a specific zone's detail cache.
-   * Call this whenever a zone's soldCount/confirmedSoldCount changes
-   * outside of ZoneService itself (e.g. booking create/cancel/expire),
-   * otherwise GET /zone and GET /zone/:id can serve stale availability
-   * for up to ZONE_CACHE_TTL_SEC seconds.
-   */
   async invalidateZoneAvailabilityCache(
     zoneId: string | Types.ObjectId
   ): Promise<void> {
-    await Promise.all([
-      this.invalidateZoneCache(),
-      this.redisService.client
-        .del(`${this.ZONE_DETAIL_PREFIX}${zoneId.toString()}`)
-        .catch(() => {}),
-    ]).catch((err: Error) =>
-      this.logger.warn(
-        `Failed to invalidate zone availability cache for zone ${zoneId}: ${err.message}`
-      )
-    );
+    await this.zoneCache.invalidateAvailability(zoneId);
   }
+
+  private invalidateZoneCache(): Promise<void> {
+    return this.zoneCache.invalidateList();
+  }
+
   async getAllActiveZones(
     query: QueryZoneDto
   ): Promise<PaginatedResponse<ZoneView>> {
@@ -241,20 +100,18 @@ export class ZoneService {
       sortOrder = "desc",
     } = query;
 
-    const sortBy: SortField = ALLOWED_SORT_FIELDS.includes(
-      query.sortBy as SortField
+    const sortBy: ZoneSortField = ALLOWED_ZONE_SORT_FIELDS.includes(
+      query.sortBy as ZoneSortField
     )
-      ? (query.sortBy as SortField)
+      ? (query.sortBy as ZoneSortField)
       : "createdAt";
 
     if (eventId && !Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
-    const cacheKey = this.generateListCacheKey({ ...query, sortBy });
-    const cachedRaw = await this.redisService.client
-      .get(cacheKey)
-      .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as PaginatedResponse<ZoneView>;
+    const normalizedQuery = { ...query, sortBy };
+    const cached = await this.zoneCache.getList(normalizedQuery);
+    if (cached) return cached;
     const skip = (page - 1) * limit;
     const filter: FilterQuery<Zone> = { isDeleted: false };
     if (eventId) {
@@ -270,7 +127,7 @@ export class ZoneService {
     if (hasSeating !== undefined) {
       filter.hasSeating = hasSeating;
     }
-    const sort: Partial<Record<SortField, 1 | -1>> = {
+    const sort: Partial<Record<ZoneSortField, 1 | -1>> = {
       [sortBy]: sortOrder === "asc" ? 1 : -1,
     };
     const [data, total] = await Promise.all([
@@ -287,7 +144,7 @@ export class ZoneService {
     ]);
     const totalPages = Math.ceil(total / limit);
     const result: PaginatedResponse<ZoneView> = {
-      items: data.map((zone) => this.toZoneView(zone)),
+      items: data.map((zone) => this.zonePresenter.toZoneView(zone)),
       meta: {
         currentPage: page,
         itemsPerPage: limit,
@@ -297,16 +154,7 @@ export class ZoneService {
         hasNextPage: page < totalPages,
       },
     };
-    await Promise.all([
-      this.redisService.client.set(cacheKey, JSON.stringify(result), {
-        EX: this.ZONE_CACHE_TTL_SEC,
-      }),
-      this.redisService.client.sAdd(this.ZONE_LIST_INDEX, cacheKey),
-      this.redisService.client.expire(
-        this.ZONE_LIST_INDEX,
-        this.ZONE_CACHE_TTL_SEC * 2
-      ),
-    ]).catch(() => {});
+    await this.zoneCache.setList(normalizedQuery, result);
     return result;
   }
 
@@ -362,18 +210,15 @@ export class ZoneService {
     if (zones.length === 0) {
       throw new NotFoundException("Zone not found");
     }
-    return this.toZoneWithAreasView(zones[0]);
+    return this.zonePresenter.toZoneWithAreasView(zones[0]);
   }
 
   async getZoneById(id: string): Promise<ZoneView> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException("Invalid zone ID");
     }
-    const cacheKey = `${this.ZONE_DETAIL_PREFIX}${id}`;
-    const cachedRaw = await this.redisService.client
-      .get(cacheKey)
-      .catch(() => null);
-    if (cachedRaw) return JSON.parse(cachedRaw) as ZoneView;
+    const cached = await this.zoneCache.getDetail(id);
+    if (cached) return cached;
     const zone = await this.zoneModel.findOne({
       _id: new Types.ObjectId(id),
       isDeleted: false,
@@ -381,10 +226,8 @@ export class ZoneService {
     if (!zone) {
       throw new BadRequestException("Zone not found or has been deleted");
     }
-    const zoneView = this.toZoneView(zone);
-    await this.redisService.client
-      .set(cacheKey, JSON.stringify(zoneView), { EX: this.ZONE_CACHE_TTL_SEC })
-      .catch(() => {});
+    const zoneView = this.zonePresenter.toZoneView(zone);
+    await this.zoneCache.setDetail(id, zoneView);
     return zoneView;
   }
 
@@ -429,12 +272,12 @@ export class ZoneService {
       }
       throw err;
     }
-    await this.invalidateZoneCache().catch((err: Error) =>
+    await this.invalidateZoneCache().catch((err: unknown) =>
       this.logger.warn(
-        `Failed to invalidate zone list cache after create: ${err.message}`
+        `Failed to invalidate zone list cache after create: ${getErrorMessage(err)}`
       )
     );
-    return this.toZoneView(zone);
+    return this.zonePresenter.toZoneView(zone);
   }
 
   async updateZone(
@@ -552,14 +395,14 @@ export class ZoneService {
       }
       throw new BadRequestException("Zone not found or has been deleted");
     }
-    await this.invalidateZoneCache().catch((err: Error) =>
-      this.logger.warn(
-        `Failed to invalidate zone list cache after update: ${err.message}`
-      )
-    );
-    await this.redisService.client
-      .del(`${this.ZONE_DETAIL_PREFIX}${id}`)
-      .catch(() => {});
-    return this.toZoneView(zone);
+    await Promise.all([
+      this.invalidateZoneCache().catch((err: unknown) =>
+        this.logger.warn(
+          `Failed to invalidate zone list cache after update: ${getErrorMessage(err)}`
+        )
+      ),
+      this.zoneCache.invalidateDetail(id),
+    ]);
+    return this.zonePresenter.toZoneView(zone);
   }
 }

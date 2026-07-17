@@ -6,8 +6,6 @@ import { FilterQuery, Model, Types } from "mongoose";
 import { Ticket } from "@src/schemas/ticket.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { ExportTicketDto } from "./dto/export-ticket.dto";
-import { Response } from "express";
-import { exportCSV, exportExcel } from "@src/helper/export.helper";
 import { ExportCheckInDto } from "./dto/export-checkin.dto";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
@@ -43,6 +41,21 @@ type ZoneExportLean = {
   capacity?: number | null;
 };
 
+type ZoneCheckInCount = {
+  _id: Types.ObjectId;
+  totalCheckIns: number;
+};
+
+interface ExportQueuedResult {
+  message: string;
+  status: "queued";
+}
+
+const EXPORT_QUEUED_RESULT: ExportQueuedResult = {
+  message: "Export đang được xử lý. Bạn sẽ nhận được file qua email.",
+  status: "queued",
+};
+
 @Injectable()
 export class ExportService {
   constructor(
@@ -51,71 +64,6 @@ export class ExportService {
     @Inject(QueueService) private readonly queueService: QueueService,
     private readonly eventOwnershipService: EventOwnershipService
   ) {}
-  private async exportByFormat(
-    data: ExportRow[],
-    format: string,
-    res: Response,
-    fileName: string
-  ): Promise<Response | void> {
-    // Handle empty data
-    if (!data || data.length === 0) {
-      const emptyData = [{ message: "No data to export" }];
-      if (format === "csv") {
-        const csv = exportCSV(emptyData, ["message"]);
-        res.setHeader("Content-Type", "text/csv");
-        res.setHeader(
-          "Content-Disposition",
-          `attachment; filename=${fileName}.csv`
-        );
-        return res.send(csv);
-      }
-
-      res.setHeader(
-        "Content-Type",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      );
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename=${fileName}.xlsx`
-      );
-
-      return exportExcel(
-        emptyData,
-        [{ header: "message", key: "message" }],
-        res,
-        fileName
-      );
-    }
-
-    const firstRow = data[0] ?? {};
-    const fields = Object.keys(firstRow);
-
-    if (format === "csv") {
-      const csv = exportCSV(data, fields);
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename=${fileName}.csv`
-      );
-      return res.send(csv);
-    }
-
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=${fileName}.xlsx`
-    );
-
-    return exportExcel(
-      data,
-      fields.map((key) => ({ header: key, key })),
-      res,
-      fileName
-    );
-  }
 
   private async getTicketData(dto: ExportTicketDto): Promise<ExportRow[]> {
     const filter: FilterQuery<Ticket> = { isDeleted: false };
@@ -187,21 +135,38 @@ export class ExportService {
       .find({ eventId: id })
       .lean<ZoneExportLean[]>()
       .exec();
-    const data = await Promise.all(
-      zones.map(async (zone) => {
-        const checkInCount = await this.ticketModel.countDocuments({
-          zoneId: zone._id,
-          status: "used",
-          isDeleted: false,
-        });
-        return {
-          zoneName: zone.name || "N/A",
-          totalCheckIns: checkInCount,
-          capacity: zone.capacity || "N/A",
-        };
-      })
+
+    if (zones.length === 0) {
+      return [];
+    }
+
+    const checkInCounts = await this.ticketModel
+      .aggregate<ZoneCheckInCount>([
+        {
+          $match: {
+            zoneId: { $in: zones.map((zone) => zone._id) },
+            status: "used",
+            isDeleted: false,
+          },
+        },
+        {
+          $group: {
+            _id: "$zoneId",
+            totalCheckIns: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
+
+    const countByZoneId = new Map(
+      checkInCounts.map((item) => [item._id.toString(), item.totalCheckIns])
     );
-    return data;
+
+    return zones.map((zone) => ({
+      zoneName: zone.name || "N/A",
+      totalCheckIns: countByZoneId.get(zone._id.toString()) ?? 0,
+      capacity: zone.capacity || "N/A",
+    }));
   }
 
   async getTicketExportData(dto: ExportTicketDto): Promise<ExportRow[]> {
@@ -214,9 +179,8 @@ export class ExportService {
 
   async exportCheckInZones(
     dto: ExportCheckInDto,
-    currentUser: JwtPayload,
-    res: Response
-  ): Promise<Response> {
+    currentUser: JwtPayload
+  ): Promise<ExportQueuedResult> {
     await this.eventOwnershipService.assertCanManageEvent(
       currentUser,
       dto.eventId
@@ -226,17 +190,13 @@ export class ExportService {
       payload: { dto, requestedByUserId: currentUser.userId },
       requestedAt: new Date().toISOString(),
     });
-    return res.status(202).json({
-      message: "Export đang được xử lý. Bạn sẽ nhận được file qua email.",
-      status: "queued",
-    });
+    return EXPORT_QUEUED_RESULT;
   }
 
   async exportTickets(
     dto: ExportTicketDto,
-    currentUser: JwtPayload,
-    res: Response
-  ): Promise<Response> {
+    currentUser: JwtPayload
+  ): Promise<ExportQueuedResult> {
     await this.eventOwnershipService.assertCanManageEvent(
       currentUser,
       dto.eventId
@@ -246,9 +206,6 @@ export class ExportService {
       payload: { dto, requestedByUserId: currentUser.userId },
       requestedAt: new Date().toISOString(),
     });
-    return res.status(202).json({
-      message: "Export đang được xử lý. Bạn sẽ nhận được file qua email.",
-      status: "queued",
-    });
+    return EXPORT_QUEUED_RESULT;
   }
 }
