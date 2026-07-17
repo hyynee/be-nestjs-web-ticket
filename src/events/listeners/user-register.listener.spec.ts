@@ -1,18 +1,18 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { Logger } from "@nestjs/common";
 import { UserRegisterListener } from "./user-register.listener";
-import { MailService } from "@src/services/mail.service";
+import { NotificationService } from "@src/notification/notification.service";
 
 describe("UserRegisterListener", () => {
   let listener: UserRegisterListener;
-  let mailService: jest.Mocked<MailService>;
+  let notificationService: jest.Mocked<NotificationService>;
 
   beforeEach(async () => {
-    mailService = {
-      sendRegisterEmail: jest.fn().mockResolvedValue(undefined),
-      sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
-      sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
-      sendBookingConfirmation: jest.fn().mockResolvedValue(undefined),
+    notificationService = {
+      notifyRegisterSuccess: jest.fn().mockResolvedValue(undefined),
+      queueEmailVerification: jest.fn().mockResolvedValue(undefined),
+      queuePasswordReset: jest.fn().mockResolvedValue(undefined),
+      queueBookingConfirmationEmail: jest.fn().mockResolvedValue(undefined),
     } as any;
 
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
@@ -20,7 +20,7 @@ describe("UserRegisterListener", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserRegisterListener,
-        { provide: MailService, useValue: mailService },
+        { provide: NotificationService, useValue: notificationService },
       ],
     }).compile();
 
@@ -31,17 +31,25 @@ describe("UserRegisterListener", () => {
 
   describe("handleUserRegisteredEvent", () => {
     it("sends register email with user payload", async () => {
-      const user = { email: "test@test.com", fullName: "Test User" } as any;
+      const user = {
+        _id: "user1",
+        email: "test@test.com",
+        fullName: "Test User",
+      } as any;
       await listener.handleUserRegisteredEvent(user);
-      expect(mailService.sendRegisterEmail).toHaveBeenCalledWith(
-        "test@test.com",
-        "Test User"
-      );
+      expect(notificationService.notifyRegisterSuccess).toHaveBeenCalledWith({
+        userId: "user1",
+        email: "test@test.com",
+        fullName: "Test User",
+      });
     });
 
     it("logs error when mail service fails", async () => {
-      mailService.sendRegisterEmail.mockRejectedValue(new Error("SMTP error"));
+      notificationService.notifyRegisterSuccess.mockRejectedValue(
+        new Error("SMTP error")
+      );
       await listener.handleUserRegisteredEvent({
+        _id: "user1",
         email: "a@b.com",
         fullName: "A",
       } as any);
@@ -56,15 +64,17 @@ describe("UserRegisterListener", () => {
         resetToken: "tok",
         fullName: "Alice",
       });
-      expect(mailService.sendPasswordResetEmail).toHaveBeenCalledWith(
-        "a@b.com",
-        "tok",
-        "Alice"
-      );
+      expect(notificationService.queuePasswordReset).toHaveBeenCalledWith({
+        email: "a@b.com",
+        resetToken: "tok",
+        fullName: "Alice",
+      });
     });
 
     it("logs error on failure", async () => {
-      mailService.sendPasswordResetEmail.mockRejectedValue(new Error("fail"));
+      notificationService.queuePasswordReset.mockRejectedValue(
+        new Error("fail")
+      );
       await listener.handlePasswordResetEvent({
         email: "a@b.com",
         resetToken: "tok",
@@ -81,15 +91,17 @@ describe("UserRegisterListener", () => {
         token: "tok-hex",
         fullName: "Alice",
       });
-      expect(mailService.sendVerificationEmail).toHaveBeenCalledWith(
-        "a@b.com",
-        "tok-hex",
-        "Alice"
-      );
+      expect(notificationService.queueEmailVerification).toHaveBeenCalledWith({
+        email: "a@b.com",
+        token: "tok-hex",
+        fullName: "Alice",
+      });
     });
 
     it("logs error on failure", async () => {
-      mailService.sendVerificationEmail.mockRejectedValue(new Error("fail"));
+      notificationService.queueEmailVerification.mockRejectedValue(
+        new Error("fail")
+      );
       await listener.handleEmailVerificationRequestedEvent({
         email: "a@b.com",
         token: "tok-hex",
@@ -103,11 +115,15 @@ describe("UserRegisterListener", () => {
     it("sends booking confirmation email", async () => {
       const payload = { bookingCode: "BK001" } as any;
       await listener.handleBookingConfirmationEvent(payload);
-      expect(mailService.sendBookingConfirmation).toHaveBeenCalledWith(payload);
+      expect(
+        notificationService.queueBookingConfirmationEmail
+      ).toHaveBeenCalledWith(payload);
     });
 
     it("logs error on failure", async () => {
-      mailService.sendBookingConfirmation.mockRejectedValue(new Error("fail"));
+      notificationService.queueBookingConfirmationEmail.mockRejectedValue(
+        new Error("fail")
+      );
       await listener.handleBookingConfirmationEvent({
         bookingCode: "BK001",
       } as any);

@@ -14,6 +14,11 @@ import {
 } from "class-validator";
 import { ExportTicketDto } from "@src/export/dto/export-ticket.dto";
 import { ExportCheckInDto } from "@src/export/dto/export-checkin.dto";
+import type {
+  SendBookingExpiryReminderJobPayload,
+  SendEventReminderJobPayload,
+  SendNotificationEmailJobPayload,
+} from "@src/notification/types/notification.types";
 
 export interface BookingConfirmationQueuePayload {
   email: string;
@@ -190,4 +195,7 @@ export type QueueJobPayload =
   | RefundFailureAlertPayloadDto
   | ExportTicketsJobPayloadDto
   | ExportCheckInZonesJobPayloadDto
-  | ResendInvoiceEmailPayloadDto;
+  | ResendInvoiceEmailPayloadDto
+  | SendNotificationEmailJobPayload
+  | SendBookingExpiryReminderJobPayload
+  | SendEventReminderJobPayload;

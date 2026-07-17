@@ -4,6 +4,7 @@ import { MailService } from "@src/services/mail.service";
 import { ExportService } from "@src/export/export.service";
 import { TicketService } from "@src/ticket/ticket.service";
 import { InvoiceService } from "@src/invoice/invoice.service";
+import { NotificationService } from "@src/notification/notification.service";
 import { getModelToken } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
 import { getQueueToken } from "@nestjs/bullmq";
@@ -18,6 +19,7 @@ describe("QueueProcessor", () => {
   let userModel: any;
   let ticketService: jest.Mocked<TicketService>;
   let invoiceService: jest.Mocked<InvoiceService>;
+  let notificationService: jest.Mocked<NotificationService>;
   let queue: jest.Mocked<Queue>;
 
   const mockJob = (data: any, opts?: any) =>
@@ -57,6 +59,12 @@ describe("QueueProcessor", () => {
       deliverInvoiceEmail: jest.fn().mockResolvedValue(undefined),
     } as any;
 
+    notificationService = {
+      deliverQueuedEmail: jest.fn().mockResolvedValue(undefined),
+      processBookingExpiryReminderJob: jest.fn().mockResolvedValue(undefined),
+      processEventReminderJob: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
     queue = {
       add: jest.fn().mockResolvedValue(undefined),
       getJobCounts: jest.fn(),
@@ -69,6 +77,7 @@ describe("QueueProcessor", () => {
         { provide: ExportService, useValue: exportService },
         { provide: TicketService, useValue: ticketService },
         { provide: InvoiceService, useValue: invoiceService },
+        { provide: NotificationService, useValue: notificationService },
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: getQueueToken("default"), useValue: queue },
         { provide: getQueueToken("dead-letter"), useValue: queue },
@@ -211,6 +220,54 @@ describe("QueueProcessor", () => {
         expect(mailService.deliverRefundFailureAlert).not.toHaveBeenCalled();
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringContaining("ALERT_EMAIL env var not set")
+        );
+        expect(result).toBe(true);
+      });
+    });
+
+    describe("notification jobs", () => {
+      it("delivers queued notification email", async () => {
+        const payload = {
+          notificationId: "507f1f77bcf86cd799439011",
+          template: "generic",
+          payload: {
+            to: "user@example.com",
+            title: "Hello",
+            body: "World",
+          },
+        };
+        const job = mockJob({ type: "send-notification-email", payload });
+        const result = await processor.process(job);
+        expect(notificationService.deliverQueuedEmail).toHaveBeenCalledWith(
+          payload.notificationId,
+          payload.template,
+          payload.payload
+        );
+        expect(result).toBe(true);
+      });
+
+      it("processes booking expiry reminder job", async () => {
+        const payload = { bookingId: "507f1f77bcf86cd799439011" };
+        const job = mockJob({
+          type: "send-booking-expiry-reminder",
+          payload,
+        });
+        const result = await processor.process(job);
+        expect(
+          notificationService.processBookingExpiryReminderJob
+        ).toHaveBeenCalledWith(payload);
+        expect(result).toBe(true);
+      });
+
+      it("processes event reminder job", async () => {
+        const payload = {
+          ticketId: "507f1f77bcf86cd799439011",
+          reminderWindow: "24h",
+        };
+        const job = mockJob({ type: "send-event-reminder", payload });
+        const result = await processor.process(job);
+        expect(notificationService.processEventReminderJob).toHaveBeenCalledWith(
+          payload
         );
         expect(result).toBe(true);
       });

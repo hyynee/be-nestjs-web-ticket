@@ -467,6 +467,32 @@ export class MailService {
     });
   }
 
+  async deliverNotificationEmail(data: {
+    to: string;
+    title: string;
+    body: string;
+  }): Promise<void> {
+    const safeTitle = this.escapeHtml(data.title);
+    const safeBody = this.escapeHtml(data.body).replace(/\n/g, "<br/>");
+
+    await this.transporter.sendMail({
+      from: `"Ticket System" <${config.SMTP_USER}>`,
+      to: data.to,
+      subject: safeTitle,
+      html: `
+        <html>
+          <body style="font-family: Arial, sans-serif; background:#f3f4f6; padding:20px;">
+            <div style="max-width:600px;margin:auto;background:white;padding:24px;border-radius:8px;">
+              <h2 style="color:#111827;">${safeTitle}</h2>
+              <p style="color:#374151;line-height:1.6;">${safeBody}</p>
+              <p style="color:#6b7280;margin-top:24px;">Ticket System</p>
+            </div>
+          </body>
+        </html>
+      `,
+    });
+  }
+
   async sendBookingCancellation(data: {
     email: string;
     customerName: string;

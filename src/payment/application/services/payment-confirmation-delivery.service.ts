@@ -11,6 +11,7 @@ import type {
 } from "@src/payment/types/payment.types";
 import { Zone } from "@src/schemas/zone.schema";
 import { QueueService } from "@src/queue/queue.service";
+import { NotificationService } from "@src/notification/notification.service";
 import { RedisService } from "@src/redis/redis.service";
 import { TicketService } from "@src/ticket/ticket.service";
 import { ZoneGateway } from "@src/zone/zone.gateway";
@@ -25,6 +26,7 @@ export class PaymentConfirmationDeliveryService {
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     private readonly ticketService: TicketService,
     private readonly queueService: QueueService,
+    private readonly notificationService: NotificationService,
     private readonly redisService: RedisService,
     private readonly zoneGateway: ZoneGateway
   ) {}
@@ -132,7 +134,12 @@ export class PaymentConfirmationDeliveryService {
     bookingCode: string,
     providerLabel: "Stripe" | "PayPal",
     confirmationPayload: BookingConfirmationData,
-    tickets: CreatedTicketForMail[]
+    tickets: CreatedTicketForMail[],
+    notificationContext: {
+      userId: string;
+      bookingId?: string;
+      eventId?: string;
+    }
   ): Promise<void> {
     const ticketMailData = tickets.map((ticket) => ({
       ticketCode: ticket.ticketCode,
@@ -141,14 +148,26 @@ export class PaymentConfirmationDeliveryService {
     }));
 
     try {
-      await this.queueService.addJob({
-        type: "send-booking-confirmation",
-        payload: {
+      await this.notificationService.notifyPaymentSucceeded({
+        userId: notificationContext.userId,
+        bookingId: notificationContext.bookingId,
+        bookingCode,
+        eventId: notificationContext.eventId,
+        provider: providerLabel.toLowerCase(),
+      });
+      await this.notificationService.notifyTicketsIssued({
+        userId: notificationContext.userId,
+        bookingId: notificationContext.bookingId,
+        bookingCode,
+        eventId: notificationContext.eventId,
+      });
+      await this.notificationService.queueBookingConfirmationEmail(
+        {
           ...confirmationPayload,
           tickets: ticketMailData,
         },
-        requestedAt: new Date().toISOString(),
-      });
+        notificationContext.userId
+      );
     } catch (error) {
       this.logger.warn(
         `Failed to send ${providerLabel} confirmation email for booking ${bookingCode}: ${getPaymentErrorMessage(error)}`

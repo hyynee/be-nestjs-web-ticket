@@ -342,7 +342,11 @@ export class PaypalPaymentSettlementService {
       confirmedBooking.bookingCode,
       "PayPal",
       confirmationPayload,
-      tickets
+      tickets,
+      {
+        userId: confirmedBooking.userId?.toString() ?? "",
+        eventId: confirmedBooking.eventId._id?.toString(),
+      }
     );
 
     await this.deliveryService.invalidateHotEventsCache(

@@ -13,6 +13,7 @@ import { TicketQrService } from "../infrastructure/qr/ticket-qr.service";
 import { TicketPublisherService } from "../infrastructure/realtime/ticket-publisher.service";
 import { TicketPresenter } from "../presenters/ticket.presenter";
 import { TicketService } from "../ticket.service";
+import { NotificationService } from "@src/notification/notification.service";
 
 export const ticketTestProviders: Provider[] = [
   TicketService,
@@ -29,4 +30,10 @@ export const ticketTestProviders: Provider[] = [
   ListTicketsQuery,
   ListMyTicketsQuery,
   GetCheckInHistoryQuery,
+  {
+    provide: NotificationService,
+    useValue: {
+      notifyTicketsIssued: async () => undefined,
+    },
+  },
 ];

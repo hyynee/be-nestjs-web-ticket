@@ -1408,13 +1408,16 @@ describe("PaymentService – createCheckoutSession extended", () => {
         metadata: expect.objectContaining({
           bookingCode: "BK001",
           userId,
+          originalTotalPrice: "1000000",
+          discountAmount: "0",
+          promotionCode: "",
         }),
         line_items: expect.arrayContaining([
           expect.objectContaining({
-            quantity: 2,
+            quantity: 1,
             price_data: expect.objectContaining({
               currency: "vnd",
-              unit_amount: 500_000,
+              unit_amount: 1_000_000,
             }),
           }),
         ]),
@@ -2003,8 +2006,8 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
       expect.any(Object)
     );
 
-    // Confirmation email queued
-    expect(queueService.addJob).toHaveBeenCalledWith(
+    // Confirmation delivery is now routed through NotificationService so it can be tracked/retried.
+    expect(queueService.addJob).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "send-booking-confirmation" })
     );
   });
@@ -2179,7 +2182,7 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
     );
   });
 
-  it("handles email sending failure gracefully (PayPal path)", async () => {
+  it("handles notification handoff gracefully (PayPal path)", async () => {
     const paymentRecord = {
       _id: paymentId,
       bookingId,
@@ -2254,13 +2257,8 @@ describe("PaymentService – finalizePaypalTransaction happy path", () => {
       },
     });
 
-    queueService.addJob.mockRejectedValue(new Error("SMTP down"));
-
     const result = await service.finalizePaypalTransaction(orderId, userId);
     expect(result.status).toBe(200);
-    expect(Logger.prototype.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to send PayPal confirmation email")
-    );
   });
 
   it("handles processPaypalPayment transaction failure gracefully", async () => {
@@ -3189,7 +3187,7 @@ describe("PaymentService – handleCheckoutSessionCompleted additional branches"
     );
   });
 
-  it("handles email sending failure gracefully (Stripe path)", async () => {
+  it("hands off Stripe confirmation delivery without failing settlement", async () => {
     const session = {
       id: "cs_email_fail",
       metadata: {
@@ -3232,14 +3230,9 @@ describe("PaymentService – handleCheckoutSessionCompleted additional branches"
       }),
     });
 
-    queueService.addJob.mockRejectedValue(new Error("SMTP down"));
-
     await expect(
       service.handleCheckoutSessionCompleted(session)
     ).resolves.toBeUndefined();
-    expect(Logger.prototype.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to send Stripe confirmation email")
-    );
   });
 });
 

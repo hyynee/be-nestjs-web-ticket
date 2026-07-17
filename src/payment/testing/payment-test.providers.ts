@@ -13,6 +13,7 @@ import { PaymentConfirmationDeliveryService } from "@src/payment/application/ser
 import { StripePaymentSettlementService } from "@src/payment/application/services/stripe-payment-settlement.service";
 import { PaypalPaymentSettlementService } from "@src/payment/application/services/paypal-payment-settlement.service";
 import { PaymentSettlementOrchestrator } from "@src/payment/application/orchestrators/payment-settlement.orchestrator";
+import { NotificationService } from "@src/notification/notification.service";
 
 export const paymentTestProviders = [
   PaymentService,
@@ -30,4 +31,12 @@ export const paymentTestProviders = [
   StripePaymentSettlementService,
   PaypalPaymentSettlementService,
   PaymentSettlementOrchestrator,
+  {
+    provide: NotificationService,
+    useValue: {
+      notifyPaymentSucceeded: async () => undefined,
+      notifyTicketsIssued: async () => undefined,
+      queueBookingConfirmationEmail: async () => undefined,
+    },
+  },
 ];

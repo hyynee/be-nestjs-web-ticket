@@ -39,6 +39,7 @@ describe("PaymentConfirmationDeliveryService — buildBookingConfirmationPayload
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
   });

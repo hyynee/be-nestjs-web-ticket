@@ -327,7 +327,7 @@ describe("QueueService", () => {
     await service.retryJob("dlq-1");
 
     const [, , opts] = mockQueue.add.mock.calls[0];
-    expect(opts.jobId).toMatch(/^retry:job-1:\d+$/);
+    expect(opts.jobId).toMatch(/^retry-job-1-\d+$/);
   });
 
   it("throws NotFoundException when retrying a job that exists nowhere", async () => {
@@ -375,14 +375,14 @@ describe("QueueService", () => {
     mockQueue.getJob.mockResolvedValue(job);
     mockDlqQueue.add.mockImplementation(async () => {
       callOrder.push("dlq-add");
-      return makeJob({ id: "dead-letter:job-1" });
+      return makeJob({ id: "dead-letter-job-1" });
     });
 
     await service.moveToDeadLetter("job-1");
 
     expect(callOrder).toEqual(["dlq-add", "remove"]);
     const [, , opts] = mockDlqQueue.add.mock.calls[0];
-    expect(opts.jobId).toBe("dead-letter:job-1");
+    expect(opts.jobId).toBe("dead-letter-job-1");
   });
 
   it("rejects moving an active (currently processing) job to dead-letter", async () => {
@@ -414,7 +414,7 @@ describe("QueueService", () => {
         .mockRejectedValue(new Error("locked by another worker")),
     });
     mockQueue.getJob.mockResolvedValue(job);
-    const dlqJob = makeJob({ id: "dead-letter:job-1" });
+    const dlqJob = makeJob({ id: "dead-letter-job-1" });
     mockDlqQueue.add.mockResolvedValue(dlqJob);
 
     await expect(service.moveToDeadLetter("job-1")).rejects.toThrow(
@@ -434,7 +434,7 @@ describe("QueueService", () => {
     });
     mockQueue.getJob.mockResolvedValue(job);
     const dlqJob = makeJob({
-      id: "dead-letter:job-1",
+      id: "dead-letter-job-1",
       remove: jest.fn().mockRejectedValue(new Error("dlq remove failed")),
     });
     mockDlqQueue.add.mockResolvedValue(dlqJob);

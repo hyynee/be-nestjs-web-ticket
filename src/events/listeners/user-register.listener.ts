@@ -1,21 +1,28 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
+import { Types } from "mongoose";
+import { NotificationService } from "@src/notification/notification.service";
 import { User } from "@src/schemas/user.schema";
-import { MailService } from "@src/services/mail.service";
 import type { BookingConfirmationData } from "@src/types/booking-modules";
 
 @Injectable()
 export class UserRegisterListener {
   private readonly logger = new Logger(UserRegisterListener.name);
-  constructor(private readonly mail: MailService) {}
+  constructor(private readonly notificationService: NotificationService) {}
 
   @OnEvent("user.registered")
   async handleUserRegisteredEvent(payload: User): Promise<void> {
     try {
-      const { email, fullName } = payload;
-      await this.mail.sendRegisterEmail(email, fullName);
+      const userId = this.resolveUserId(payload);
+      await this.notificationService.notifyRegisterSuccess({
+        userId,
+        email: payload.email,
+        fullName: payload.fullName,
+      });
     } catch (error) {
-      this.logger.error("Send mail failed", error);
+      this.logger.error(
+        `user.registered notification failed: ${(error as Error)?.message ?? String(error)}`
+      );
     }
   }
 
@@ -26,13 +33,11 @@ export class UserRegisterListener {
     fullName: string;
   }): Promise<void> {
     try {
-      await this.mail.sendPasswordResetEmail(
-        payload.email,
-        payload.resetToken,
-        payload.fullName
-      );
+      await this.notificationService.queuePasswordReset(payload);
     } catch (error) {
-      this.logger.error("Send password reset email failed", error);
+      this.logger.error(
+        `password.reset.requested notification failed: ${(error as Error)?.message ?? String(error)}`
+      );
     }
   }
   @OnEvent("email.verification.requested")
@@ -42,13 +47,11 @@ export class UserRegisterListener {
     fullName: string;
   }): Promise<void> {
     try {
-      await this.mail.sendVerificationEmail(
-        payload.email,
-        payload.token,
-        payload.fullName
-      );
+      await this.notificationService.queueEmailVerification(payload);
     } catch (error) {
-      this.logger.error("Send verification email failed", error);
+      this.logger.error(
+        `email.verification.requested notification failed: ${(error as Error)?.message ?? String(error)}`
+      );
     }
   }
 
@@ -57,9 +60,19 @@ export class UserRegisterListener {
     payload: BookingConfirmationData
   ): Promise<void> {
     try {
-      await this.mail.sendBookingConfirmation(payload);
+      await this.notificationService.queueBookingConfirmationEmail(payload);
     } catch (error) {
-      this.logger.error("Send booking confirmation email failed", error);
+      this.logger.error(
+        `booking.confirmation notification failed: ${(error as Error)?.message ?? String(error)}`
+      );
     }
+  }
+
+  private resolveUserId(payload: User): string {
+    const id = payload._id as Types.ObjectId | string | undefined;
+    if (!id) {
+      throw new Error("User id is missing from user.registered event");
+    }
+    return id.toString();
   }
 }

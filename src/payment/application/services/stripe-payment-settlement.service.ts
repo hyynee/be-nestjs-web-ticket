@@ -184,6 +184,12 @@ export class StripePaymentSettlementService {
               customerEmail: session.customer_details?.email,
               customerName: session.customer_details?.name,
               customerPhone: session.customer_details?.phone,
+              bookingCode,
+              originalTotalPrice: Number(
+                session.metadata?.originalTotalPrice ?? booking.totalPrice
+              ),
+              discountAmount: Number(session.metadata?.discountAmount ?? 0),
+              promotionCode: session.metadata?.promotionCode || undefined,
             },
           },
           { upsert: true, new: true, session: dbSession }
@@ -267,7 +273,11 @@ export class StripePaymentSettlementService {
       confirmedBooking.bookingCode,
       "Stripe",
       confirmationPayload,
-      tickets
+      tickets,
+      {
+        userId: confirmedBooking.userId?.toString() ?? "",
+        eventId: confirmedBooking.eventId._id?.toString(),
+      }
     );
   }
 

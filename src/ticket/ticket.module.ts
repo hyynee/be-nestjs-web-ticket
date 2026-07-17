@@ -23,6 +23,7 @@ import { TicketCacheService } from "./infrastructure/cache/ticket-cache.service"
 import { TicketQrService } from "./infrastructure/qr/ticket-qr.service";
 import { TicketPublisherService } from "./infrastructure/realtime/ticket-publisher.service";
 import { TicketPresenter } from "./presenters/ticket.presenter";
+import { NotificationModule } from "@src/notification/notification.module";
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { TicketPresenter } from "./presenters/ticket.presenter";
       { name: Zone.name, schema: ZoneSchema },
       { name: CheckInLog.name, schema: CheckInLogSchema },
     ]),
+    NotificationModule,
   ],
   providers: [
     TicketService,

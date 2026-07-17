@@ -12,12 +12,18 @@ import { MailService } from "@src/services/mail.service";
 import { ExportService } from "@src/export/export.service";
 import { TicketService } from "@src/ticket/ticket.service";
 import { InvoiceService } from "@src/invoice/invoice.service";
+import { NotificationService } from "@src/notification/notification.service";
 import { User } from "@src/schemas/user.schema";
 import { ExportTicketDto } from "@src/export/dto/export-ticket.dto";
 import { ExportCheckInDto } from "@src/export/dto/export-checkin.dto";
 import { FAILED_JOB_ALERT_THRESHOLD } from "./queue.service";
 import type { BookingConfirmationData } from "@src/types/booking-modules";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
+import type {
+  SendBookingExpiryReminderJobPayload,
+  SendEventReminderJobPayload,
+  SendNotificationEmailJobPayload,
+} from "@src/notification/types/notification.types";
 
 type ExportRow = Record<string, string | number | boolean | null>;
 
@@ -43,6 +49,7 @@ export class QueueProcessor extends WorkerHost {
     private readonly exportService: ExportService,
     private readonly ticketService: TicketService,
     private readonly invoiceService: InvoiceService,
+    private readonly notificationService: NotificationService,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectQueue("default") private readonly queue: Queue,
     @InjectQueue("dead-letter") private readonly dlqQueue: Queue
@@ -101,6 +108,30 @@ export class QueueProcessor extends WorkerHost {
         case "resend-invoice-email": {
           const { bookingCode } = payload as { bookingCode: string };
           await this.invoiceService.deliverInvoiceEmail(bookingCode);
+          break;
+        }
+
+        case "send-notification-email": {
+          const data = payload as SendNotificationEmailJobPayload;
+          await this.notificationService.deliverQueuedEmail(
+            data.notificationId,
+            data.template,
+            data.payload
+          );
+          break;
+        }
+
+        case "send-booking-expiry-reminder": {
+          await this.notificationService.processBookingExpiryReminderJob(
+            payload as SendBookingExpiryReminderJobPayload
+          );
+          break;
+        }
+
+        case "send-event-reminder": {
+          await this.notificationService.processEventReminderJob(
+            payload as SendEventReminderJobPayload
+          );
           break;
         }
 
@@ -231,7 +262,7 @@ export class QueueProcessor extends WorkerHost {
           failedAt: new Date().toISOString(),
         },
         {
-          jobId: `dead-letter:${job.id ?? `${job.data?.type}:${Date.now()}`}`,
+          jobId: `dead-letter-${job.id ?? `${job.data?.type}-${Date.now()}`}`,
           removeOnComplete: false,
           removeOnFail: false,
         }

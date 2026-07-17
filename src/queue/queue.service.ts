@@ -232,7 +232,7 @@ export class QueueService {
       await this.retryExistingJob(originalJob);
     } else {
       await this.addJob(originalJobData, {
-        jobId: `retry:${originalJobId ?? id}:${Date.now()}`,
+        jobId: `retry-${originalJobId ?? id}-${Date.now()}`,
       });
     }
 
@@ -278,7 +278,7 @@ export class QueueService {
       attemptsMade: job.attemptsMade,
       failedAt: new Date().toISOString(),
     };
-    const dlqJobId = `dead-letter:${job.id ?? `${job.data?.type}:${Date.now()}`}`;
+    const dlqJobId = `dead-letter-${job.id ?? `${job.data?.type}-${Date.now()}`}`;
 
     const dlqJob = await this.dlqQueue.add("dead-letter", dlqPayload, {
       jobId: dlqJobId,

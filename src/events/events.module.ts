@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { UserEventsService } from "./user-event.services";
 import { UserRegisterListener } from "./listeners/user-register.listener";
-import { MailModule } from "@src/services/mail.module";
+import { NotificationModule } from "@src/notification/notification.module";
 
 @Module({
   imports: [
@@ -12,7 +12,7 @@ import { MailModule } from "@src/services/mail.module";
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    MailModule,
+    NotificationModule,
   ],
   providers: [UserEventsService, UserRegisterListener],
   exports: [UserEventsService],

@@ -14,6 +14,7 @@ import { TicketQrService } from "@src/ticket/infrastructure/qr/ticket-qr.service
 import { TicketPublisherService } from "@src/ticket/infrastructure/realtime/ticket-publisher.service";
 import { TicketPresenter } from "@src/ticket/presenters/ticket.presenter";
 import { RELEASE_LOCK_SCRIPT } from "@src/ticket/ticket.constants";
+import { NotificationService } from "@src/notification/notification.service";
 import {
   TicketInsertPayload,
   TicketIssuedItem,
@@ -37,7 +38,8 @@ export class IssueTicketsFromBookingUseCase {
     private readonly redisService: RedisService,
     private readonly ticketQrService: TicketQrService,
     private readonly ticketPublisher: TicketPublisherService,
-    private readonly ticketPresenter: TicketPresenter
+    private readonly ticketPresenter: TicketPresenter,
+    private readonly notificationService: NotificationService
   ) {}
 
   async execute(
@@ -139,6 +141,12 @@ export class IssueTicketsFromBookingUseCase {
           createdTickets,
           booking.userId?.toString()
         );
+        await this.notificationService.notifyTicketsIssued({
+          userId: booking.userId.toString(),
+          bookingId: booking._id.toString(),
+          bookingCode: booking.bookingCode,
+          eventId: booking.eventId.toString(),
+        });
       }
 
       return createdTickets.map((ticket) =>
