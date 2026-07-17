@@ -52,20 +52,15 @@ describe("TicketController", () => {
   });
 
   describe("POST /ticket/from-booking", () => {
-    it("should call createTicketsFromBooking with bookingCode and userId", async () => {
+    it("should call createTicketsFromBooking with bookingCode only for admin manual issue", async () => {
       const bookingCode = "BK001";
       const expected = [{ ticketCode: "TK001" }];
       mockTicketService.createTicketsFromBooking.mockResolvedValue(expected);
 
-      const result = await controller.createTicketsFromBooking(
-        mockCurrentUser as any,
-        bookingCode
-      );
+      const result = await controller.createTicketsFromBooking(bookingCode);
 
       expect(mockTicketService.createTicketsFromBooking).toHaveBeenCalledWith(
-        bookingCode,
-        undefined,
-        "user-1"
+        bookingCode
       );
       expect(result).toEqual(expected);
     });

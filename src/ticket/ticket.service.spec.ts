@@ -7,6 +7,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
 import { TicketService } from "./ticket.service";
+import { ticketTestProviders } from "./testing/ticket-test.providers";
 import { QueryTicketDto } from "./dto/query.dto";
 import { Ticket } from "@src/schemas/ticket.schema";
 import {
@@ -23,6 +24,7 @@ import { UploadService } from "@src/upload/upload.service";
 import { AuditService } from "@src/audit/audit.service";
 import { EventOwnershipService } from "@src/event/event-ownership.service";
 import * as QRCode from "qrcode";
+import { TicketQrService } from "./infrastructure/qr/ticket-qr.service";
 
 jest.mock("qrcode", () => ({
   toBuffer: jest.fn(),
@@ -94,6 +96,7 @@ describe("TicketService – checkInTicket", () => {
   let checkInLogModel: any;
   let ticketGateway: any;
   let mockAuditService: { record: jest.Mock };
+  let eventOwnershipService: { hasCheckInAccess: jest.Mock };
 
   const adminId = new Types.ObjectId().toString();
   const mockCurrentUser = { userId: adminId, role: "admin" } as any;
@@ -129,7 +132,7 @@ describe("TicketService – checkInTicket", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         {
           provide: getModelToken(Booking.name),
@@ -195,6 +198,7 @@ describe("TicketService – checkInTicket", () => {
     }).compile();
 
     service = module.get<TicketService>(TicketService);
+    eventOwnershipService = module.get(EventOwnershipService);
   });
 
   // ── Happy path ─────────────────────────────────────────────────────────────
@@ -311,12 +315,6 @@ describe("TicketService – checkInTicket", () => {
   // ── Authorization: organizer/staff scope ────────────────────────────────────
 
   describe("check-in authorization (organizer/staff scope)", () => {
-    let eventOwnershipService: { hasCheckInAccess: jest.Mock };
-
-    beforeEach(() => {
-      eventOwnershipService = (service as any).eventOwnershipService;
-    });
-
     it("allows checkin_staff assigned to the ticket's event", async () => {
       const staffUser = {
         userId: new Types.ObjectId().toString(),
@@ -945,7 +943,7 @@ describe("TicketService – cancelTicket inventory restore", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Event.name), useValue: {} },
@@ -1095,7 +1093,7 @@ describe("TicketService – getAllTickets aggregation", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         {
           provide: getModelToken(Booking.name),
@@ -1290,6 +1288,7 @@ describe("TicketService – getAllTickets aggregation", () => {
 describe("TicketService – validateTicket", () => {
   let service: TicketService;
   let ticketModel: any;
+  let eventOwnershipService: { hasCheckInAccess: jest.Mock };
 
   const userId = new Types.ObjectId().toString();
   const ticketCode = "TK_VALIDATE";
@@ -1314,7 +1313,7 @@ describe("TicketService – validateTicket", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         {
           provide: getModelToken(Booking.name),
@@ -1385,6 +1384,7 @@ describe("TicketService – validateTicket", () => {
       ],
     }).compile();
     service = module.get(TicketService);
+    eventOwnershipService = module.get(EventOwnershipService);
   });
 
   it("returns valid:true for a valid ticket during event window", async () => {
@@ -1550,7 +1550,6 @@ describe("TicketService – validateTicket", () => {
     });
 
     const staffUser = { userId, role: "checkin_staff" } as any;
-    const eventOwnershipService = (service as any).eventOwnershipService;
     eventOwnershipService.hasCheckInAccess.mockReturnValueOnce(true);
 
     const result = await service.validateTicket(ticketCode, staffUser);
@@ -1577,7 +1576,6 @@ describe("TicketService – validateTicket", () => {
     });
 
     const staffUser = { userId, role: "checkin_staff" } as any;
-    const eventOwnershipService = (service as any).eventOwnershipService;
     eventOwnershipService.hasCheckInAccess.mockReturnValueOnce(false);
 
     await expect(service.validateTicket(ticketCode, staffUser)).rejects.toThrow(
@@ -1640,6 +1638,7 @@ describe("TicketService – createTicketsFromBooking", () => {
   let redisClient: any;
   let ticketGateway: any;
   let uploadService: any;
+  let ticketQrService: TicketQrService;
 
   const userId = new Types.ObjectId().toString();
   const bookingId = new Types.ObjectId();
@@ -1705,7 +1704,7 @@ describe("TicketService – createTicketsFromBooking", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Event.name), useValue: {} },
@@ -1732,6 +1731,7 @@ describe("TicketService – createTicketsFromBooking", () => {
     }).compile();
 
     service = module.get<TicketService>(TicketService);
+    ticketQrService = module.get(TicketQrService);
   });
 
   const mockFindSessionChain = (result: any) => ({
@@ -1747,6 +1747,16 @@ describe("TicketService – createTicketsFromBooking", () => {
       exec: jest.fn().mockResolvedValue(booking),
     });
   };
+
+  it("throws BadRequestException when booking code is missing", async () => {
+    await expect(
+      service.createTicketsFromBooking(undefined as unknown as string)
+    ).rejects.toThrow(BadRequestException);
+    await expect(service.createTicketsFromBooking("   ")).rejects.toThrow(
+      BadRequestException
+    );
+    expect(bookingModel.findOne).not.toHaveBeenCalled();
+  });
 
   it("throws BadRequestException when booking code is invalid", async () => {
     mockBookingFindOne(null);
@@ -1779,7 +1789,7 @@ describe("TicketService – createTicketsFromBooking", () => {
       .mockReturnValueOnce(mockFindSessionChain([])) // lock check
       .mockReturnValueOnce(mockFindSessionChain([])); // idempotency check
     jest
-      .spyOn(service as any, "generateQRCode")
+      .spyOn(ticketQrService, "generateQRCode")
       .mockResolvedValue("https://cdn.example.com/qr/TK.png");
     const createdTickets = [
       { ticketCode: "TK1", eventId, zoneId },
@@ -1822,7 +1832,7 @@ describe("TicketService – createTicketsFromBooking", () => {
       .mockReturnValueOnce(mockFindSessionChain([]))
       .mockReturnValueOnce(mockFindSessionChain([]));
     jest
-      .spyOn(service as any, "generateQRCode")
+      .spyOn(ticketQrService, "generateQRCode")
       .mockResolvedValue("https://cdn.example.com/qr/TK.png");
     const createdTickets = [
       { ticketCode: "TK1", eventId, zoneId },
@@ -1911,7 +1921,7 @@ describe("TicketService – createTicketsFromBooking", () => {
       .mockReturnValueOnce(mockFindSessionChain([]))
       .mockReturnValueOnce(mockFindSessionChain([{ ticketCode: "FALLBACK" }]));
     jest
-      .spyOn(service as any, "generateQRCode")
+      .spyOn(ticketQrService, "generateQRCode")
       .mockResolvedValue("https://cdn.example.com/qr/TK.png");
     const err = new Error("E11000 duplicate") as any;
     err.code = 11000;
@@ -1936,7 +1946,7 @@ describe("TicketService – createTicketsFromBooking", () => {
       .mockReturnValueOnce(mockFindSessionChain([]))
       .mockReturnValueOnce(mockFindSessionChain([]));
     jest
-      .spyOn(service as any, "generateQRCode")
+      .spyOn(ticketQrService, "generateQRCode")
       .mockResolvedValue("https://cdn.example.com/qr/TK.png");
     ticketModel.insertMany.mockResolvedValueOnce([{ ticketCode: "TK1" }]);
 
@@ -1996,7 +2006,7 @@ describe("TicketService – createTicketsFromBooking", () => {
       .mockReturnValueOnce(mockFindSessionChain([]))
       .mockReturnValueOnce(mockFindSessionChain([]));
     jest
-      .spyOn(service as any, "generateQRCode")
+      .spyOn(ticketQrService, "generateQRCode")
       .mockResolvedValue("https://cdn.example.com/qr/TK.png");
     const err = new Error("E11000 duplicate key") as any;
     err.code = 11000;
@@ -2037,7 +2047,7 @@ describe("TicketService – getCheckInHistory", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         {
           provide: getModelToken(Booking.name),
@@ -2238,7 +2248,7 @@ describe("TicketService – cancelTicket", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         {
@@ -2528,7 +2538,7 @@ describe("TicketService – getTicketByCode", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         { provide: getModelToken(Booking.name), useValue: bookingModel },
         { provide: getModelToken(Event.name), useValue: {} },
@@ -2661,7 +2671,7 @@ describe("TicketService – getAllTickets", () => {
     const mockRedisGet = jest.fn().mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         {
           provide: getModelToken(Booking.name),

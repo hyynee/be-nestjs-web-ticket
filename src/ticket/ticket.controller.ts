@@ -43,14 +43,9 @@ export class TicketController {
   @HttpCode(201)
   @Post("from-booking")
   async createTicketsFromBooking(
-    @CurrentUser() user: JwtPayload,
     @Body("bookingCode") bookingCode: string
   ): ReturnType<TicketService["createTicketsFromBooking"]> {
-    return this.ticketService.createTicketsFromBooking(
-      bookingCode,
-      undefined,
-      user.userId
-    );
+    return this.ticketService.createTicketsFromBooking(bookingCode);
   }
 
   @ApiCookieAuth("access_token")
