@@ -17,3 +17,12 @@ backup/
 *.md
 *.txt
 *.js
+
+# Local agent/session artifacts
+.claude/
+.messages/
+project-state.conf
+
+# Local seed/smoke scripts with environment-specific data
+scripts/create-users.cjs
+scripts/seed.ts
