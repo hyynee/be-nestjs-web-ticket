@@ -13,6 +13,8 @@ import { Throttle } from "@nestjs/throttler";
 import { ChatService } from "./chat.service";
 import { OllamaService } from "./ollama.service";
 import { ChatRequestDto, ChatResponseDto } from "./chat.dto";
+import { EventData } from "./chat.interface";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Controller("chat")
 export class ChatController {
@@ -27,19 +29,28 @@ export class ChatController {
     return data;
   }
 
+  private toResponseEvents(events: EventData[]): ChatResponseDto["events"] {
+    return events.map((event) => ({
+      id: event.id.toString(),
+      title: event.title,
+      description: event.description,
+      startDate: event.startDate.toISOString(),
+      endDate: event.endDate.toISOString(),
+      location: event.location,
+      thumbnail: event.thumbnail,
+      isActiveNow: event.isActiveNow,
+      status: event.status,
+    }));
+  }
+
   @Throttle({ short: { limit: 15, ttl: 60000 } })
   @Post("message")
   async sendMessage(@Body() body: ChatRequestDto): Promise<ChatResponseDto> {
     try {
       const { message, sessionId } = body;
 
-      // 1. Tạo prompt từ câu hỏi
       const prompt = await this.chatService.createPrompt(message);
-
-      // 2. Gửi cho AI
       const aiResponse = await this.ollamaService.generateResponse(prompt);
-
-      // 3. Xử lý kết quả
       const result = await this.chatService.handleChatMessage(
         message,
         aiResponse
@@ -47,17 +58,7 @@ export class ChatController {
 
       return this.buildChatResponse({
         message: result.response,
-        events: result.eventData.map((event) => ({
-          id: event.id.toString(),
-          title: event.title,
-          description: event.description,
-          startDate: event.startDate.toISOString(),
-          endDate: event.endDate.toISOString(),
-          location: event.location,
-          thumbnail: event.thumbnail,
-          isActiveNow: event.isActiveNow,
-          status: event.status,
-        })),
+        events: this.toResponseEvents(result.eventData),
         intent: result.intent,
         sessionId: sessionId || this.createSessionId(),
         timestamp: result.timestamp,
@@ -91,22 +92,15 @@ export class ChatController {
 
       return this.buildChatResponse({
         message: result.response,
-        events: result.eventData.slice(0, 5).map((event) => ({
-          id: event.id.toString(),
-          title: event.title,
-          description: event.description,
-          startDate: event.startDate.toISOString(),
-          endDate: event.endDate.toISOString(),
-          location: event.location,
-          thumbnail: event.thumbnail,
-          isActiveNow: event.isActiveNow,
-          status: event.status,
-        })),
+        events: this.toResponseEvents(result.eventData.slice(0, 5)),
         intent: "suggest",
         sessionId: this.createSessionId(),
         timestamp: result.timestamp,
       });
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `chat.suggestions_unavailable type=${type}: ${getErrorMessage(error)}`
+      );
       throw new ServiceUnavailableException({
         code: "CHAT_SUGGESTIONS_UNAVAILABLE",
         message: "Không thể tải đề xuất.",
@@ -136,22 +130,15 @@ export class ChatController {
 
       return this.buildChatResponse({
         message: result.response,
-        events: result.eventData.map((event) => ({
-          id: event.id.toString(),
-          title: event.title,
-          description: event.description,
-          startDate: event.startDate.toISOString(),
-          endDate: event.endDate.toISOString(),
-          location: event.location,
-          thumbnail: event.thumbnail,
-          isActiveNow: event.isActiveNow,
-          status: event.status,
-        })),
+        events: this.toResponseEvents(result.eventData),
         intent: "event_detail",
         sessionId: this.createSessionId(),
         timestamp: result.timestamp,
       });
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `chat.event_detail_unavailable eventId=${eventId}: ${getErrorMessage(error)}`
+      );
       throw new NotFoundException({
         code: "CHAT_EVENT_NOT_FOUND",
         message: "Không tìm thấy sự kiện.",

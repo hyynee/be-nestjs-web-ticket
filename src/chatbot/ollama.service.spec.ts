@@ -147,8 +147,7 @@ describe("OllamaService", () => {
 
       await expect(service.generateResponse("test")).rejects.toThrow();
       expect(logSpy).toHaveBeenCalledWith(
-        "Ollama API error:",
-        expect.any(Error)
+        expect.stringContaining("Ollama API error: API error")
       );
     });
   });

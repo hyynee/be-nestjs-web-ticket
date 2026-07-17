@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import axios from "axios";
 import config from "@src/config/config";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 const OLLAMA_GENERATE_TIMEOUT_MS = 30_000;
 const OLLAMA_PING_TIMEOUT_MS = 5_000;
@@ -30,10 +31,9 @@ export class OllamaService {
 
       return response.data.response;
     } catch (error) {
-      this.logger.error("Ollama API error:", error);
-      throw new Error(
-        `Failed to generate response: ${(error as Error).message}`
-      );
+      const message = getErrorMessage(error);
+      this.logger.error(`Ollama API error: ${message}`);
+      throw new Error(`Failed to generate response: ${message}`);
     }
   }
 
@@ -43,7 +43,8 @@ export class OllamaService {
         timeout: OLLAMA_PING_TIMEOUT_MS,
       });
       return true;
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Ollama health check failed: ${getErrorMessage(error)}`);
       return false;
     }
   }

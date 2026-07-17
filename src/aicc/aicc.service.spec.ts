@@ -30,6 +30,9 @@ import {
 import { AiccToolName } from "./tools/aicc-tool.types";
 import { AiccKnowledgeTool } from "./tools/knowledge.tool";
 import { AiccGateway } from "./aicc.gateway";
+import { AiccPresenter } from "./presenters/aicc.presenter";
+import { AiccKnowledgeService } from "./application/aicc-knowledge.service";
+import { AiccHandoffService } from "./application/aicc-handoff.service";
 
 type SessionRecord = AiccSession & {
   createdAt?: Date;
@@ -499,14 +502,28 @@ describe("AiccService", () => {
       })),
     };
 
+    const presenter = new AiccPresenter();
+    const aiccKnowledgeService = new AiccKnowledgeService(
+      knowledgeModel as unknown as Model<AiccKnowledge>,
+      knowledgeTool as unknown as AiccKnowledgeTool,
+      presenter
+    );
+    const aiccHandoffService = new AiccHandoffService(
+      sessionModel as unknown as Model<AiccSession>,
+      handoffModel as unknown as Model<AiccHandoff>,
+      presenter,
+      gateway as unknown as AiccGateway
+    );
+
     service = new AiccService(
       sessionModel as unknown as Model<AiccSession>,
       messageModel as unknown as Model<AiccMessage>,
       toolCallModel as unknown as Model<AiccToolCall>,
       handoffModel as unknown as Model<AiccHandoff>,
-      knowledgeModel as unknown as Model<AiccKnowledge>,
       orchestrator as unknown as AiccOrchestratorService,
-      knowledgeTool as unknown as AiccKnowledgeTool,
+      aiccKnowledgeService,
+      aiccHandoffService,
+      presenter,
       gateway as unknown as AiccGateway
     );
   });

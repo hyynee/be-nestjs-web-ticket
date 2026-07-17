@@ -544,16 +544,14 @@ describe("ChatService", () => {
       expect(eventModel.find).not.toHaveBeenCalled();
     });
 
-    it("should return empty array on error", async () => {
+    it("should propagate database lookup errors", async () => {
       eventModel.find.mockImplementation(() => {
         throw new Error("DB error");
       });
 
-      const result = await service.getEventsForIds([
-        "64c1f2e1e1e1e1e1e1e1e1e1",
-      ]);
-
-      expect(result).toEqual([]);
+      await expect(
+        service.getEventsForIds(["64c1f2e1e1e1e1e1e1e1e1e1"])
+      ).rejects.toThrow("DB error");
     });
 
     it("should handle event without description and thumbnail", async () => {

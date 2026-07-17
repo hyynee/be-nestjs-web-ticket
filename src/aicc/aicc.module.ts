@@ -26,6 +26,11 @@ import { AiccPaymentTool } from "./tools/payment.tool";
 import { AiccTicketTool } from "./tools/ticket.tool";
 import { AiccKnowledgeTool } from "./tools/knowledge.tool";
 import { AiccGateway } from "./aicc.gateway";
+import { AiccPresenter } from "./presenters/aicc.presenter";
+import { AiccKnowledgeService } from "./application/aicc-knowledge.service";
+import { AiccHandoffService } from "./application/aicc-handoff.service";
+import { AiccEntityInterpreterService } from "./orchestrator/aicc-entity-interpreter.service";
+import { AiccResponseComposerService } from "./orchestrator/aicc-response-composer.service";
 
 @Module({
   imports: [
@@ -46,12 +51,17 @@ import { AiccGateway } from "./aicc.gateway";
   controllers: [AiccController],
   providers: [
     AiccService,
+    AiccKnowledgeService,
+    AiccHandoffService,
     AiccOrchestratorService,
+    AiccEntityInterpreterService,
+    AiccResponseComposerService,
     AiccEventTool,
     AiccBookingTool,
     AiccPaymentTool,
     AiccTicketTool,
     AiccKnowledgeTool,
+    AiccPresenter,
     AiccGateway,
   ],
   exports: [AiccService],

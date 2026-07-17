@@ -8,6 +8,8 @@ import { AiccKnowledgeTool } from "../tools/knowledge.tool";
 import { AiccToolName } from "../tools/aicc-tool.types";
 import { AiccHandoffReason } from "../schemas/aicc-handoff.schema";
 import { AiccKnowledgeCategory } from "../schemas/aicc-knowledge.schema";
+import { AiccEntityInterpreterService } from "./aicc-entity-interpreter.service";
+import { AiccResponseComposerService } from "./aicc-response-composer.service";
 
 describe("AiccOrchestratorService", () => {
   let eventTool: {
@@ -88,7 +90,9 @@ describe("AiccOrchestratorService", () => {
       bookingTool as unknown as AiccBookingTool,
       paymentTool as unknown as AiccPaymentTool,
       ticketTool as unknown as AiccTicketTool,
-      knowledgeTool as unknown as AiccKnowledgeTool
+      knowledgeTool as unknown as AiccKnowledgeTool,
+      new AiccEntityInterpreterService(),
+      new AiccResponseComposerService()
     );
   });
 

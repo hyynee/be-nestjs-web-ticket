@@ -10,6 +10,7 @@ import {
 import { Logger } from "@nestjs/common";
 import { Server, Socket } from "socket.io";
 import { JwtService } from "@nestjs/jwt";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 const chatAllowedOrigins = (process.env.CORS_ORIGINS || "")
   .split(",")
@@ -30,7 +31,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   constructor(private readonly jwtService: JwtService) {}
 
-  async handleConnection(client: Socket) {
+  async handleConnection(client: Socket): Promise<void> {
     const token =
       ((client.handshake.auth as Record<string, unknown>)?.token as
         string | undefined) ??
@@ -54,14 +55,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.debug(
         `ChatGateway: client ${client.id} authenticated as userId=${payload["userId"]}`
       );
-    } catch {
-      this.logger.warn(`ChatGateway: invalid token from ${client.id}`);
+    } catch (error) {
+      this.logger.warn(
+        `ChatGateway: invalid token from ${client.id}: ${getErrorMessage(error)}`
+      );
       client.emit("error", { message: "Unauthorized" });
       client.disconnect();
     }
   }
 
-  handleDisconnect(client: Socket) {
+  handleDisconnect(client: Socket): void {
     this.logger.debug(`ChatGateway: client ${client.id} disconnected`);
   }
 
@@ -69,7 +72,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleMessage(
     @MessageBody() data: unknown,
     @ConnectedSocket() client: Socket
-  ) {
+  ): void {
     if (!client.data?.user) {
       client.emit("error", { message: "Unauthorized" });
       client.disconnect();
