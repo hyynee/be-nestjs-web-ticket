@@ -7,6 +7,7 @@ import {
 import type { Request, Response, NextFunction } from "express";
 import axios from "axios";
 import { RedisService } from "@src/redis/redis.service";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 // Seed list used as fallback when the dynamic fetch fails and Redis has no cache.
 // Updated 2026-05-31 from https://stripe.com/files/ips/ips_webhooks.txt
@@ -46,7 +47,7 @@ export class StripeIpMiddleware implements NestMiddleware {
       // Warm the in-memory cache on startup without blocking bootstrap
       this.refreshIps().catch((err: unknown) => {
         this.logger.warn(
-          `StripeIpMiddleware: initial IP refresh failed — using seed list. Error: ${(err as Error)?.message}`
+          `StripeIpMiddleware: initial IP refresh failed — using seed list. Error: ${getErrorMessage(err)}`
         );
       });
     }
@@ -61,7 +62,11 @@ export class StripeIpMiddleware implements NestMiddleware {
     // so the in-memory set stays warm between restarts.
     const ageMs = Date.now() - this.lastRefresh;
     if (ageMs > 23 * 60 * 60 * 1000) {
-      this.refreshIps().catch(() => {});
+      this.refreshIps().catch((error: unknown) => {
+        this.logger.warn(
+          `StripeIpMiddleware: background IP refresh failed — ${getErrorMessage(error)}`
+        );
+      });
     }
 
     const clientIp = req.ip ?? "";
@@ -77,7 +82,6 @@ export class StripeIpMiddleware implements NestMiddleware {
   }
 
   async refreshIps(): Promise<void> {
-    // 1. Try Redis cache first
     try {
       const cached = await this.redisService.client.get(REDIS_KEY);
       if (cached) {
@@ -89,11 +93,12 @@ export class StripeIpMiddleware implements NestMiddleware {
         );
         return;
       }
-    } catch {
-      // Redis unavailable — fall through to HTTP fetch
+    } catch (error) {
+      this.logger.warn(
+        `StripeIpMiddleware: Redis IP cache read failed — ${getErrorMessage(error)}`
+      );
     }
 
-    // 2. Fetch from Stripe's official URL
     try {
       const response = await axios.get<string>(STRIPE_IP_LIST_URL, {
         timeout: 5_000,
@@ -119,12 +124,15 @@ export class StripeIpMiddleware implements NestMiddleware {
       // Write to Redis so other instances share the same list
       await this.redisService.client
         .set(REDIS_KEY, JSON.stringify(ips), { EX: CACHE_TTL_SEC })
-        .catch(() => {});
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `StripeIpMiddleware: Redis IP cache write failed — ${getErrorMessage(error)}`
+          );
+        });
     } catch (err) {
       this.logger.warn(
-        `StripeIpMiddleware: IP list fetch failed — retaining current list (${this.cachedIps.size} IPs). Error: ${(err as Error)?.message}`
+        `StripeIpMiddleware: IP list fetch failed — retaining current list (${this.cachedIps.size} IPs). Error: ${getErrorMessage(err)}`
       );
-      // Keep existing cachedIps (seed or last good fetch) — do not clear them
     }
   }
 }

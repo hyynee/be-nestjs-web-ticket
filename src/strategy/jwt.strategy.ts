@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/mongoose";
 import { PassportStrategy } from "@nestjs/passport";
@@ -7,10 +7,15 @@ import { RedisService } from "@src/redis/redis.service";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { Request } from "express";
 import { Model } from "mongoose";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 type JwtClaims = {
   userId: string;
   role: string;
+};
+
+type ValidatedJwtPayload = JwtClaims & {
+  isVerified: boolean;
 };
 
 type CachedUserState = {
@@ -29,6 +34,8 @@ const extractAccessTokenFromCookie = (request: Request): string | null => {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
+  private readonly logger = new Logger(JwtStrategy.name);
+
   constructor(
     private readonly config: ConfigService,
     @InjectModel(User.name) private readonly userModel: Model<User>,
@@ -43,7 +50,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(request: Request, payload: JwtClaims) {
+  async validate(
+    request: Request,
+    payload: JwtClaims
+  ): Promise<ValidatedJwtPayload> {
     if (!payload?.userId) {
       throw new UnauthorizedException("Invalid token payload");
     }
@@ -72,8 +82,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (raw) {
         userState = JSON.parse(raw) as CachedUserState;
       }
-    } catch {
-      // Redis unavailable — fall through to DB
+    } catch (error) {
+      this.logger.warn(
+        `JwtStrategy: auth state cache read failed for userId=${payload.userId}: ${getErrorMessage(error)}`
+      );
     }
 
     if (!userState) {
@@ -98,8 +110,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           JSON.stringify(userState),
           { EX: AUTH_USER_CACHE_TTL_SEC }
         );
-      } catch {
-        // Redis unavailable — state was fetched from DB, proceed normally
+      } catch (error) {
+        this.logger.warn(
+          `JwtStrategy: auth state cache write failed for userId=${payload.userId}: ${getErrorMessage(error)}`
+        );
       }
     } else if (!userState.isActive) {
       throw new UnauthorizedException("User not found or inactive");

@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import * as os from "os";
 import { RedisService } from "./redis/redis.service";
 import { QueueService } from "./queue/queue.service";
+import { getErrorMessage } from "./helper/getErrorMessage";
 
 export interface HealthResponse {
   status: "ok";
@@ -29,6 +30,8 @@ export interface ReadinessResponse {
 
 @Injectable()
 export class AppService {
+  private readonly logger = new Logger(AppService.name);
+
   constructor(
     @InjectConnection() private readonly mongoConnection: Connection,
     private readonly redisService: RedisService,
@@ -115,12 +118,15 @@ export class AppService {
       let queueCounts: Record<string, number> = {};
       try {
         queueCounts = await this.queueService.getJobCounts();
-      } catch {
-        // Queue metrics are informational — don't fail readiness for them
+      } catch (error) {
+        this.logger.warn(
+          `Readiness queue metrics unavailable: ${getErrorMessage(error)}`
+        );
       }
 
       return this.readiness({ mongoReady, redisReady, queueCounts });
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Readiness check failed: ${getErrorMessage(error)}`);
       return this.unavailableReadiness();
     }
   }

@@ -46,7 +46,8 @@ describe("EventOwnershipService", () => {
 
   const leanMock = (result: unknown) => ({
     select: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockResolvedValue(result),
+    lean: jest.fn().mockReturnThis(),
+    session: jest.fn().mockResolvedValue(result),
   });
 
   beforeEach(async () => {

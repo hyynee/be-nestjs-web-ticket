@@ -1,6 +1,7 @@
-import { Injectable, NestMiddleware } from "@nestjs/common";
+import { Injectable, Logger, NestMiddleware } from "@nestjs/common";
 import { NextFunction, Request, Response } from "express";
 import * as geoip from "geoip-lite";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 function normalizeIp(rawIp: string): string {
   if (!rawIp) {
@@ -14,6 +15,8 @@ function normalizeIp(rawIp: string): string {
 
 @Injectable()
 export class GeoIpMiddleware implements NestMiddleware {
+  private readonly logger = new Logger(GeoIpMiddleware.name);
+
   use(req: Request, _res: Response, next: NextFunction): void {
     const forwardedFor = req.headers["x-forwarded-for"];
     const rawForwardedFor = Array.isArray(forwardedFor)
@@ -25,7 +28,10 @@ export class GeoIpMiddleware implements NestMiddleware {
     try {
       const lookup = geoip.lookup(ip);
       req.ipInfo = lookup ? { ...lookup, ip } : null;
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        `GeoIP lookup failed for ip=${ip}: ${getErrorMessage(error)}`
+      );
       req.ipInfo = null;
     }
     next();

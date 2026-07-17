@@ -8,6 +8,7 @@ import {
 import { JwtService } from "@nestjs/jwt";
 import { RedisService } from "@src/redis/redis.service";
 import { Request } from "express";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Injectable()
 /**
@@ -38,7 +39,7 @@ export class AuthGuard implements CanActivate {
       );
     } catch (err) {
       this.logger.error(
-        `AuthGuard: Redis unavailable, failing closed for blacklist check — ${(err as Error)?.message ?? "unknown"}`
+        `AuthGuard: Redis unavailable, failing closed for blacklist check — ${getErrorMessage(err)}`
       );
       throw new UnauthorizedException("Auth service temporarily unavailable");
     }
@@ -50,7 +51,10 @@ export class AuthGuard implements CanActivate {
     try {
       const payload = await this.jwtService.verifyAsync(token);
       request["user"] = payload;
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        `AuthGuard: token verification failed — ${getErrorMessage(error)}`
+      );
       throw new UnauthorizedException("Invalid or expired token");
     }
 

@@ -51,7 +51,6 @@ UserSchema.index({ role: 1 });
 UserSchema.index({ isActive: 1 });
 UserSchema.index({ isActive: 1, role: 1 });
 
-// Hash password trước khi lưu
 UserSchema.pre<User>("save", async function (next) {
   if (!this.isModified("password")) return next();
   const salt = await bcrypt.genSalt(10);

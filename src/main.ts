@@ -162,10 +162,22 @@ async function bootstrap() {
       await app.close();
       await Promise.all([
         pubClient.isOpen
-          ? pubClient.quit().catch(() => undefined)
+          ? pubClient.quit().catch((err: unknown) => {
+              logger.error(
+                `Redis pubClient shutdown error: ${(err as Error)?.message ?? "unknown"}`,
+                undefined,
+                "Bootstrap"
+              );
+            })
           : Promise.resolve(),
         subClient.isOpen
-          ? subClient.quit().catch(() => undefined)
+          ? subClient.quit().catch((err: unknown) => {
+              logger.error(
+                `Redis subClient shutdown error: ${(err as Error)?.message ?? "unknown"}`,
+                undefined,
+                "Bootstrap"
+              );
+            })
           : Promise.resolve(),
       ]);
       clearTimeout(timeoutHandle);

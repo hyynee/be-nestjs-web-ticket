@@ -10,7 +10,7 @@ export class UserRegisterListener {
   constructor(private readonly mail: MailService) {}
 
   @OnEvent("user.registered")
-  async handleUserRegisteredEvent(payload: User) {
+  async handleUserRegisteredEvent(payload: User): Promise<void> {
     try {
       const { email, fullName } = payload;
       await this.mail.sendRegisterEmail(email, fullName);
@@ -24,7 +24,7 @@ export class UserRegisterListener {
     email: string;
     resetToken: string;
     fullName: string;
-  }) {
+  }): Promise<void> {
     try {
       await this.mail.sendPasswordResetEmail(
         payload.email,
@@ -40,7 +40,7 @@ export class UserRegisterListener {
     email: string;
     token: string;
     fullName: string;
-  }) {
+  }): Promise<void> {
     try {
       await this.mail.sendVerificationEmail(
         payload.email,
@@ -53,7 +53,9 @@ export class UserRegisterListener {
   }
 
   @OnEvent("booking.confirmation")
-  async handleBookingConfirmationEvent(payload: BookingConfirmationData) {
+  async handleBookingConfirmationEvent(
+    payload: BookingConfirmationData
+  ): Promise<void> {
     try {
       await this.mail.sendBookingConfirmation(payload);
     } catch (error) {

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model, Types } from "mongoose";
+import { ClientSession, Model, Types } from "mongoose";
 import { Event } from "@src/schemas/event.schema";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
 
@@ -46,7 +46,11 @@ export class EventOwnershipService {
    * without a DB lookup. Use this at the top of each event-scoped mutation
    * or admin-facing read that organizers should only see for their own events.
    */
-  async assertCanManageEvent(user: JwtPayload, eventId: string): Promise<void> {
+  async assertCanManageEvent(
+    user: JwtPayload,
+    eventId: string,
+    session?: ClientSession
+  ): Promise<void> {
     if (user.role === "admin") return;
 
     if (!Types.ObjectId.isValid(eventId)) {
@@ -56,7 +60,8 @@ export class EventOwnershipService {
     const event = await this.eventModel
       .findOne({ _id: eventId, isDeleted: false })
       .select("createdBy organizerIds")
-      .lean<OwnershipCheckFields>();
+      .lean<OwnershipCheckFields>()
+      .session(session ?? null);
 
     if (!event) {
       throw new NotFoundException("Event not found");

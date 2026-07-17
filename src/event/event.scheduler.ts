@@ -27,7 +27,7 @@ export class EventScheduler {
   ) {}
 
   @Cron("*/5 * * * *")
-  async handleAutoEndEvents() {
+  async handleAutoEndEvents(): Promise<void> {
     const lockValue = uuidv4();
     const acquired = await this.redisService.client
       .set(END_LOCK_KEY, lockValue, { NX: true, EX: END_LOCK_TTL_SEC })

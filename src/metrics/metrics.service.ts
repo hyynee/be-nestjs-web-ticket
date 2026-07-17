@@ -45,6 +45,20 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  readonly zoneCapacityInconsistentTotal = new Counter({
+    name: "zone_capacity_inconsistent_total",
+    help: "Number of times a zone capacity conditional update failed to match, indicating counter drift",
+    labelNames: ["direction"] as const,
+    registers: [this.registry],
+  });
+
+  readonly cacheInvalidationFailureTotal = new Counter({
+    name: "cache_invalidation_failure_total",
+    help: "Number of times a post-commit cache invalidation call failed",
+    labelNames: ["source"] as const,
+    registers: [this.registry],
+  });
+
   readonly httpRequestDuration = new Histogram({
     name: "http_request_duration_seconds",
     help: "HTTP request duration in seconds",

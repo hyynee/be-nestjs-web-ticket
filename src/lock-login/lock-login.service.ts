@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { RedisService } from "@src/redis/redis.service";
 import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { Logger } from "winston";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Injectable()
 export class LockLoginService {
@@ -98,7 +99,14 @@ export class LockLoginService {
 
     const safeIdentifier = identifier.replace(/[^a-zA-Z0-9@._-]/g, "");
     const emailKey = `auth:fail:email:${safeIdentifier}`;
-    await this.redisService.client.del(emailKey).catch(() => {});
+    await this.redisService.client.del(emailKey).catch((error: unknown) => {
+      this.logger.warn({
+        message: "Failed to reset global login failure counter",
+        context: "security",
+        identifier,
+        error: getErrorMessage(error),
+      });
+    });
 
     if (deletedCount > 0) {
       this.logger.info({

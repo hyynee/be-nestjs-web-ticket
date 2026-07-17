@@ -23,6 +23,7 @@ import {
   validateTimeSlotWindow,
   TicketService,
 } from "@src/ticket/ticket.service";
+import { ticketTestProviders } from "@src/ticket/testing/ticket-test.providers";
 
 import { Event } from "@src/schemas/event.schema";
 import { Zone } from "@src/schemas/zone.schema";
@@ -53,6 +54,17 @@ import { EventCommandService } from "../application/event-command.service";
 import { EventLifecycleService } from "../application/event-lifecycle.service";
 import { EventMemberService } from "../application/event-member.service";
 import { EventQueryService } from "../application/event-query.service";
+import { BookingCommandService } from "@src/booking/application/booking-command.service";
+import { BookingMaintenanceService } from "@src/booking/application/booking-maintenance.service";
+import { BookingQueryService } from "@src/booking/application/booking-query.service";
+import { AdminCancelBookingUseCase } from "@src/booking/application/use-case/admin-cancel-booking.use-case";
+import { BookingMutationService } from "@src/booking/application/use-case/booking-mutation.use-case";
+import { CancelBookingUseCase } from "@src/booking/application/use-case/cancel-booking.use-case";
+import { CreateBookingUseCase } from "@src/booking/application/use-case/create-booking.use-case";
+import { BookingCodeService } from "@src/booking/domain/services/booking-code.service";
+import { BookingCacheService } from "@src/booking/infrastructure/cache/booking-cache.service";
+import { BookingZoneNotifierService } from "@src/booking/infrastructure/realtime/booking-zone-notifier.service";
+import { BookingPresenter } from "@src/booking/presenters/booking.presenter";
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 const HOUR_MS = 60 * 60 * 1000;
@@ -457,7 +469,7 @@ describe("Edge Case — Check-in Integration (TicketService.validateTicket)", ()
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        TicketService,
+        ...ticketTestProviders,
         { provide: getModelToken(Ticket.name), useValue: ticketModel },
         {
           provide: getModelToken(Booking.name),
@@ -721,6 +733,17 @@ describe("Edge Case — Slot Capacity Boundary (BookingService.createBooking)", 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BookingService,
+        BookingCommandService,
+        BookingMutationService,
+        CreateBookingUseCase,
+        CancelBookingUseCase,
+        AdminCancelBookingUseCase,
+        BookingQueryService,
+        BookingMaintenanceService,
+        BookingCacheService,
+        BookingZoneNotifierService,
+        BookingPresenter,
+        BookingCodeService,
         { provide: getModelToken(Booking.name), useValue: bookingModelMock },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(Zone.name), useValue: zoneModel },

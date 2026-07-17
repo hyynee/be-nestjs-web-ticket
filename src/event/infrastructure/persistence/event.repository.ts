@@ -8,6 +8,11 @@ import type {
   EventZoneView,
 } from "../../domain/types/event.types";
 
+interface EventPageResult {
+  events: EventViewSource[];
+  total: number;
+}
+
 @Injectable()
 export class EventRepository {
   constructor(
@@ -34,7 +39,7 @@ export class EventRepository {
     sort: Record<string, 1 | -1>;
     skip: number;
     limit: number;
-  }): Promise<{ events: EventViewSource[]; total: number }> {
+  }): Promise<EventPageResult> {
     const [events, total] = await Promise.all([
       this.eventModel
         .find(input.filter)

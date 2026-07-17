@@ -38,6 +38,7 @@ import { AuthUserCacheService } from "../infrastructure/cache/auth-user-cache.se
 import { AuthCookieService } from "../infrastructure/http/auth-cookie.service";
 import { AuthTokenService } from "../infrastructure/security/auth-token.service";
 import { AuthPresenter } from "../presenters/auth.presenter";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 @Injectable()
 export class AuthSessionService {
@@ -189,7 +190,11 @@ export class AuthSessionService {
       .set(this.getSessionShadowKey(tokenHash), user._id.toString(), {
         EX: SHADOW_TTL_SECONDS,
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `refresh: failed to write session shadow cache for userId=${user._id.toString()} — ${getErrorMessage(error)}`
+        );
+      });
 
     this.authCookieService.setTokenCookies(res, {
       accessToken,
@@ -207,9 +212,9 @@ export class AuthSessionService {
       decoded = this.authTokenService.verifyAccessToken(accessToken) as {
         exp?: number;
       } | null;
-    } catch {
+    } catch (error) {
       this.logger.warn(
-        "logout: access token verification failed, skipping blacklist"
+        `logout: access token verification failed, skipping blacklist — ${getErrorMessage(error)}`
       );
       return;
     }

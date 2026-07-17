@@ -8,6 +8,7 @@ import {
   UseInterceptors,
   HttpException,
   HttpStatus,
+  Logger,
   Query,
 } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
@@ -25,6 +26,7 @@ import * as multer from "multer";
 import { UserService } from "@src/user/user.service";
 import { CurrentUser } from "@src/auth/decorator/currentUser.decorator";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
+import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 const storage = multer.memoryStorage();
 const PRIVATE_IMAGE_EXPIRES_IN_SECONDS = 24 * 3600;
@@ -34,11 +36,13 @@ interface AvatarReference {
   avatarPublicId: string | null;
 }
 
+interface AvatarLookupResult {
+  avatarPublicId?: string | null;
+}
+
 interface AvatarLookupService {
-  getUserAvatarReference?: (
-    userId: string
-  ) => Promise<{ avatarPublicId?: string | null }>;
-  getUserById?: (userId: string) => Promise<{ avatarPublicId?: string | null }>;
+  getUserAvatarReference?: (userId: string) => Promise<AvatarLookupResult>;
+  getUserById?: (userId: string) => Promise<AvatarLookupResult>;
 }
 
 function uploadImageBuffer(
@@ -70,6 +74,8 @@ function uploadImageBuffer(
 
 @Controller("upload")
 export class UploadController {
+  private readonly logger = new Logger(UploadController.name);
+
   constructor(private readonly userService: UserService) {
     cloudinary.config({
       cloud_name: config.CLOUDINARY_CLOUD_NAME,
@@ -176,7 +182,10 @@ export class UploadController {
           expiresAt: Date.now() + expiresIn * 1000,
         },
       };
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `UploadController: failed to generate signed image URL for publicId=${publicId}: ${getErrorMessage(error)}`
+      );
       throw new HttpException(
         "Failed to generate signed URL",
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -319,7 +328,10 @@ export class UploadController {
           expiresAt: Date.now() + expiresIn * 1000,
         },
       };
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `UploadController: failed to generate signed avatar URL for userId=${user.userId}: ${getErrorMessage(error)}`
+      );
       throw new HttpException(
         "Failed to generate signed URL",
         HttpStatus.INTERNAL_SERVER_ERROR
