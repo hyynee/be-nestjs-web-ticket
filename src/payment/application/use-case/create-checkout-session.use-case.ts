@@ -77,6 +77,11 @@ export class CreateCheckoutSessionUseCase {
         "Thời gian giữ chỗ sắp hết hạn, vui lòng đặt lại vé để thanh toán"
       );
     }
+    if (booking.totalPrice <= 0) {
+      throw new BadRequestException(
+        "Free checkout is not supported for this payment method"
+      );
+    }
 
     const event = booking.eventId;
     const zone = booking.zoneId;
@@ -142,9 +147,9 @@ export class CreateCheckoutSessionUseCase {
               zoneId: toPaymentObjectId(zone._id, "zoneId").toString(),
             },
           },
-          unit_amount: Math.round(booking.pricePerTicket),
+          unit_amount: Math.round(booking.totalPrice),
         },
-        quantity: booking.seats.length || booking.quantity,
+        quantity: 1,
       },
     ];
 
@@ -160,6 +165,11 @@ export class CreateCheckoutSessionUseCase {
         userId,
         bookingCode: booking.bookingCode,
         bookingId: booking._id.toString(),
+        originalTotalPrice: String(
+          booking.originalTotalPrice ?? booking.totalPrice
+        ),
+        discountAmount: String(booking.discountAmount ?? 0),
+        promotionCode: booking.promotionCode ?? "",
       },
       expires_at: Math.floor(booking.expiresAt.getTime() / 1000),
     });

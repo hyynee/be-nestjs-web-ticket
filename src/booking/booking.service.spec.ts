@@ -40,6 +40,8 @@ import { PaymentService } from "@src/payment/payment.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { AuditService } from "@src/audit/audit.service";
 import { UploadService } from "@src/upload/upload.service";
+import { NotificationService } from "@src/notification/notification.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 import { MAX_TICKETS_PER_USER_PER_EVENT } from "./booking.constants";
 
 describe("BookingService", () => {
@@ -65,6 +67,10 @@ describe("BookingService", () => {
   let seatStateModel: any;
   let zoneGateway: { emitZoneTicketUpdate: jest.Mock };
   let paymentService: { issueAdminRefund: jest.Mock };
+  let promotionService: {
+    applyPromotionToBooking: jest.Mock;
+    releaseUsageForBooking: jest.Mock;
+  };
   let redisService: {
     client: {
       scan: jest.Mock;
@@ -226,6 +232,10 @@ describe("BookingService", () => {
       assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
       getManagedEventIds: jest.fn().mockResolvedValue([]),
     };
+    promotionService = {
+      applyPromotionToBooking: jest.fn(),
+      releaseUsageForBooking: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -279,6 +289,17 @@ describe("BookingService", () => {
           provide: require("@src/event/event-ownership.service")
             .EventOwnershipService,
           useValue: eventOwnershipService,
+        },
+        {
+          provide: NotificationService,
+          useValue: {
+            notifyBookingCreated: jest.fn().mockResolvedValue(undefined),
+            notifyBookingCancelled: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: PromotionService,
+          useValue: promotionService,
         },
       ],
     }).compile();
@@ -493,6 +514,66 @@ describe("BookingService", () => {
           confirmedSoldCount: 7,
         })
       );
+    });
+
+    it("applies promotion inside booking transaction and returns discounted totals", async () => {
+      const event = {
+        _id: new Types.ObjectId(eventId),
+        isDeleted: false,
+        status: "active",
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        title: "Concert A",
+        startDate: new Date(Date.now() + 60 * 60 * 1000),
+        location: "HCM",
+      };
+      mockCreateContext(
+        {
+          _id: new Types.ObjectId(zoneId),
+          eventId: new Types.ObjectId(eventId),
+          price: 100_000,
+          hasSeating: false,
+          isDeleted: false,
+        },
+        event
+      );
+      zoneModel.findOneAndUpdate.mockResolvedValue({
+        _id: new Types.ObjectId(zoneId),
+      });
+      mockEmitZoneSnapshot();
+      const promotionId = new Types.ObjectId().toString();
+      promotionService.applyPromotionToBooking.mockResolvedValue({
+        valid: true,
+        promotionId,
+        code: "SAVE50",
+        type: "fixed",
+        value: 50_000,
+        originalAmount: 200_000,
+        discountAmount: 50_000,
+        finalAmount: 150_000,
+        usageId: new Types.ObjectId().toString(),
+      });
+
+      const result = await service.createBooking(userId, {
+        ...baseDto,
+        quantity: 2,
+        promotionCode: "SAVE50",
+      } as any);
+
+      expect(promotionService.applyPromotionToBooking).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SAVE50",
+          userId,
+          eventId,
+          zoneId,
+          orderAmount: 200_000,
+        }),
+        expect.any(Object)
+      );
+      expect(result.data.originalTotalPrice).toBe(200_000);
+      expect(result.data.discountAmount).toBe(50_000);
+      expect(result.data.promotionCode).toBe("SAVE50");
+      expect(result.data.promotionId).toBe(promotionId);
+      expect(result.data.totalPrice).toBe(150_000);
     });
 
     it("populates an immutable snapshot of event/zone/area facts at booking time (seated zone)", async () => {

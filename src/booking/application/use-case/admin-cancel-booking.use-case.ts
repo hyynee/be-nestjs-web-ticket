@@ -34,6 +34,8 @@ import { BookingZoneNotifierService } from "../../infrastructure/realtime/bookin
 import { BookingPresenter } from "../../presenters/booking.presenter";
 import { BookingCodeService } from "../../domain/services/booking-code.service";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
+import { NotificationService } from "@src/notification/notification.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 @Injectable()
 export class AdminCancelBookingUseCase {
@@ -58,7 +60,9 @@ export class AdminCancelBookingUseCase {
     private readonly bookingCacheService: BookingCacheService,
     private readonly bookingZoneNotifier: BookingZoneNotifierService,
     private readonly bookingPresenter: BookingPresenter,
-    private readonly bookingCodeService: BookingCodeService
+    private readonly bookingCodeService: BookingCodeService,
+    private readonly notificationService: NotificationService,
+    private readonly promotionService: PromotionService
   ) {}
 
   private assertObjectId(value: string, label: string): void {
@@ -78,6 +82,7 @@ export class AdminCancelBookingUseCase {
     let changedEventKey: string | undefined;
     let changedZoneKey: string | undefined;
     let bookedUserId: string | null = null;
+    let cancelledBookingCode: string | undefined;
     let capturedStripePaymentIntentId: string | undefined;
     let wasConfirmedAndPaid = false;
     let cancelledTicketCodes: string[] = [];
@@ -124,6 +129,7 @@ export class AdminCancelBookingUseCase {
         }
 
         bookedUserId = preUpdate.userId.toString();
+        cancelledBookingCode = preUpdate.bookingCode;
         wasConfirmedAndPaid =
           preUpdate.status === BookingStatus.CONFIRMED &&
           preUpdate.paymentStatus === PaymentStatus.PAID;
@@ -202,6 +208,16 @@ export class AdminCancelBookingUseCase {
           }
         }
 
+        if (
+          preUpdate.status === BookingStatus.PENDING &&
+          preUpdate.paymentStatus === PaymentStatus.UNPAID
+        ) {
+          await this.promotionService.releaseUsageForBooking(
+            preUpdate._id as Types.ObjectId,
+            session
+          );
+        }
+
         changedZoneId = preUpdate.zoneId as Types.ObjectId;
         changedEventKey = preUpdate.eventId?.toString();
         changedZoneKey = preUpdate.zoneId?.toString();
@@ -267,6 +283,16 @@ export class AdminCancelBookingUseCase {
           adminId,
           reason ?? "Admin cancellation"
         );
+      }
+
+      if (bookedUserId && cancelledBookingCode) {
+        await this.notificationService.notifyBookingCancelled({
+          userId: bookedUserId,
+          bookingId,
+          bookingCode: cancelledBookingCode,
+          eventId: changedEventKey,
+          reason: reason ?? "Admin cancellation",
+        });
       }
 
       try {

@@ -29,6 +29,8 @@ import { BookingZoneNotifierService } from "../../infrastructure/realtime/bookin
 import { BookingPresenter } from "../../presenters/booking.presenter";
 import { BookingCodeService } from "../../domain/services/booking-code.service";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
+import { NotificationService } from "@src/notification/notification.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 @Injectable()
 export class CancelBookingUseCase {
@@ -53,7 +55,9 @@ export class CancelBookingUseCase {
     private readonly bookingCacheService: BookingCacheService,
     private readonly bookingZoneNotifier: BookingZoneNotifierService,
     private readonly bookingPresenter: BookingPresenter,
-    private readonly bookingCodeService: BookingCodeService
+    private readonly bookingCodeService: BookingCodeService,
+    private readonly notificationService: NotificationService,
+    private readonly promotionService: PromotionService
   ) {}
 
   async cancelBooking(
@@ -65,6 +69,7 @@ export class CancelBookingUseCase {
     let changedZoneId: Types.ObjectId | null = null;
     let changedEventKey: string | undefined;
     let changedZoneKey: string | undefined;
+    let cancelledBookingId: string | undefined;
     let cancelledTimeSlotId: Types.ObjectId | undefined;
     let cancelledQuantity = 0;
 
@@ -98,6 +103,7 @@ export class CancelBookingUseCase {
           cancelledTimeSlotId = booking.timeSlotId as Types.ObjectId;
           cancelledQuantity = booking.quantity;
         }
+        cancelledBookingId = (booking._id as Types.ObjectId).toString();
 
         await this.ticketModel.updateMany(
           {
@@ -132,6 +138,10 @@ export class CancelBookingUseCase {
             },
           ],
           { session }
+        );
+        await this.promotionService.releaseUsageForBooking(
+          booking._id as Types.ObjectId,
+          session
         );
         changedZoneId = booking.zoneId as Types.ObjectId;
         changedEventKey = booking.eventId?.toString();
@@ -168,6 +178,15 @@ export class CancelBookingUseCase {
 
       if (changedZoneId) {
         await this.bookingZoneNotifier.emitZoneTicketUpdate(changedZoneId);
+      }
+
+      if (cancelledBookingId) {
+        await this.notificationService.notifyBookingCancelled({
+          userId,
+          bookingId: cancelledBookingId,
+          bookingCode,
+          eventId: changedEventKey,
+        });
       }
 
       return this.bookingPresenter.bookingMessage(

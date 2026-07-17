@@ -62,6 +62,11 @@ export class CreatePaypalTransactionUseCase {
     if (new Date() > booking.expiresAt) {
       throw new BadRequestException("Booking has expired");
     }
+    if (booking.totalPrice <= 0) {
+      throw new BadRequestException(
+        "Free checkout is not supported for this payment method"
+      );
+    }
 
     const event = booking.eventId;
     const eventTitle = booking.snapshot?.eventTitle ?? event.title;
@@ -115,7 +120,14 @@ export class CreatePaypalTransactionUseCase {
           $set: {
             userId: new Types.ObjectId(userId),
             paypalOrderId: order.id,
-            metadata: { bookingCode, eventTitle, amountUSD },
+            metadata: {
+              bookingCode,
+              eventTitle,
+              amountUSD,
+              originalTotalPrice: booking.originalTotalPrice,
+              discountAmount: booking.discountAmount ?? 0,
+              promotionCode: booking.promotionCode,
+            },
           },
           $setOnInsert: {
             eventId: toPaymentObjectId(booking.eventId, "eventId"),

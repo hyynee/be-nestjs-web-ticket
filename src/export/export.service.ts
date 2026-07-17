@@ -26,6 +26,10 @@ type TicketExportLean = {
   userId?: PopulatedTicketRef | null;
   bookingId?: {
     snapshot?: { eventTitle: string; zoneName: string };
+    originalTotalPrice?: number;
+    discountAmount?: number;
+    promotionCode?: string;
+    totalPrice?: number;
   } | null;
   seatNumber?: string | null;
   price: number;
@@ -96,7 +100,10 @@ export class ExportService {
       .populate("eventId", "title")
       .populate("zoneId", "name")
       .populate("userId", "email name")
-      .populate("bookingId", "snapshot")
+      .populate(
+        "bookingId",
+        "snapshot originalTotalPrice discountAmount promotionCode totalPrice"
+      )
       .lean<TicketExportLean[]>()
       .exec();
 
@@ -115,6 +122,11 @@ export class ExportService {
         ticket.bookingId?.snapshot?.zoneName || ticket.zoneId?.name || "N/A",
       seatNumber: ticket.seatNumber || "N/A",
       price: ticket.price,
+      originalBookingTotal:
+        ticket.bookingId?.originalTotalPrice ?? ticket.price,
+      bookingDiscount: ticket.bookingId?.discountAmount ?? 0,
+      promotionCode: ticket.bookingId?.promotionCode || "N/A",
+      finalBookingTotal: ticket.bookingId?.totalPrice ?? ticket.price,
       status: ticket.status,
       userEmail: ticket.userId?.email || "N/A",
       userName: ticket.userId?.name || "N/A",

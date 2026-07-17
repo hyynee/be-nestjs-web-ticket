@@ -33,6 +33,8 @@ import { BookingCacheService } from "./infrastructure/cache/booking-cache.servic
 import { BookingZoneNotifierService } from "./infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "./presenters/booking.presenter";
 import { BookingCodeService } from "./domain/services/booking-code.service";
+import { NotificationModule } from "@src/notification/notification.module";
+import { PromotionModule } from "@src/promotion/promotion.module";
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { BookingCodeService } from "./domain/services/booking-code.service";
     ZoneModule,
     PaymentModule,
     UploadModule,
+    NotificationModule,
+    PromotionModule,
   ],
   controllers: [
     BookingAdminController,

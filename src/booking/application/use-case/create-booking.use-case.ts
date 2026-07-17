@@ -42,6 +42,8 @@ import { BookingZoneNotifierService } from "../../infrastructure/realtime/bookin
 import { BookingPresenter } from "../../presenters/booking.presenter";
 import { BookingCodeService } from "../../domain/services/booking-code.service";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
+import { NotificationService } from "@src/notification/notification.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 const RELEASE_LOCK_SCRIPT = `
   if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -74,7 +76,9 @@ export class CreateBookingUseCase {
     private readonly bookingCacheService: BookingCacheService,
     private readonly bookingZoneNotifier: BookingZoneNotifierService,
     private readonly bookingPresenter: BookingPresenter,
-    private readonly bookingCodeService: BookingCodeService
+    private readonly bookingCodeService: BookingCodeService,
+    private readonly notificationService: NotificationService,
+    private readonly promotionService: PromotionService
   ) {}
 
   async createBooking(
@@ -232,6 +236,7 @@ export class CreateBookingUseCase {
           );
         }
 
+        const originalTotalPrice = zone.price * data.quantity;
         const bookingData: BookingCreatePayload = {
           userId: new Types.ObjectId(userId),
           eventId: new Types.ObjectId(data.eventId),
@@ -243,7 +248,9 @@ export class CreateBookingUseCase {
           seats: [],
           quantity: data.quantity,
           pricePerTicket: zone.price,
-          totalPrice: zone.price * data.quantity,
+          originalTotalPrice,
+          discountAmount: 0,
+          totalPrice: originalTotalPrice,
           bookingCode: this.bookingCodeService.generateBookingCode(),
           expiresAt: new Date(Date.now() + BOOKING_EXPIRY_MS),
           status: BookingStatus.PENDING,
@@ -394,6 +401,27 @@ export class CreateBookingUseCase {
         changedZoneId = zoneUpdate._id as Types.ObjectId;
 
         const newBooking = new this.bookingModel(bookingData);
+        if (data.promotionCode) {
+          const appliedPromotion =
+            await this.promotionService.applyPromotionToBooking(
+              {
+                code: data.promotionCode,
+                userId,
+                eventId: data.eventId,
+                zoneId: data.zoneId,
+                bookingId: (newBooking._id as Types.ObjectId).toString(),
+                orderAmount: originalTotalPrice,
+              },
+              session
+            );
+          newBooking.originalTotalPrice = appliedPromotion.originalAmount;
+          newBooking.discountAmount = appliedPromotion.discountAmount;
+          newBooking.totalPrice = appliedPromotion.finalAmount;
+          newBooking.promotionCode = appliedPromotion.code;
+          newBooking.promotionId = new Types.ObjectId(
+            appliedPromotion.promotionId
+          );
+        }
         await newBooking.save({ session });
 
         if (bookingData.seats.length > 0) {
@@ -443,6 +471,14 @@ export class CreateBookingUseCase {
       if (!result) {
         throw new BadRequestException("Booking creation did not complete");
       }
+      await this.notificationService.notifyBookingCreated({
+        userId,
+        bookingId: result.data.id,
+        bookingCode: result.data.bookingCode,
+        eventId: data.eventId,
+        eventTitle: result.data.event?.title,
+        expiresAt: result.data.expiresAt,
+      });
       return result;
     } catch (error) {
       if (!bookingCommitted && slotCapacity && slotCapacityReserved) {

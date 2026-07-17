@@ -14,6 +14,10 @@ export interface BookingCreatePayload {
   seats: string[];
   quantity: number;
   pricePerTicket: number;
+  originalTotalPrice: number;
+  discountAmount: number;
+  promotionCode?: string;
+  promotionId?: Types.ObjectId;
   totalPrice: number;
   snapshot?: BookingSnapshot;
   bookingCode: string;

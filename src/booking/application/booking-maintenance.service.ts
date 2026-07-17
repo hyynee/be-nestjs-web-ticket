@@ -13,6 +13,7 @@ import { BookingCacheService } from "../infrastructure/cache/booking-cache.servi
 import { BookingZoneNotifierService } from "../infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "../presenters/booking.presenter";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 @Injectable()
 export class BookingMaintenanceService {
@@ -27,7 +28,8 @@ export class BookingMaintenanceService {
     private readonly zoneService: ZoneService,
     private readonly bookingCacheService: BookingCacheService,
     private readonly bookingZoneNotifier: BookingZoneNotifierService,
-    private readonly bookingPresenter: BookingPresenter
+    private readonly bookingPresenter: BookingPresenter,
+    private readonly promotionService: PromotionService
   ) {}
 
   async expirePendingBookings(): Promise<ExpirePendingBookingsResult> {
@@ -107,6 +109,13 @@ export class BookingMaintenanceService {
           { bookingId: { $in: actuallyExpiredDocs.map((d) => d._id) } },
           { session }
         );
+
+        for (const doc of actuallyExpiredDocs) {
+          await this.promotionService.releaseUsageForBooking(
+            doc._id as Types.ObjectId,
+            session
+          );
+        }
 
         await this.zoneModel.bulkWrite(
           [...zoneTotals.entries()].map(([zoneId, totalQuantity]) => ({

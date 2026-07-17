@@ -109,6 +109,18 @@ export class Booking extends Document {
   @Prop({ type: Number, required: true, min: 0 })
   totalPrice: number;
 
+  @Prop({ type: Number, required: true, min: 0, default: 0 })
+  originalTotalPrice: number;
+
+  @Prop({ type: Number, required: true, min: 0, default: 0 })
+  discountAmount: number;
+
+  @Prop({ type: String, trim: true, uppercase: true })
+  promotionCode?: string;
+
+  @Prop({ type: Types.ObjectId, ref: "Promotion" })
+  promotionId?: Types.ObjectId;
+
   @Prop({ type: BookingSnapshotSchema })
   snapshot?: BookingSnapshot;
 
@@ -192,6 +204,8 @@ BookingSchema.index({ status: 1, expiresAt: 1 });
 BookingSchema.index({ stripePaymentIntentId: 1 });
 BookingSchema.index({ isDeleted: 1 });
 BookingSchema.index({ paymentStatus: 1, isDeleted: 1 });
+BookingSchema.index({ promotionId: 1, isDeleted: 1 });
+BookingSchema.index({ promotionCode: 1, isDeleted: 1 });
 BookingSchema.index(
   { status: 1, expiresAt: 1, isDeleted: 1 },
   { name: "idx_expiry_cleanup" }

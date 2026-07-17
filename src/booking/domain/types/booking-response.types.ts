@@ -25,6 +25,10 @@ export interface BookingViewSource extends BookingSnapshotSource {
   seats?: string[];
   quantity: number;
   pricePerTicket: number;
+  originalTotalPrice?: number;
+  discountAmount?: number;
+  promotionCode?: string;
+  promotionId?: Types.ObjectId | string;
   totalPrice: number;
   status: BookingStatus;
   paymentStatus: PaymentStatus;
@@ -66,6 +70,10 @@ export interface BookingListItem {
   seats: string[];
   quantity: number;
   pricePerTicket: number;
+  originalTotalPrice: number;
+  discountAmount: number;
+  promotionCode?: string;
+  promotionId?: string;
   totalPrice: number;
   status: BookingStatus;
   paymentStatus: PaymentStatus;

@@ -67,6 +67,9 @@ export class Payment extends Document {
       bookingCode: String,
       eventTitle: String,
       amountUSD: String,
+      originalTotalPrice: Number,
+      discountAmount: Number,
+      promotionCode: String,
     },
     _id: false,
   })
@@ -84,6 +87,9 @@ export class Payment extends Document {
     bookingCode?: string;
     eventTitle?: string;
     amountUSD?: string;
+    originalTotalPrice?: number;
+    discountAmount?: number;
+    promotionCode?: string;
   };
 
   @Prop({ type: Date })
@@ -94,6 +100,9 @@ export class Payment extends Document {
 
   @Prop({ type: String })
   stripeRefundId?: string;
+
+  @Prop({ type: String })
+  paypalRefundId?: string;
 
   @Prop({ type: Number })
   refundAmount?: number;

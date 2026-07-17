@@ -28,6 +28,11 @@ export class BookingPresenter {
       seats: historicalBooking.seats ?? [],
       quantity: historicalBooking.quantity,
       pricePerTicket: historicalBooking.pricePerTicket,
+      originalTotalPrice:
+        historicalBooking.originalTotalPrice ?? historicalBooking.totalPrice,
+      discountAmount: historicalBooking.discountAmount ?? 0,
+      promotionCode: historicalBooking.promotionCode,
+      promotionId: historicalBooking.promotionId?.toString(),
       totalPrice: historicalBooking.totalPrice,
       status: historicalBooking.status,
       paymentStatus: historicalBooking.paymentStatus,

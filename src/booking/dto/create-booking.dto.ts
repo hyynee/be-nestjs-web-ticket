@@ -9,8 +9,9 @@ import {
   Min,
   Max,
   IsMongoId,
+  MaxLength,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateBookingDto {
@@ -74,4 +75,13 @@ export class CreateBookingDto {
   @IsOptional()
   @IsMongoId()
   timeSlotId?: string;
+
+  @ApiPropertyOptional({ description: "Mã khuyến mãi/coupon" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Transform(({ value }) =>
+    typeof value === "string" ? value.trim().toUpperCase() : value
+  )
+  promotionCode?: string;
 }

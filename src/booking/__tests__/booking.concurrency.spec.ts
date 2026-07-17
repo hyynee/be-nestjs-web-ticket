@@ -32,6 +32,8 @@ import { BookingCacheService } from "../infrastructure/cache/booking-cache.servi
 import { BookingZoneNotifierService } from "../infrastructure/realtime/booking-zone-notifier.service";
 import { BookingPresenter } from "../presenters/booking.presenter";
 import { BookingCodeService } from "../domain/services/booking-code.service";
+import { NotificationService } from "@src/notification/notification.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 import { Booking, SeatLock } from "@src/schemas/booking.schema";
 import { SeatState } from "@src/schemas/seat-state.schema";
 import { Event } from "@src/schemas/event.schema";
@@ -199,6 +201,20 @@ async function buildModule(redisClient: RedisClientMock) {
         useValue: {
           assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
           getManagedEventIds: jest.fn().mockResolvedValue([]),
+        },
+      },
+      {
+        provide: NotificationService,
+        useValue: {
+          notifyBookingCreated: jest.fn().mockResolvedValue(undefined),
+          notifyBookingCancelled: jest.fn().mockResolvedValue(undefined),
+        },
+      },
+      {
+        provide: PromotionService,
+        useValue: {
+          applyPromotionToBooking: jest.fn(),
+          releaseUsageForBooking: jest.fn().mockResolvedValue(undefined),
         },
       },
     ],

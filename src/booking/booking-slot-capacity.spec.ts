@@ -33,6 +33,8 @@ import { PaymentService } from "@src/payment/payment.service";
 import { MetricsService } from "@src/metrics/metrics.service";
 import { AuditService } from "@src/audit/audit.service";
 import { UploadService } from "@src/upload/upload.service";
+import { NotificationService } from "@src/notification/notification.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 import { SLOT_SOLD_KEY_PREFIX } from "./booking.constants";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -234,6 +236,20 @@ describe("BookingService — Slot Capacity", () => {
           useValue: {
             assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
             getManagedEventIds: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: NotificationService,
+          useValue: {
+            notifyBookingCreated: jest.fn().mockResolvedValue(undefined),
+            notifyBookingCancelled: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: PromotionService,
+          useValue: {
+            applyPromotionToBooking: jest.fn(),
+            releaseUsageForBooking: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

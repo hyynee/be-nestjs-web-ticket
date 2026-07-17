@@ -323,7 +323,10 @@ describe("ExportService", () => {
       expect(chain.populate).toHaveBeenCalledWith("eventId", "title");
       expect(chain.populate).toHaveBeenCalledWith("zoneId", "name");
       expect(chain.populate).toHaveBeenCalledWith("userId", "email name");
-      expect(chain.populate).toHaveBeenCalledWith("bookingId", "snapshot");
+      expect(chain.populate).toHaveBeenCalledWith(
+        "bookingId",
+        "snapshot originalTotalPrice discountAmount promotionCode totalPrice"
+      );
     });
   });
 

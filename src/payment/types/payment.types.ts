@@ -73,6 +73,9 @@ export interface PaymentMetadata {
   bookingCode?: string;
   eventTitle?: string;
   amountUSD?: string;
+  originalTotalPrice?: number;
+  discountAmount?: number;
+  promotionCode?: string;
 }
 
 export type PaymentRecord = {
@@ -274,6 +277,17 @@ export interface PaymentHistoryItem {
 export interface PaymentCancelResult {
   status: number;
   message: string;
+}
+
+export type AdminRefundProvider = "stripe" | "paypal";
+
+export type AdminRefundStatus = "succeeded" | "failed";
+
+export interface AdminRefundResult {
+  provider: AdminRefundProvider;
+  status: AdminRefundStatus;
+  providerRefundId?: string;
+  errorMessage?: string;
 }
 
 export interface PaymentHistoryEventSource {
