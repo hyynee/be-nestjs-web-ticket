@@ -15,6 +15,8 @@ Thumbs.db
 coverage/
 backup/
 *.md
+!work_log.md
+!WORK_LOG.md
 *.txt
 *.js
 
