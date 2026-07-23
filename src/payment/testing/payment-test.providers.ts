@@ -14,6 +14,8 @@ import { StripePaymentSettlementService } from "@src/payment/application/service
 import { PaypalPaymentSettlementService } from "@src/payment/application/services/paypal-payment-settlement.service";
 import { PaymentSettlementOrchestrator } from "@src/payment/application/orchestrators/payment-settlement.orchestrator";
 import { NotificationService } from "@src/notification/notification.service";
+import { ZoneService } from "@src/zone/zone.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 export const paymentTestProviders = [
   PaymentService,
@@ -37,6 +39,19 @@ export const paymentTestProviders = [
       notifyPaymentSucceeded: async () => undefined,
       notifyTicketsIssued: async () => undefined,
       queueBookingConfirmationEmail: async () => undefined,
+    },
+  },
+  {
+    provide: ZoneService,
+    useValue: {
+      invalidateZoneAvailabilityCache: async () => undefined,
+    },
+  },
+  {
+    provide: PromotionService,
+    useValue: {
+      applyPromotionToBooking: async () => undefined,
+      releaseUsageForBooking: async () => undefined,
     },
   },
 ];

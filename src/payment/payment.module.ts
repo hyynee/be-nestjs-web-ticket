@@ -29,6 +29,7 @@ import { StripePaymentSettlementService } from "./application/services/stripe-pa
 import { PaypalPaymentSettlementService } from "./application/services/paypal-payment-settlement.service";
 import { PaymentOpsModule } from "@src/payment-ops/payment-ops.module";
 import { NotificationModule } from "@src/notification/notification.module";
+import { PromotionModule } from "@src/promotion/promotion.module";
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { NotificationModule } from "@src/notification/notification.module";
     EventsModule,
     QueueModule,
     NotificationModule,
+    PromotionModule,
     forwardRef(() => PaymentOpsModule),
   ],
   controllers: [PaymentController],

@@ -16,6 +16,7 @@ import type {
   PaymentHistoryResult,
   PaypalCreateTransactionResult,
   PaypalFinalizeResult,
+  AdminRefundOptions,
   AdminRefundResult,
 } from "./types/payment.types";
 import type { QueryPaymentHistoryDto } from "./dto/query-payment-history.dto";
@@ -145,13 +146,15 @@ export class PaymentService {
     bookingId: string,
     stripePaymentIntentId: string | undefined,
     adminId: string,
-    reason: string
+    reason: string,
+    options?: AdminRefundOptions
   ): Promise<AdminRefundResult> {
     return this.issueAdminRefundUseCase.execute(
       bookingId,
       stripePaymentIntentId,
       adminId,
-      reason
+      reason,
+      options
     );
   }
 

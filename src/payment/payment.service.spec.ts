@@ -22,6 +22,7 @@ import { TicketService } from "@src/ticket/ticket.service";
 import { MailService } from "@src/services/mail.service";
 import { RedisService } from "@src/redis/redis.service";
 import { ZoneGateway } from "@src/zone/zone.gateway";
+import { ZoneService } from "@src/zone/zone.service";
 import { UserEventsService } from "@src/events/user-event.services";
 import { QueueService } from "@src/queue/queue.service";
 import { MetricsService } from "@src/metrics/metrics.service";
@@ -31,6 +32,7 @@ import { PaymentGatewayService } from "./infrastructure/gateway/payment-gateway.
 import { PaymentIdempotencyService } from "./infrastructure/idempotency/payment-idempotency.service";
 import { IssueAdminRefundUseCase } from "./application/use-case/issue-admin-refund.use-case";
 import { toPaymentObjectId } from "./domain/utils/payment-document.utils";
+import { PromotionService } from "@src/promotion/promotion.service";
 
 jest.mock("stripe", () => jest.fn().mockImplementation(() => ({})));
 
@@ -53,9 +55,10 @@ jest.mock("@paypal/checkout-server-sdk", () => ({
     OrdersGetRequest: jest.fn().mockImplementation(() => ({})),
   },
   payments: {
-    CapturesRefundRequest: jest
-      .fn()
-      .mockImplementation(() => ({ requestBody: jest.fn() })),
+    CapturesRefundRequest: jest.fn().mockImplementation(() => ({
+      requestBody: jest.fn(),
+      payPalRequestId: jest.fn().mockReturnThis(),
+    })),
   },
 }));
 
@@ -90,7 +93,9 @@ describe("PaymentService – handleChargeRefunded", () => {
   let zoneModel: any;
   let paymentModel: any;
   let zoneGateway: any;
+  let zoneService: any;
   let mockSession: any;
+  let promotionService: { releaseUsageForBooking: jest.Mock };
 
   const bookingId = new Types.ObjectId();
   const zoneId = new Types.ObjectId();
@@ -143,6 +148,12 @@ describe("PaymentService – handleChargeRefunded", () => {
     };
 
     zoneGateway = { emitZoneTicketUpdate: jest.fn() };
+    zoneService = {
+      invalidateZoneAvailabilityCache: jest.fn().mockResolvedValue(undefined),
+    };
+    promotionService = {
+      releaseUsageForBooking: jest.fn().mockResolvedValue(undefined),
+    };
 
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
     jest.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
@@ -171,6 +182,7 @@ describe("PaymentService – handleChargeRefunded", () => {
           },
         },
         { provide: ZoneGateway, useValue: zoneGateway },
+        { provide: ZoneService, useValue: zoneService },
         { provide: UserEventsService, useValue: {} },
         {
           provide: QueueService,
@@ -190,6 +202,7 @@ describe("PaymentService – handleChargeRefunded", () => {
           provide: CurrencyService,
           useValue: { getVndPerUsd: jest.fn().mockResolvedValue(26000) },
         },
+        { provide: PromotionService, useValue: promotionService },
       ],
     }).compile();
 
@@ -268,6 +281,14 @@ describe("PaymentService – handleChargeRefunded", () => {
       expect(opts.session).toBe(mockSession);
     });
 
+    it("invalidates the zone availability cache after a full refund releases inventory (PRE-7)", async () => {
+      await service.handleChargeRefunded(makeCharge());
+
+      expect(zoneService.invalidateZoneAvailabilityCache).toHaveBeenCalledWith(
+        zoneId
+      );
+    });
+
     it("calls updateMany AFTER booking.save (correct operation order in transaction)", async () => {
       const callOrder: string[] = [];
       booking.save.mockImplementation(async () => {
@@ -325,6 +346,25 @@ describe("PaymentService – handleChargeRefunded", () => {
     it("ends the DB session exactly once in the finally block", async () => {
       await service.handleChargeRefunded(makeCharge());
       expect(mockSession.endSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases the booking's promo usage in the same transaction on a full refund (#3 promo quota leak)", async () => {
+      await service.handleChargeRefunded(makeCharge());
+
+      expect(promotionService.releaseUsageForBooking).toHaveBeenCalledWith(
+        booking._id,
+        mockSession
+      );
+    });
+
+    it("aborts the transaction (rejects) when releasing promo usage fails, instead of committing a cancelled booking with dangling promo quota", async () => {
+      promotionService.releaseUsageForBooking.mockRejectedValueOnce(
+        new Error("promotion usage write conflict")
+      );
+
+      await expect(service.handleChargeRefunded(makeCharge())).rejects.toThrow(
+        "promotion usage write conflict"
+      );
     });
   });
 
@@ -420,6 +460,12 @@ describe("PaymentService – handleChargeRefunded", () => {
       await service.handleChargeRefunded(partialCharge());
 
       expect(mockSession.endSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT release promo usage on a partial refund (booking/ticket still valid)", async () => {
+      await service.handleChargeRefunded(partialCharge());
+
+      expect(promotionService.releaseUsageForBooking).not.toHaveBeenCalled();
     });
   });
 });
@@ -637,127 +683,6 @@ describe("PaymentService – webhook idempotency", () => {
         })
       );
     });
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// createCheckoutSession — guard clauses (no Stripe API calls needed)
-// Skipped: Mongoose chain mocking for .populate().populate().populate() is
-// fragile in this test harness. Covered by e2e tests.
-// ─────────────────────────────────────────────────────────────────────────────
-xdescribe("PaymentService – createCheckoutSession guard clauses", () => {
-  let service: any;
-  let bookingModel: any;
-  let redisClient: any;
-
-  const userId = new Types.ObjectId().toString();
-
-  const buildModule = async (booking: any) => {
-    redisClient = {
-      get: jest.fn().mockResolvedValue(null),
-      set: jest.fn().mockResolvedValue("OK"),
-      del: jest.fn().mockResolvedValue(1),
-      eval: jest.fn().mockResolvedValue(1),
-    };
-
-    // createCheckoutSession calls findOne().populate().populate().populate()
-    // and awaits the final result. We chain populate() returning `this` each
-    // time and make the chain thenable by resolving to `booking`.
-    const chainQuery = (() => {
-      const chain: any = {
-        populate: jest.fn().mockReturnValue(undefined as any),
-        then: (resolve: any, reject: any) =>
-          Promise.resolve(booking).then(resolve, reject),
-        catch: (reject: any) => Promise.resolve(booking).catch(reject),
-      };
-      chain.populate.mockReturnValue(chain);
-      return chain;
-    })();
-
-    bookingModel = {
-      findOne: jest.fn().mockReturnValue(chainQuery),
-      db: { startSession: jest.fn() },
-    };
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ...paymentTestProviders,
-        { provide: getModelToken(Payment.name), useValue: {} },
-        { provide: getModelToken(Booking.name), useValue: bookingModel },
-        { provide: getModelToken(Zone.name), useValue: {} },
-        { provide: getModelToken(Ticket.name), useValue: {} },
-        { provide: TicketService, useValue: {} },
-        { provide: MailService, useValue: {} },
-        { provide: ZoneGateway, useValue: {} },
-        { provide: UserEventsService, useValue: {} },
-        {
-          provide: QueueService,
-          useValue: { addJob: jest.fn().mockResolvedValue(undefined) },
-        },
-        { provide: RedisService, useValue: { client: redisClient } },
-        {
-          provide: MetricsService,
-          useValue: {
-            paymentsTotal: { inc: jest.fn() },
-            refundFailuresTotal: { inc: jest.fn() },
-            bookingsTotal: { inc: jest.fn() },
-            checkinsTotal: { inc: jest.fn() },
-          },
-        },
-        {
-          provide: CurrencyService,
-          useValue: { getVndPerUsd: jest.fn().mockResolvedValue(26000) },
-        },
-      ],
-    }).compile();
-    service = module.get(PaymentService);
-  };
-
-  it("throws BadRequestException when booking not found", async () => {
-    await buildModule(null);
-    await expect(
-      service.createCheckoutSession(userId, "BK999")
-    ).rejects.toThrow(BadRequestException);
-  });
-
-  it("throws BadRequestException when booking status is not PENDING", async () => {
-    const booking = {
-      _id: new Types.ObjectId(),
-      status: "confirmed",
-      paymentStatus: "paid",
-      expiresAt: new Date(Date.now() + 60_000),
-      bookingCode: "BK001",
-      seats: [],
-      quantity: 1,
-      pricePerTicket: 100_000,
-      customerEmail: "test@example.com",
-      eventId: { _id: new Types.ObjectId(), title: "Concert", thumbnail: null },
-      zoneId: { _id: new Types.ObjectId(), name: "Zone A" },
-    };
-    await buildModule(booking);
-    await expect(
-      service.createCheckoutSession(userId, "BK001")
-    ).rejects.toThrow(BadRequestException);
-  });
-
-  it("throws BadRequestException when booking has expired", async () => {
-    const booking = {
-      _id: new Types.ObjectId(),
-      status: "pending",
-      paymentStatus: "unpaid",
-      expiresAt: new Date(Date.now() - 60_000), // expired
-      bookingCode: "BK001",
-      seats: [],
-      quantity: 1,
-      pricePerTicket: 100_000,
-      customerEmail: "test@example.com",
-      eventId: { _id: new Types.ObjectId(), title: "Concert", thumbnail: null },
-      zoneId: { _id: new Types.ObjectId(), name: "Zone A" },
-    };
-    await buildModule(booking);
-    await expect(
-      service.createCheckoutSession(userId, "BK001")
-    ).rejects.toThrow(BadRequestException);
   });
 });
 
@@ -3244,12 +3169,18 @@ describe("PaymentService – issueAdminRefund", () => {
   let service: any;
   let mockStripe: any;
   let paymentModel: any;
+  let bookingModel: any;
   let queueService: any;
 
   beforeEach(async () => {
     mockStripe = { refunds: { create: jest.fn() } };
     paymentModel = {
       findOne: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({}),
+    };
+    bookingModel = {
+      db: { startSession: jest.fn() },
+      updateOne: jest.fn().mockResolvedValue({}),
     };
     queueService = { addJob: jest.fn().mockResolvedValue(undefined) };
 
@@ -3259,10 +3190,7 @@ describe("PaymentService – issueAdminRefund", () => {
         { provide: getModelToken(Payment.name), useValue: paymentModel },
         {
           provide: getModelToken(Booking.name),
-          useValue: {
-            db: { startSession: jest.fn() },
-            updateOne: jest.fn().mockResolvedValue({}),
-          },
+          useValue: bookingModel,
         },
         { provide: getModelToken(Zone.name), useValue: {} },
         { provide: getModelToken(Ticket.name), useValue: {} },
@@ -3342,6 +3270,123 @@ describe("PaymentService – issueAdminRefund", () => {
         expect.objectContaining({ type: "refund-failure-alert" })
       );
     });
+
+    it("uses idempotencyReference (not bookingId) in the Stripe idempotency key when provided — so a second, separate refund against the same booking doesn't collide with the first", async () => {
+      mockStripe.refunds.create.mockResolvedValue({
+        id: "re_1",
+        amount: 100000,
+      });
+      const bookingId = new Types.ObjectId().toString();
+
+      await service.issueAdminRefund(
+        bookingId,
+        "pi_stripe_123",
+        "admin_1",
+        "reason",
+        { idempotencyReference: "refund-request-abc" }
+      );
+
+      expect(mockStripe.refunds.create).toHaveBeenCalledWith(
+        expect.anything(),
+        { idempotencyKey: "admin-refund:refund-request-abc" }
+      );
+    });
+
+    it("falls back to bookingId for the idempotency key when no idempotencyReference is given (backward compatible)", async () => {
+      mockStripe.refunds.create.mockResolvedValue({
+        id: "re_1",
+        amount: 100000,
+      });
+      const bookingId = new Types.ObjectId().toString();
+
+      await service.issueAdminRefund(
+        bookingId,
+        "pi_stripe_123",
+        "admin_1",
+        "reason"
+      );
+
+      expect(mockStripe.refunds.create).toHaveBeenCalledWith(
+        expect.anything(),
+        { idempotencyKey: `admin-refund:${bookingId}` }
+      );
+    });
+
+    describe("partial refund (Stripe only)", () => {
+      it("passes the exact VND amount to Stripe (zero-decimal, no minor-unit conversion) and does NOT mark the booking/payment as fully refunded", async () => {
+        mockStripe.refunds.create.mockResolvedValue({
+          id: "re_partial",
+          amount: 30000,
+        });
+        const bookingId = new Types.ObjectId().toString();
+
+        const result = await service.issueAdminRefund(
+          bookingId,
+          "pi_stripe_123",
+          "admin_1",
+          "partial goodwill refund",
+          { partialAmountVnd: 30000, idempotencyReference: "req-1" }
+        );
+
+        expect(mockStripe.refunds.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            payment_intent: "pi_stripe_123",
+            amount: 30000,
+          }),
+          { idempotencyKey: "admin-refund:req-1" }
+        );
+        expect(result.status).toBe("succeeded");
+
+        // booking must revert to PAID (not REFUNDED) — customer keeps their
+        // confirmed booking/tickets for a true partial refund.
+        expect(bookingModel.updateOne).toHaveBeenCalledWith(
+          expect.objectContaining({
+            paymentStatus: PaymentStatus.REFUND_PENDING,
+          }),
+          { $set: { paymentStatus: PaymentStatus.PAID } }
+        );
+
+        // Payment document uses the schema's existing "partially_refunded"
+        // status, and $inc's refundAmount rather than overwriting it.
+        expect(paymentModel.updateOne).toHaveBeenCalledWith(
+          expect.objectContaining({ bookingId: expect.anything() }),
+          expect.objectContaining({
+            $set: expect.objectContaining({ status: "partially_refunded" }),
+            $inc: { refundAmount: 30000 },
+          })
+        );
+      });
+
+      it("omits the amount field entirely for a full refund (Stripe refunds whatever remains, exactly as before this fix)", async () => {
+        mockStripe.refunds.create.mockResolvedValue({
+          id: "re_full",
+          amount: 100000,
+        });
+
+        await service.issueAdminRefund(
+          new Types.ObjectId().toString(),
+          "pi_stripe_123",
+          "admin_1",
+          "full refund"
+        );
+
+        const [callArgs] = mockStripe.refunds.create.mock.calls[0];
+        expect(callArgs).not.toHaveProperty("amount");
+
+        expect(bookingModel.updateOne).toHaveBeenCalledWith(
+          expect.objectContaining({
+            paymentStatus: PaymentStatus.REFUND_PENDING,
+          }),
+          { $set: { paymentStatus: PaymentStatus.REFUNDED } }
+        );
+        expect(paymentModel.updateOne).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            $set: expect.objectContaining({ status: "refunded" }),
+          })
+        );
+      });
+    });
   });
 
   describe("PayPal refund path", () => {
@@ -3368,6 +3413,37 @@ describe("PaymentService – issueAdminRefund", () => {
       expect(paypalExecute).toHaveBeenCalled();
       expect(Logger.prototype.log).toHaveBeenCalledWith(
         expect.stringContaining("[REFUND] PayPal admin refund issued")
+      );
+    });
+
+    it("sets a PayPal-Request-Id via payPalRequestId() keyed by idempotencyReference — retries of the same refund request collapse into one provider refund", async () => {
+      paymentModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest
+            .fn()
+            .mockResolvedValue({ paypalCaptureId: "capture_paypal_idem" }),
+        }),
+      });
+
+      const paypalExecute = (service as any).paymentGateway.paypalClient
+        .execute;
+      paypalExecute.mockResolvedValue({ result: { status: "COMPLETED" } });
+
+      const paypalModule = require("@paypal/checkout-server-sdk");
+      const refundRequestCtor = paypalModule.payments.CapturesRefundRequest;
+      refundRequestCtor.mockClear();
+
+      await service.issueAdminRefund(
+        new Types.ObjectId().toString(),
+        undefined,
+        "admin_3",
+        "PayPal refund reason",
+        { idempotencyReference: "refund-request-xyz" }
+      );
+
+      const createdInstance = refundRequestCtor.mock.results[0].value;
+      expect(createdInstance.payPalRequestId).toHaveBeenCalledWith(
+        "admin-refund:refund-request-xyz"
       );
     });
 
@@ -3437,6 +3513,24 @@ describe("PaymentService – issueAdminRefund", () => {
       expect(Logger.prototype.warn).toHaveBeenCalledWith(
         expect.stringContaining("no refundable payment found")
       );
+    });
+
+    it("rejects a partial refund amount for a PayPal payment (no stripePaymentIntentId) instead of silently doing a full refund", async () => {
+      const paypalExecute = (service as any).paymentGateway.paypalClient
+        .execute;
+
+      await expect(
+        service.issueAdminRefund(
+          new Types.ObjectId().toString(),
+          undefined,
+          "admin_7",
+          "attempted partial",
+          { partialAmountVnd: 10000 }
+        )
+      ).rejects.toThrow(
+        "Partial refunds are not supported for PayPal payments"
+      );
+      expect(paypalExecute).not.toHaveBeenCalled();
     });
   });
 });

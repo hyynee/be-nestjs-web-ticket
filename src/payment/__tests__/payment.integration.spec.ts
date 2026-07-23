@@ -30,6 +30,7 @@ import { PaymentController } from "../payment.controller";
 import { PaymentService } from "../payment.service";
 import { paymentTestProviders } from "../testing/payment-test.providers";
 import { PaypalPaymentSettlementService } from "../application/services/paypal-payment-settlement.service";
+import { PaymentOpsService } from "@src/payment-ops/payment-ops.service";
 import {
   Booking,
   BookingSchema,
@@ -113,6 +114,18 @@ beforeAll(async () => {
     providers: [
       ...paymentTestProviders,
       { provide: RedisService, useValue: { client: redisClient } },
+      {
+        provide: PaymentOpsService,
+        useValue: {
+          recordReceivedStripeEvent: jest
+            .fn()
+            .mockResolvedValue({ id: "webhook_1" }),
+          markProcessing: jest.fn().mockResolvedValue(undefined),
+          markSucceeded: jest.fn().mockResolvedValue(undefined),
+          markIgnored: jest.fn().mockResolvedValue(undefined),
+          markFailed: jest.fn().mockResolvedValue(undefined),
+        },
+      },
       {
         provide: TicketService,
         useValue: {

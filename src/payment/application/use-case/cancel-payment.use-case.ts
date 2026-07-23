@@ -7,6 +7,8 @@ import {
 } from "@src/schemas/booking.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { ZoneGateway } from "@src/zone/zone.gateway";
+import { ZoneService } from "@src/zone/zone.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 import { Model, Types } from "mongoose";
 import type { PaymentCancelResult } from "@src/payment/types/payment.types";
 import { PaymentPresenter } from "@src/payment/presenters/payment.presenter";
@@ -17,6 +19,8 @@ export class CancelPaymentUseCase {
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     private readonly zoneGateway: ZoneGateway,
+    private readonly zoneService: ZoneService,
+    private readonly promotionService: PromotionService,
     private readonly paymentPresenter: PaymentPresenter
   ) {}
 
@@ -65,6 +69,20 @@ export class CancelPaymentUseCase {
           ],
           { session: dbSession }
         );
+
+        // HIGH fix: promo quota leak — this is the only PENDING/UNPAID
+        // cancellation path that was missing this call (cancel-booking.use-
+        // case.ts and admin-cancel-booking.use-case.ts already release usage
+        // for the equivalent pending/unpaid case). Same session as the
+        // booking cancel/zone decrement above: if release throws, the whole
+        // transaction aborts — booking must never end up CANCELLED with the
+        // promo usage/quota left dangling (rule.md 3.1/12: no read-then-write
+        // outside the atomic boundary, no partial commit).
+        await this.promotionService.releaseUsageForBooking(
+          booking._id as Types.ObjectId,
+          dbSession
+        );
+
         changedZoneId = booking.zoneId as Types.ObjectId;
         cancelled = true;
       });
@@ -77,6 +95,7 @@ export class CancelPaymentUseCase {
     }
 
     if (changedZoneId) {
+      await this.zoneService.invalidateZoneAvailabilityCache(changedZoneId);
       await this.emitZoneTicketUpdate(changedZoneId);
     }
 

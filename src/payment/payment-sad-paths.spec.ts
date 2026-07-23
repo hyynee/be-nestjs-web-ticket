@@ -81,6 +81,7 @@ jest.mock("@paypal/checkout-server-sdk", () => ({
   payments: {
     CapturesRefundRequest: jest.fn().mockImplementation(() => ({
       requestBody: jest.fn(),
+      payPalRequestId: jest.fn().mockReturnThis(),
     })),
   },
 }));
@@ -901,7 +902,10 @@ describe("B — Payment gateway: failed / expired / non-COMPLETED", () => {
         service.handleCheckoutSessionCompleted(session)
       ).resolves.toBeUndefined();
       expect(refundSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ payment_intent: "pi_expired_booking" })
+        expect.objectContaining({ payment_intent: "pi_expired_booking" }),
+        expect.objectContaining({
+          idempotencyKey: "auto-refund:pi_expired_booking",
+        })
       );
     });
 
@@ -1127,6 +1131,7 @@ describe("B — Payment gateway: failed / expired / non-COMPLETED", () => {
         .fn()
         .mockImplementation(() => ({
           requestBody: jest.fn(),
+          payPalRequestId: jest.fn().mockReturnThis(),
         }));
 
       const { service } = await buildPaymentService({

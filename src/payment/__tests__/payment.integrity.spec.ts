@@ -9,7 +9,10 @@
  *   PAY-005: handleChargeRefunded xử lý partial refund (charge.refunded === false, amount_refunded > 0)
  */
 
-import { ServiceUnavailableException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
@@ -836,5 +839,211 @@ describe("PAY-003 & PAY-002 — PayPal capture: PendingConfirmation record + loc
         call[1].keys[0]?.includes("paypal:lock:")
     );
     expect(releaseCallsMade).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRE-3 & PRE-6 — PayPal auto-refund: outside the DB transaction + idempotent
+// (production-readiness-audit-2026-07-22.md)
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("PRE-3 & PRE-6 — PayPal auto-refund transaction safety and idempotency", () => {
+  // Booking still looks payable at the outer pre-check (findById), but by
+  // the time the transactional findOneAndUpdate actually runs it no longer
+  // matches PENDING/UNPAID — the exact race that triggers auto-refund.
+  const buildRefundScenario = () => {
+    const paymentModel = makePaymentModel();
+    const bookingModel = makeBookingModel();
+    const redisClient = makeRedisClient();
+
+    const paymentDoc = {
+      _id: new Types.ObjectId(),
+      bookingId: new Types.ObjectId(),
+      status: "pending",
+      currency: "VND",
+      metadata: {},
+    };
+    paymentModel.findOne.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest
+        .fn()
+        .mockReturnValue({ exec: jest.fn().mockResolvedValue(paymentDoc) }),
+      exec: jest.fn().mockResolvedValue(paymentDoc),
+    });
+    bookingModel.findById.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          bookingCode: "BK-RACE",
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+        }),
+      }),
+      exec: jest.fn().mockResolvedValue({
+        bookingCode: "BK-RACE",
+        status: BookingStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+      }),
+    });
+    const nullBookingQuery: any = {};
+    nullBookingQuery.populate = jest.fn().mockReturnValue(nullBookingQuery);
+    nullBookingQuery.then = (resolve: (value: null) => void) => resolve(null);
+    bookingModel.findOneAndUpdate.mockReturnValue(nullBookingQuery);
+
+    return { paymentModel, bookingModel, redisClient };
+  };
+
+  const buildModule = async (
+    bookingModel: ReturnType<typeof makeBookingModel>,
+    paymentModel: ReturnType<typeof makePaymentModel>,
+    redisClient: ReturnType<typeof makeRedisClient>
+  ) =>
+    Test.createTestingModule({
+      providers: [
+        ...paymentTestProviders,
+        { provide: getModelToken(Payment.name), useValue: paymentModel },
+        { provide: getModelToken(Booking.name), useValue: bookingModel },
+        { provide: getModelToken(Zone.name), useValue: makeZoneModel() },
+        {
+          provide: getModelToken(Ticket.name),
+          useValue: { updateMany: jest.fn() },
+        },
+        {
+          provide: TicketService,
+          useValue: {
+            createTicketsFromBooking: jest.fn(),
+            publishTicketCreation: jest.fn(),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: { sendBookingConfirmation: jest.fn() },
+        },
+        { provide: RedisService, useValue: { client: redisClient } },
+        { provide: ZoneGateway, useValue: { emitZoneTicketUpdate: jest.fn() } },
+        { provide: QueueService, useValue: { addJob: jest.fn() } },
+        {
+          provide: MetricsService,
+          useValue: {
+            paymentsTotal: { inc: jest.fn() },
+            refundFailuresTotal: { inc: jest.fn() },
+          },
+        },
+        {
+          provide: CurrencyService,
+          useValue: { getVndPerUsd: jest.fn().mockResolvedValue(25000) },
+        },
+      ],
+    }).compile();
+
+  it("PRE-3: does not call PayPal from inside the DB transaction — the refund fires exactly once even when withTransaction retries its callback (simulated TransientTransactionError)", async () => {
+    const { paymentModel, bookingModel, redisClient } = buildRefundScenario();
+
+    // Simulate the MongoDB driver retrying withTransaction's callback (e.g.
+    // an unrelated concurrent write conflict) by invoking it twice — both
+    // invocations hit the "booking no longer payable" branch.
+    const session = {
+      withTransaction: jest.fn(async (cb: () => Promise<void>) => {
+        await cb();
+        await cb();
+      }),
+      endSession: jest.fn(),
+    };
+    (bookingModel as any).db = {
+      startSession: jest.fn().mockResolvedValue(session),
+    };
+
+    const module: TestingModule = await buildModule(
+      bookingModel,
+      paymentModel,
+      redisClient
+    );
+    const service = module.get(PaymentService);
+    const settlementService = module.get(PaypalPaymentSettlementService);
+
+    (service as any).paymentGateway.paypalClient = {
+      execute: jest.fn().mockResolvedValue({
+        result: {
+          status: "COMPLETED",
+          purchase_units: [
+            {
+              payments: {
+                captures: [{ id: "CAP-RETRY-TEST", status: "COMPLETED" }],
+              },
+            },
+          ],
+        },
+      }),
+    };
+
+    const refundSpy = jest
+      .spyOn(settlementService as any, "autoRefundCapturedPaypalPayment")
+      .mockRejectedValue(
+        new BadRequestException(
+          "Booking is no longer available. Payment was captured and refund has been initiated."
+        )
+      );
+
+    await expect(
+      service.finalizePaypalTransaction(
+        "ORDER-RETRY-TEST",
+        new Types.ObjectId().toString()
+      )
+    ).rejects.toThrow("Booking is no longer available");
+
+    expect(session.withTransaction).toHaveBeenCalledTimes(1);
+    // The core PRE-3 assertion: two callback invocations, one refund call.
+    expect(refundSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("PRE-6: sets a deterministic PayPal-Request-Id on the auto-refund call, keyed by capture id — a re-fired call collapses at PayPal's side instead of double-refunding", async () => {
+    const { paymentModel, bookingModel, redisClient } = buildRefundScenario();
+    const session = {
+      withTransaction: jest.fn(async (cb: () => Promise<void>) => cb()),
+      endSession: jest.fn(),
+    };
+    (bookingModel as any).db = {
+      startSession: jest.fn().mockResolvedValue(session),
+    };
+
+    const module: TestingModule = await buildModule(
+      bookingModel,
+      paymentModel,
+      redisClient
+    );
+    const service = module.get(PaymentService);
+
+    let refundRequestSeen: { headers?: Record<string, string> } | null = null;
+    (service as any).paymentGateway.paypalClient = {
+      execute: jest.fn().mockImplementation((request: { path?: string }) => {
+        if (request.path?.includes("/refund")) {
+          refundRequestSeen = request;
+          return Promise.resolve({ result: { id: "refund_1" } });
+        }
+        return Promise.resolve({
+          result: {
+            status: "COMPLETED",
+            purchase_units: [
+              {
+                payments: {
+                  captures: [{ id: "CAP-IDEM-TEST", status: "COMPLETED" }],
+                },
+              },
+            ],
+          },
+        });
+      }),
+    };
+
+    await expect(
+      service.finalizePaypalTransaction(
+        "ORDER-IDEM-TEST",
+        new Types.ObjectId().toString()
+      )
+    ).rejects.toThrow("Booking is no longer available");
+
+    expect(refundRequestSeen).not.toBeNull();
+    expect(refundRequestSeen!.headers?.["PayPal-Request-Id"]).toBe(
+      "paypal-auto-refund:CAP-IDEM-TEST"
+    );
   });
 });

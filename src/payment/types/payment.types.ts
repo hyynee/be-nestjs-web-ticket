@@ -91,6 +91,14 @@ export interface PaypalCapturesRefundRequest {
     note_to_payer?: string;
     amount?: { value: string; currency_code: string };
   }): void;
+  /**
+   * PayPal's idempotency mechanism: a duplicate call carrying the same
+   * PayPal-Request-Id returns the original refund result instead of
+   * issuing a second one. See @paypal/checkout-server-sdk's
+   * CapturesRefundRequest#payPalRequestId (sets the PayPal-Request-Id
+   * header).
+   */
+  payPalRequestId(payPalRequestId: string): this;
 }
 
 export interface PaypalSdk {
@@ -288,6 +296,26 @@ export interface AdminRefundResult {
   status: AdminRefundStatus;
   providerRefundId?: string;
   errorMessage?: string;
+}
+
+export interface AdminRefundOptions {
+  /**
+   * VND amount to refund instead of the full remaining captured amount.
+   * Only supported for Stripe (zero-decimal currency, so this is the raw
+   * integer value with no minor-unit conversion). Omit/undefined for a full
+   * refund of whatever remains on the payment intent.
+   */
+  partialAmountVnd?: number;
+  /**
+   * Distinguishes this specific refund attempt for provider idempotency.
+   * Defaults to `bookingId` when omitted (original behavior: one logical
+   * refund per booking). Callers issuing more than one refund against the
+   * same booking over time (e.g. multiple partial refunds) MUST pass a
+   * value unique per attempt (e.g. the RefundRequest id) — retries of the
+   * *same* attempt should reuse the same value so the provider treats them
+   * as the same idempotent operation, not as separate refunds.
+   */
+  idempotencyReference?: string;
 }
 
 export interface PaymentHistoryEventSource {

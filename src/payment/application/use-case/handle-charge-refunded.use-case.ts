@@ -12,6 +12,8 @@ import { Ticket } from "@src/schemas/ticket.schema";
 import { Zone } from "@src/schemas/zone.schema";
 import { RedisService } from "@src/redis/redis.service";
 import { ZoneGateway } from "@src/zone/zone.gateway";
+import { ZoneService } from "@src/zone/zone.service";
+import { PromotionService } from "@src/promotion/promotion.service";
 import { Model, Types } from "mongoose";
 import Stripe from "stripe";
 
@@ -25,7 +27,9 @@ export class HandleChargeRefundedUseCase {
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     @InjectModel(Ticket.name) private readonly ticketModel: Model<Ticket>,
     private readonly redisService: RedisService,
-    private readonly zoneGateway: ZoneGateway
+    private readonly zoneGateway: ZoneGateway,
+    private readonly zoneService: ZoneService,
+    private readonly promotionService: PromotionService
   ) {}
 
   async execute(charge: Stripe.Charge): Promise<void> {
@@ -133,12 +137,22 @@ export class HandleChargeRefundedUseCase {
           },
           { session: dbSession }
         );
+
+        // Full refund cancels the booking — release any promo redemption
+        // in the same transaction so quota isn't leaked/held for a booking
+        // that no longer has any valid entitlement. Idempotent (guarded by
+        // releasedAt on the usage record).
+        await this.promotionService.releaseUsageForBooking(
+          booking._id as Types.ObjectId,
+          dbSession
+        );
       });
     } finally {
       await dbSession.endSession();
     }
 
     if (changedZoneId) {
+      await this.zoneService.invalidateZoneAvailabilityCache(changedZoneId);
       await this.emitZoneTicketUpdate(changedZoneId);
     }
 

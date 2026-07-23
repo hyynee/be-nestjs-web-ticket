@@ -201,6 +201,7 @@ export class PaypalPaymentSettlementService {
     let shouldSendConfirmation = false;
     let ticketOwnerUserId: string | undefined;
     let changedZoneId: Types.ObjectId | null = null;
+    let shouldRefund = false;
 
     try {
       await dbSession.withTransaction(async () => {
@@ -235,7 +236,15 @@ export class PaypalPaymentSettlementService {
           .populate("areaId", "name");
 
         if (!updatedBooking) {
-          await this.autoRefundCapturedPaypalPayment(payment, captureOrAuth);
+          // MUST NOT call the PayPal refund API here: this callback can be
+          // re-invoked by the driver on a retryable transient error from
+          // an unrelated concurrent write (e.g. Mongo primary failover),
+          // which would re-fire this live external call each time
+          // (production-readiness-audit-2026-07-22.md PRE-3). Only flag it
+          // and refund once, after the transaction has fully resolved —
+          // mirrors StripePaymentSettlementService.handleCheckoutSessionCompleted's
+          // shouldRefund pattern.
+          shouldRefund = true;
           return;
         }
 
@@ -297,6 +306,11 @@ export class PaypalPaymentSettlementService {
       throw error;
     } finally {
       await dbSession.endSession();
+    }
+
+    if (shouldRefund) {
+      await this.autoRefundCapturedPaypalPayment(payment, captureOrAuth);
+      return;
     }
 
     if (!bookingForMail || tickets.length === 0) {
@@ -474,6 +488,11 @@ export class PaypalPaymentSettlementService {
       refundRequest.requestBody({
         note_to_payer: "Booking no longer available",
       });
+      // Deterministic per capture (not per attempt): PayPal collapses any
+      // duplicate refund call carrying the same PayPal-Request-Id into the
+      // original result instead of issuing a second refund
+      // (production-readiness-audit-2026-07-22.md PRE-6).
+      refundRequest.payPalRequestId(`paypal-auto-refund:${captureOrAuth.id}`);
       await this.paymentGateway.withPaypalTimeout(
         this.paymentGateway.paypalClient.execute(refundRequest)
       );

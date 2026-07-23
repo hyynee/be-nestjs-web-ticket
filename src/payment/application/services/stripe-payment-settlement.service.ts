@@ -293,13 +293,22 @@ export class StripePaymentSettlementService {
       `[MONEY_RISK] Stripe captured ${paymentIntentForRefund} but booking ${bookingId} is in non-payable state. Initiating auto-refund.`
     );
     try {
-      await this.paymentGateway.stripe.refunds.create({
-        payment_intent: paymentIntentForRefund,
-        metadata: {
-          reason: "booking_cancelled_before_confirmation",
-          bookingId,
+      await this.paymentGateway.stripe.refunds.create(
+        {
+          payment_intent: paymentIntentForRefund,
+          metadata: {
+            reason: "booking_cancelled_before_confirmation",
+            bookingId,
+          },
         },
-      });
+        {
+          // Deterministic per payment_intent (not per attempt): Stripe
+          // collapses a duplicate refund call carrying the same key into
+          // the original result instead of issuing a second refund
+          // (production-readiness-audit-2026-07-22.md PRE-6).
+          idempotencyKey: `auto-refund:${paymentIntentForRefund}`,
+        }
+      );
       this.logger.warn(
         `[AUTO_REFUND] Refund issued for payment_intent=${paymentIntentForRefund}, bookingId=${bookingId}`
       );
