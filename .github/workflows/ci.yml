@@ -70,6 +70,21 @@ jobs:
       REDIS_PORT: "6379"
       OLLAMA_URL: "http://localhost:11434"
       OLLAMA_MODEL: "llama3"
+      # These 4 suites are `describe.skip`-gated locally so the default `pnpm
+      # test` dev loop stays fast, but they exercise real money/concurrency
+      # paths (payment fault-injection, area transaction rollback, Socket.IO
+      # cross-instance propagation via the Redis adapter, zone capacity
+      # overselling guard under concurrent transactions) and MUST run in CI.
+      # payment/area/booking-capacity spin up their own ephemeral MongoDB
+      # (real replica set via MongoMemoryReplSet, or MONGODB_URI above);
+      # zone.gateway uses the `redis` service below via REDIS_HOST/REDIS_PORT.
+      RUN_PAYMENT_INTEGRATION: "true"
+      RUN_AREA_INTEGRATION: "true"
+      RUN_REDIS_SOCKET_INTEGRATION: "true"
+      # NEW#10 (production-readiness-audit-2026-07-22.md): proves the zone
+      # capacity $expr guard under real concurrent MongoDB transactions
+      # (MongoMemoryReplSet), not a mocked Zone.findOneAndUpdate.
+      RUN_BOOKING_CONCURRENCY_INTEGRATION: "true"
 
     services:
       redis:

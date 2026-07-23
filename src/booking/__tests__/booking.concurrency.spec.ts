@@ -191,6 +191,7 @@ async function buildModule(redisClient: RedisClientMock) {
         useValue: {
           bookingsTotal: { inc: jest.fn() },
           bookingConflictTotal: { inc: jest.fn() },
+          redisOperationFailureTotal: { inc: jest.fn() },
         },
       },
       { provide: AuditService, useValue: { record: jest.fn() } },
