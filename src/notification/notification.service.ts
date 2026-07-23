@@ -118,6 +118,13 @@ export class NotificationService {
     return this.events.queueBookingConfirmationEmail(payload, userId);
   }
 
+  resendBookingConfirmationEmail(
+    payload: import("@src/types/booking-modules").BookingConfirmationData,
+    userId?: string | Types.ObjectId
+  ): Promise<void> {
+    return this.events.resendBookingConfirmationEmail(payload, userId);
+  }
+
   notifyBookingCreated(payload: {
     userId: string | Types.ObjectId;
     bookingId: string;

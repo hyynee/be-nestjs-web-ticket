@@ -96,7 +96,18 @@ describe("NotificationService", () => {
       mailService as never,
       userModel as never
     );
-    const events = new NotificationEventService(writer, email);
+    const reportCache = {
+      invalidateAll: jest.fn().mockResolvedValue(undefined),
+    };
+    const metricsService = {
+      notificationFailuresTotal: { inc: jest.fn() },
+    };
+    const events = new NotificationEventService(
+      writer,
+      email,
+      reportCache as never,
+      metricsService as never
+    );
     service = new NotificationService(query, read, email, events, {} as never);
   });
 

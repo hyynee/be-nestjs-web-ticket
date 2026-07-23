@@ -10,6 +10,7 @@ import { Ticket, TicketSchema } from "@src/schemas/ticket.schema";
 import { User, UserSchema } from "@src/schemas/user.schema";
 import { QueueModule } from "@src/queue/queue.module";
 import { RedisModule } from "@src/redis/redis.module";
+import { ReportModule } from "@src/report/report.module";
 import { MailModule } from "@src/services/mail.module";
 import { NotificationEmailService } from "./application/notification-email.service";
 import { NotificationEventService } from "./application/notification-event.service";
@@ -34,6 +35,7 @@ import { NotificationService } from "./notification.service";
     ]),
     QueueModule,
     RedisModule,
+    ReportModule,
     MailModule,
   ],
   controllers: [NotificationController],
