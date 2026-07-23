@@ -1,0 +1,6 @@
+export const REPORT_DEFAULT_RANGE_DAYS = 30;
+export const REPORT_MAX_RANGE_DAYS = 366;
+export const REPORT_DEFAULT_PAGE = 1;
+export const REPORT_DEFAULT_LIMIT = 20;
+export const REPORT_MAX_LIMIT = 100;
+export const RECONCILIATION_CASE_TYPE_CAP = 200;
