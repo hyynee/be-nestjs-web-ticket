@@ -59,6 +59,27 @@ export class MetricsService implements OnModuleInit {
     registers: [this.registry],
   });
 
+  readonly redisOperationFailureTotal = new Counter({
+    name: "redis_operation_failure_total",
+    help: "Number of times a Redis operation in the booking creation path failed or errored",
+    labelNames: ["operation"] as const,
+    registers: [this.registry],
+  });
+
+  readonly notificationFailuresTotal = new Counter({
+    name: "notification_failures_total",
+    help: "Number of notification deliveries lost to a genuine (non-duplicate-key) failure",
+    labelNames: ["channel"] as const,
+    registers: [this.registry],
+  });
+
+  readonly eventCancellationBookingsTotal = new Counter({
+    name: "event_cancellation_bookings_total",
+    help: "Per-booking outcomes while processing a bulk event-cancellation job",
+    labelNames: ["result"] as const,
+    registers: [this.registry],
+  });
+
   readonly httpRequestDuration = new Histogram({
     name: "http_request_duration_seconds",
     help: "HTTP request duration in seconds",
@@ -69,8 +90,8 @@ export class MetricsService implements OnModuleInit {
 
   readonly queueDepth = new Gauge({
     name: "queue_depth",
-    help: "BullMQ queue job counts",
-    labelNames: ["state"] as const,
+    help: "BullMQ queue job counts, polled periodically by QueueService.reportQueueDepth",
+    labelNames: ["queue", "state"] as const,
     registers: [this.registry],
   });
 

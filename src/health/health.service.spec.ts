@@ -4,11 +4,13 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import { HealthService } from "./health.service";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 
 describe("HealthService", () => {
   let service: HealthService;
   let mongoConnection: any;
   let redisService: any;
+  let redisSecurityService: any;
   let queue: any;
   let configService: jest.Mocked<ConfigService>;
 
@@ -31,6 +33,10 @@ describe("HealthService", () => {
       client: { ping: jest.fn().mockResolvedValue("PONG") },
     };
 
+    redisSecurityService = {
+      client: { ping: jest.fn().mockResolvedValue("PONG") },
+    };
+
     queue = {
       client: Promise.resolve({
         info: jest.fn().mockResolvedValue("redis_version:7"),
@@ -46,6 +52,7 @@ describe("HealthService", () => {
         HealthService,
         { provide: getConnectionToken(), useValue: mongoConnection },
         { provide: RedisService, useValue: redisService },
+        { provide: RedisSecurityService, useValue: redisSecurityService },
         { provide: getQueueToken("default"), useValue: queue },
         { provide: ConfigService, useValue: configService },
       ],
@@ -62,28 +69,50 @@ describe("HealthService", () => {
     const result = await service.checkReadiness();
     expect(result).toEqual({
       status: "ready",
-      checks: { mongo: "ok", redis: "ok", queue: "ok", config: "ok" },
+      checks: {
+        mongodb: "ok",
+        redisCache: "ok",
+        redisSecurity: "ok",
+        queue: "ok",
+        config: "ok",
+      },
     });
   });
 
-  it("marks mongo as failed when readyState is not connected", async () => {
+  it("marks mongodb as failed when readyState is not connected", async () => {
     mongoConnection.readyState = 0;
     const result = await service.checkReadiness();
     expect(result.status).toBe("unavailable");
-    expect(result.checks.mongo).toBe("failed");
+    expect(result.checks.mongodb).toBe("failed");
   });
 
-  it("marks mongo as failed when the ping command rejects", async () => {
+  it("marks mongodb as failed when the ping command rejects", async () => {
     mongoConnection.db.command.mockRejectedValue(new Error("timeout"));
     const result = await service.checkReadiness();
-    expect(result.checks.mongo).toBe("failed");
+    expect(result.checks.mongodb).toBe("failed");
   });
 
-  it("marks redis as failed when ping rejects", async () => {
+  it("marks redisCache as failed when ping rejects", async () => {
     redisService.client.ping.mockRejectedValue(new Error("ECONNREFUSED"));
     const result = await service.checkReadiness();
     expect(result.status).toBe("unavailable");
-    expect(result.checks.redis).toBe("failed");
+    expect(result.checks.redisCache).toBe("failed");
+  });
+
+  it("marks redisSecurity as failed when ping rejects — an outage on the JWT blacklist instance MUST take readiness down, since every authenticated request depends on it", async () => {
+    redisSecurityService.client.ping.mockRejectedValue(
+      new Error("ECONNREFUSED")
+    );
+    const result = await service.checkReadiness();
+    expect(result.status).toBe("unavailable");
+    expect(result.checks.redisSecurity).toBe("failed");
+  });
+
+  it("does not mark redisCache as failed just because redisSecurity failed, and vice versa — they are independent checks", async () => {
+    redisSecurityService.client.ping.mockRejectedValue(new Error("down"));
+    const result = await service.checkReadiness();
+    expect(result.checks.redisCache).toBe("ok");
+    expect(result.checks.redisSecurity).toBe("failed");
   });
 
   it("marks queue as failed when the BullMQ client is unreachable", async () => {
@@ -114,8 +143,9 @@ describe("HealthService", () => {
     queue.client = Promise.reject(new Error("down"));
     const result = await service.checkReadiness();
     expect(result.status).toBe("unavailable");
-    expect(result.checks.mongo).toBe("ok");
-    expect(result.checks.redis).toBe("ok");
+    expect(result.checks.mongodb).toBe("ok");
+    expect(result.checks.redisCache).toBe("ok");
+    expect(result.checks.redisSecurity).toBe("ok");
     expect(result.checks.config).toBe("ok");
   });
 });

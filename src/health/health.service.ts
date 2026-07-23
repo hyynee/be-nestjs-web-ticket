@@ -5,13 +5,21 @@ import { Connection } from "mongoose";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
 
 export type DependencyCheckStatus = "ok" | "failed";
 
+/**
+ * One entry per independently-failing dependency (production-readiness-
+ * audit-2026-07-23.md: cache/queue/security are now 3 physically separate
+ * Redis instances — readiness MUST distinguish which one is actually down,
+ * not collapse them into a single "redis" check).
+ */
 export interface ReadinessChecks {
-  mongo: DependencyCheckStatus;
-  redis: DependencyCheckStatus;
+  mongodb: DependencyCheckStatus;
+  redisCache: DependencyCheckStatus;
+  redisSecurity: DependencyCheckStatus;
   queue: DependencyCheckStatus;
   config: DependencyCheckStatus;
 }
@@ -60,6 +68,7 @@ export class HealthService {
   constructor(
     @InjectConnection() private readonly mongoConnection: Connection,
     private readonly redisService: RedisService,
+    private readonly redisSecurityService: RedisSecurityService,
     @InjectQueue("default") private readonly queue: Queue,
     private readonly configService: ConfigService
   ) {}
@@ -72,14 +81,22 @@ export class HealthService {
   }
 
   async checkReadiness(): Promise<ReadinessResult> {
-    const [mongo, redis, queue, config] = await Promise.all([
-      this.checkMongo(),
-      this.checkRedis(),
-      this.checkQueue(),
-      this.checkConfig(),
-    ]);
+    const [mongodb, redisCache, redisSecurity, queue, config] =
+      await Promise.all([
+        this.checkMongo(),
+        this.checkRedis(),
+        this.checkRedisSecurity(),
+        this.checkQueue(),
+        this.checkConfig(),
+      ]);
 
-    const checks: ReadinessChecks = { mongo, redis, queue, config };
+    const checks: ReadinessChecks = {
+      mongodb,
+      redisCache,
+      redisSecurity,
+      queue,
+      config,
+    };
     const status = Object.values(checks).every((c) => c === "ok")
       ? "ready"
       : "unavailable";
@@ -114,6 +131,29 @@ export class HealthService {
       return "ok";
     } catch (err) {
       this.logger.warn(`Redis readiness check failed: ${getErrorMessage(err)}`);
+      return "failed";
+    }
+  }
+
+  /**
+   * Pings the dedicated JWT blacklist/session-revocation Redis instance
+   * directly (not `.isOpen`, which only reflects socket state, not whether
+   * the server actually responds) — this is the instance every authenticated
+   * request depends on (JwtStrategy, ChatGateway both fail closed if it's
+   * unreachable), so its outage MUST take readiness down, not just auth.
+   */
+  private async checkRedisSecurity(): Promise<DependencyCheckStatus> {
+    try {
+      await withTimeout(
+        this.redisSecurityService.client.ping(),
+        CHECK_TIMEOUT_MS,
+        "RedisSecurity"
+      );
+      return "ok";
+    } catch (err) {
+      this.logger.warn(
+        `RedisSecurity readiness check failed: ${getErrorMessage(err)}`
+      );
       return "failed";
     }
   }

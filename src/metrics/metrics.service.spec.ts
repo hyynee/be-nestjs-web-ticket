@@ -52,9 +52,31 @@ describe("MetricsService", () => {
     expect(metrics).toContain("checkins_total");
   });
 
-  it("queueDepth gauge can be set", async () => {
-    service.queueDepth.set({ state: "waiting" }, 5);
+  it("queueDepth gauge can be set per queue and state", async () => {
+    service.queueDepth.set({ queue: "default", state: "waiting" }, 5);
     const metrics = await service.getMetrics();
     expect(metrics).toContain("queue_depth");
+    expect(metrics).toContain('queue="default"');
+    expect(metrics).toContain('state="waiting"');
+  });
+
+  it("redisOperationFailureTotal tracks by operation", async () => {
+    service.redisOperationFailureTotal.inc({ operation: "user_lock_set" });
+    service.redisOperationFailureTotal.inc({ operation: "slot_incr" });
+    const metrics = await service.getMetrics();
+    expect(metrics).toContain("redis_operation_failure_total");
+    expect(metrics).toContain('operation="user_lock_set"');
+    expect(metrics).toContain('operation="slot_incr"');
+  });
+
+  it("eventCancellationBookingsTotal tracks per-booking outcomes by result", async () => {
+    service.eventCancellationBookingsTotal.inc({ result: "succeeded" }, 40);
+    service.eventCancellationBookingsTotal.inc({ result: "failed" }, 2);
+    service.eventCancellationBookingsTotal.inc({ result: "skipped" }, 1);
+    const metrics = await service.getMetrics();
+    expect(metrics).toContain("event_cancellation_bookings_total");
+    expect(metrics).toContain('result="succeeded"');
+    expect(metrics).toContain('result="failed"');
+    expect(metrics).toContain('result="skipped"');
   });
 });

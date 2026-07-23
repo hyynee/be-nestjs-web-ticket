@@ -8,5 +8,6 @@ import { QueueModule } from "@src/queue/queue.module";
   imports: [RedisModule, QueueModule],
   controllers: [HealthController],
   providers: [HealthService],
+  exports: [HealthService],
 })
 export class HealthModule {}

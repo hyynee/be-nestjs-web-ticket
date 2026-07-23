@@ -1,10 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { InjectConnection } from "@nestjs/mongoose";
-import type { Connection } from "mongoose";
+import { Injectable } from "@nestjs/common";
 import * as os from "os";
-import { RedisService } from "./redis/redis.service";
-import { QueueService } from "./queue/queue.service";
-import { getErrorMessage } from "./helper/getErrorMessage";
 
 export interface HealthResponse {
   status: "ok";
@@ -22,22 +17,8 @@ export interface InternalMetricsResponse {
   version: string;
 }
 
-export interface ReadinessResponse {
-  status: "ready" | "not_ready";
-  dependencies: Record<"mongodb" | "redis", "up" | "down">;
-  queue: Record<"active" | "waiting" | "failed" | "delayed", number>;
-}
-
 @Injectable()
 export class AppService {
-  private readonly logger = new Logger(AppService.name);
-
-  constructor(
-    @InjectConnection() private readonly mongoConnection: Connection,
-    private readonly redisService: RedisService,
-    private readonly queueService: QueueService
-  ) {}
-
   private health(): HealthResponse {
     return { status: "ok" };
   }
@@ -64,40 +45,6 @@ export class AppService {
     };
   }
 
-  private readiness(input: {
-    mongoReady: boolean;
-    redisReady: boolean;
-    queueCounts: Record<string, number>;
-  }): ReadinessResponse {
-    const ready = input.mongoReady && input.redisReady;
-    return {
-      status: ready ? "ready" : "not_ready",
-      dependencies: {
-        mongodb: input.mongoReady ? "up" : "down",
-        redis: input.redisReady ? "up" : "down",
-      },
-      queue: {
-        active: input.queueCounts.active ?? 0,
-        waiting: input.queueCounts.waiting ?? 0,
-        failed: input.queueCounts.failed ?? 0,
-        delayed: input.queueCounts.delayed ?? 0,
-      },
-    };
-  }
-
-  private unavailableReadiness(): ReadinessResponse {
-    return {
-      status: "not_ready",
-      dependencies: { mongodb: "down", redis: "down" },
-      queue: {
-        active: 0,
-        waiting: 0,
-        failed: 0,
-        delayed: 0,
-      },
-    };
-  }
-
   getHealth(): HealthResponse {
     return this.health();
   }
@@ -108,26 +55,5 @@ export class AppService {
       mem,
       os.loadavg().map((v) => Math.round(v * 100) / 100)
     );
-  }
-
-  async getReadiness(): Promise<ReadinessResponse> {
-    try {
-      const mongoReady = this.mongoConnection.readyState === 1; // 1 = connected
-      const redisReady = Boolean(this.redisService?.client?.isOpen);
-
-      let queueCounts: Record<string, number> = {};
-      try {
-        queueCounts = await this.queueService.getJobCounts();
-      } catch (error) {
-        this.logger.warn(
-          `Readiness queue metrics unavailable: ${getErrorMessage(error)}`
-        );
-      }
-
-      return this.readiness({ mongoReady, redisReady, queueCounts });
-    } catch (error) {
-      this.logger.warn(`Readiness check failed: ${getErrorMessage(error)}`);
-      return this.unavailableReadiness();
-    }
   }
 }

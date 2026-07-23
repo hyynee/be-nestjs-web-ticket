@@ -54,6 +54,8 @@ import { PaymentOpsModule } from "./payment-ops/payment-ops.module";
 import { RefundModule } from "./refund/refund.module";
 import { NotificationModule } from "./notification/notification.module";
 import { PromotionModule } from "./promotion/promotion.module";
+import { ReportModule } from "./report/report.module";
+import { AdminOpsModule } from "./admin-ops/admin-ops.module";
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -132,6 +134,8 @@ import { PromotionModule } from "./promotion/promotion.module";
     PromotionModule,
     PaymentOpsModule,
     RefundModule,
+    ReportModule,
+    AdminOpsModule,
   ],
   controllers: [AppController, UploadController],
   providers: [

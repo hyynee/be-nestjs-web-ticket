@@ -38,7 +38,13 @@ describe("HealthController", () => {
     it("returns 200 with all checks ok when everything is healthy", async () => {
       healthService.checkReadiness.mockResolvedValue({
         status: "ready",
-        checks: { mongo: "ok", redis: "ok", queue: "ok", config: "ok" },
+        checks: {
+          mongodb: "ok",
+          redisCache: "ok",
+          redisSecurity: "ok",
+          queue: "ok",
+          config: "ok",
+        },
       });
 
       const result = await controller.ready();
@@ -48,7 +54,30 @@ describe("HealthController", () => {
     it("throws ServiceUnavailableException when any check fails", async () => {
       healthService.checkReadiness.mockResolvedValue({
         status: "unavailable",
-        checks: { mongo: "ok", redis: "failed", queue: "ok", config: "ok" },
+        checks: {
+          mongodb: "ok",
+          redisCache: "failed",
+          redisSecurity: "ok",
+          queue: "ok",
+          config: "ok",
+        },
+      });
+
+      await expect(controller.ready()).rejects.toThrow(
+        ServiceUnavailableException
+      );
+    });
+
+    it("throws ServiceUnavailableException (maps to HTTP 503) when only redisSecurity fails — every authenticated request depends on it, so its outage alone must take readiness down", async () => {
+      healthService.checkReadiness.mockResolvedValue({
+        status: "unavailable",
+        checks: {
+          mongodb: "ok",
+          redisCache: "ok",
+          redisSecurity: "failed",
+          queue: "ok",
+          config: "ok",
+        },
       });
 
       await expect(controller.ready()).rejects.toThrow(
@@ -60,8 +89,9 @@ describe("HealthController", () => {
       const readiness = {
         status: "unavailable" as const,
         checks: {
-          mongo: "ok" as const,
-          redis: "failed" as const,
+          mongodb: "ok" as const,
+          redisCache: "failed" as const,
+          redisSecurity: "ok" as const,
           queue: "ok" as const,
           config: "ok" as const,
         },
@@ -81,7 +111,13 @@ describe("HealthController", () => {
     it("does not leak env secrets in the unavailable response", async () => {
       healthService.checkReadiness.mockResolvedValue({
         status: "unavailable",
-        checks: { mongo: "ok", redis: "ok", queue: "ok", config: "failed" },
+        checks: {
+          mongodb: "ok",
+          redisCache: "ok",
+          redisSecurity: "ok",
+          queue: "ok",
+          config: "failed",
+        },
       });
 
       try {

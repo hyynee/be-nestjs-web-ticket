@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
+import { HealthService } from "./health/health.service";
 import { ConfigService } from "@nestjs/config";
 import { MetricsService } from "./metrics/metrics.service";
 import {
@@ -11,14 +12,18 @@ import {
 describe("AppController", () => {
   let controller: AppController;
   let appService: Record<string, jest.Mock>;
+  let healthService: Record<string, jest.Mock>;
   let configService: Record<string, jest.Mock>;
   let metricsService: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     appService = {
       getHealth: jest.fn(),
-      getReadiness: jest.fn(),
       getInternalMetrics: jest.fn(),
+    };
+
+    healthService = {
+      checkReadiness: jest.fn(),
     };
 
     configService = {
@@ -34,6 +39,7 @@ describe("AppController", () => {
       controllers: [AppController],
       providers: [
         { provide: AppService, useValue: appService },
+        { provide: HealthService, useValue: healthService },
         { provide: ConfigService, useValue: configService },
         { provide: MetricsService, useValue: metricsService },
       ],
@@ -58,28 +64,38 @@ describe("AppController", () => {
     });
   });
 
-  describe("GET /ready", () => {
-    it("should return readiness when service is ready", async () => {
+  describe("GET /ready (legacy alias, delegates to HealthService)", () => {
+    it("should return readiness when HealthService reports ready", async () => {
       const readinessResult = {
         status: "ready",
-        dependencies: { mongodb: "up", redis: "up" },
-        queue: { active: 0, waiting: 0, failed: 0, delayed: 0 },
+        checks: {
+          mongodb: "ok",
+          redisCache: "ok",
+          redisSecurity: "ok",
+          queue: "ok",
+          config: "ok",
+        },
       };
-      appService.getReadiness.mockResolvedValue(readinessResult);
+      healthService.checkReadiness.mockResolvedValue(readinessResult);
 
       const result = await controller.ready();
 
-      expect(appService.getReadiness).toHaveBeenCalled();
+      expect(healthService.checkReadiness).toHaveBeenCalled();
       expect(result).toEqual(readinessResult);
     });
 
-    it("should throw ServiceUnavailableException when not ready", async () => {
+    it("should throw ServiceUnavailableException when HealthService reports unavailable", async () => {
       const readinessResult = {
-        status: "not_ready",
-        dependencies: { mongodb: "down", redis: "down" },
-        queue: {},
+        status: "unavailable",
+        checks: {
+          mongodb: "failed",
+          redisCache: "ok",
+          redisSecurity: "ok",
+          queue: "ok",
+          config: "ok",
+        },
       };
-      appService.getReadiness.mockResolvedValue(readinessResult);
+      healthService.checkReadiness.mockResolvedValue(readinessResult);
 
       await expect(controller.ready()).rejects.toThrow(
         ServiceUnavailableException
@@ -207,6 +223,7 @@ describe("AppController", () => {
     it("handles non-function dependency types", () => {
       jest.isolateModules(() => {
         jest.mock("./app.service", () => ({}));
+        jest.mock("./health/health.service", () => ({ HealthService: {} }));
         jest.mock("@nestjs/config", () => ({ ConfigService: {} }));
         jest.mock("./metrics/metrics.service", () => ({ MetricsService: {} }));
 
@@ -214,9 +231,9 @@ describe("AppController", () => {
         const ctrl = new Ctrl(
           {
             getHealth: jest.fn(),
-            getReadiness: jest.fn(),
             getInternalMetrics: jest.fn(),
           },
+          { checkReadiness: jest.fn() },
           { get: jest.fn() },
           { getMetrics: jest.fn(), contentType: jest.fn() }
         );

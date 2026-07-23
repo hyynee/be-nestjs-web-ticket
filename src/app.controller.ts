@@ -9,12 +9,14 @@ import {
 import type { Response } from "express";
 import { ConfigService } from "@nestjs/config";
 import { AppService } from "./app.service";
+import { HealthService } from "./health/health.service";
 import { MetricsService } from "./metrics/metrics.service";
 
 @Controller()
 export class AppController {
   constructor(
     private readonly appService: AppService,
+    private readonly healthService: HealthService,
     private readonly configService: ConfigService,
     private readonly metricsService: MetricsService
   ) {}
@@ -24,9 +26,18 @@ export class AppController {
     return this.appService.getHealth();
   }
 
+  /**
+   * Legacy alias for `GET /health/ready` — kept so existing monitoring/CD
+   * config pointed at `/ready` doesn't 404, but delegates entirely to
+   * `HealthService.checkReadiness()` instead of maintaining a second,
+   * weaker readiness implementation (production-readiness-audit-2026-07-23.md:
+   * `/ready` previously only checked Mongo `readyState`/Redis `.isOpen`
+   * flags with no real ping, and CD trusted this weaker check). CD itself
+   * now polls `/health/ready` directly — see `.github/workflows/cd.yml`.
+   */
   @Get("ready")
-  async ready(): ReturnType<AppService["getReadiness"]> {
-    const readiness = await this.appService.getReadiness();
+  async ready(): ReturnType<HealthService["checkReadiness"]> {
+    const readiness = await this.healthService.checkReadiness();
     if (readiness.status !== "ready") {
       throw new ServiceUnavailableException(readiness);
     }
