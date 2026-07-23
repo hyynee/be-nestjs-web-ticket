@@ -5,9 +5,17 @@
 # Flow:
 #   1. Wait for mongod to accept connections
 #   2. If replica set already initialized → skip RS init, ensure admin user exists
-#   3. Initiate replica set with 2 data nodes + 1 arbiter
+#   3. Initiate replica set with 3 data-bearing voting nodes (PSS)
 #   4. Wait for primary election
 #   5. Create admin user (localhost exception applies before first user is created)
+#
+# PSS, not PSA (production-readiness-audit-2026-07-22.md NEW#4): all three
+# members hold real data and can acknowledge write concern "majority" —
+# losing any single one still leaves 2 data-bearing nodes able to satisfy
+# majority writes. An arbiter can vote for elections but can never
+# acknowledge a write, so a 2-data+1-arbiter set stalls every majority
+# write the moment either data node is lost, even with a primary still up.
+# See docs/runbooks/mongodb-replica-set.md for verification/failover drills.
 #
 # Credentials are read from MONGO_ADMIN_USER / MONGO_ADMIN_PASS env vars
 # (set in docker-compose.yml, defaults: admin / devMongoPass123).
@@ -57,14 +65,14 @@ if [ "$RS_STATUS" = "1" ]; then
   exit 0
 fi
 
-echo "[mongo-init] Initiating replica set ${REPLICA_SET} with arbiter..."
+echo "[mongo-init] Initiating replica set ${REPLICA_SET} with 3 data-bearing voting nodes..."
 mongosh --quiet --eval "
   rs.initiate({
     _id: '${REPLICA_SET}',
     members: [
       { _id: 0, host: 'mongo1:${MONGO_PORT}', priority: 2 },
       { _id: 1, host: 'mongo2:${MONGO_PORT}', priority: 1 },
-      { _id: 2, host: 'mongo-arbiter:${MONGO_PORT}', arbiterOnly: true },
+      { _id: 2, host: 'mongo3:${MONGO_PORT}', priority: 1 },
     ]
   });
 "

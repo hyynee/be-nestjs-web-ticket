@@ -15,18 +15,51 @@ services:
       REDIS_QUEUE_HOST: redis-queue
       REDIS_QUEUE_PORT: 6379
       REDIS_QUEUE_PASSWORD: ${REDIS_QUEUE_PASSWORD:?REDIS_QUEUE_PASSWORD must be set}
-      MONGODB_URI: mongodb://${MONGO_ADMIN_USER:-admin}:${MONGO_ADMIN_PASS:?MONGO_ADMIN_PASS must be set}@mongo1:27017,mongo2:27017,mongo-arbiter:27017/ticket-be?replicaSet=rs0&authSource=admin
+      # Dedicated instance for JWT blacklist/session-revocation data — MUST
+      # stay a genuinely separate endpoint from both redis-cache (evictable)
+      # and redis-queue (shared with BullMQ) in production; see
+      # RedisSecurityService and env.validation.ts.
+      REDIS_SECURITY_HOST: redis-security
+      REDIS_SECURITY_PORT: 6379
+      REDIS_SECURITY_PASSWORD: ${REDIS_SECURITY_PASSWORD:?REDIS_SECURITY_PASSWORD must be set}
+      # PSS (3 data-bearing voting members) as of NEW#4
+      # (production-readiness-audit-2026-07-22.md) — see
+      # docs/runbooks/mongodb-replica-set.md. No arbiter: majority write
+      # concern (w:"majority" below/in database.module.ts) must be
+      # acknowledgeable by real data nodes alone, or losing a single data
+      # node stalls every write app-wide even though a primary still exists.
+      MONGODB_URI: mongodb://${MONGO_ADMIN_USER:-admin}:${MONGO_ADMIN_PASS:?MONGO_ADMIN_PASS must be set}@mongo1:27017,mongo2:27017,mongo3:27017/ticket-be?replicaSet=rs0&authSource=admin
     restart: unless-stopped
+    healthcheck:
+      # /health/ready (HealthService.checkReadiness) actually pings Mongo and
+      # all 3 Redis roles (cache/queue/security), unlike the legacy /ready
+      # alias which only checked connection flags — same endpoint CD now
+      # polls, so container orchestration and CD trust the same signal. Safe
+      # to use at container-boot time: `depends_on` above already requires
+      # every Mongo/Redis service to be service_healthy before this
+      # container even starts, so this never boot-loops waiting on a
+      # dependency that isn't up yet — it only waits on the app's own boot.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://127.0.0.1:9000/health/ready',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       redis-cache:
         condition: service_healthy
       redis-queue:
         condition: service_healthy
+      redis-security:
+        condition: service_healthy
       mongo1:
         condition: service_healthy
       mongo2:
         condition: service_healthy
-      mongo-arbiter:
+      mongo3:
         condition: service_healthy
     deploy:
       resources:
@@ -71,6 +104,10 @@ services:
     networks:
       - ticket-network
 
+  # BullMQ only. JWT blacklist/revocation data lives on the dedicated
+  # redis-security instance below, NOT here — sharing this instance with
+  # auth would collapse job processing and authentication into a single
+  # failure domain (see redis-security's own comment).
   redis-queue:
     image: redis:7.4-alpine
     restart: unless-stopped
@@ -97,6 +134,46 @@ services:
           cpus: "1.0"
         reservations:
           memory: 256M
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - ticket-network
+
+  # Dedicated instance for JWT blacklist/session-revocation data ONLY —
+  # noeviction so a revoked token can never be silently un-revoked under
+  # memory pressure (production-readiness-audit-2026-07-22.md PRE-1), and a
+  # genuinely separate physical instance from both redis-cache and
+  # redis-queue so an outage here only affects auth revocation checks, not
+  # general caching or BullMQ job processing (production-readiness-audit-
+  # 2026-07-23.md, "Redis outage blast-radius merged"). Volume is tiny — one
+  # key per logout/revocation, TTL-bounded to the access-token lifetime —
+  # so this is inexpensive insurance, not a scaling concern.
+  redis-security:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_SECURITY_PASSWORD:?REDIS_SECURITY_PASSWORD must be set}
+      --maxmemory 64mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redis-security-data:/data
+    environment:
+      REDISCLI_AUTH: ${REDIS_SECURITY_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"${REDIS_SECURITY_PASSWORD:-}\" ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+        reservations:
+          memory: 64M
     security_opt:
       - no-new-privileges:true
     networks:
@@ -154,12 +231,16 @@ services:
     networks:
       - ticket-network
 
-  mongo-arbiter:
+  # 3rd data-bearing voting member (replaces mongo-arbiter — see
+  # docs/runbooks/mongodb-replica-set.md). Same profile as mongo2: it
+  # stores real data and can be elected primary, unlike an arbiter, which
+  # only votes and can never satisfy write concern "majority" on its own.
+  mongo3:
     image: mongo:7.0
     restart: unless-stopped
     command: mongod --replSet rs0 --bind_ip_all --port 27017 --auth --keyFile /etc/mongodb/keyfile
     volumes:
-      - mongo-arbiter-data:/data/db
+      - mongo3-data:/data/db
       - ./scripts/mongo-rs-keyfile:/etc/mongodb/keyfile:ro
     healthcheck:
       test: ["CMD-SHELL", "mongosh --port 27017 --quiet --eval 'if (db.adminCommand(\"ping\").ok !== 1) process.exit(1);'"]
@@ -170,8 +251,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
-          cpus: "0.25"
+          memory: 512M
+          cpus: "0.5"
     security_opt:
       - no-new-privileges:true
     networks:
@@ -180,12 +261,10 @@ services:
 volumes:
   redis-cache-data:
   redis-queue-data:
+  redis-security-data:
   mongo1-data:
   mongo2-data:
-  mongo1-config:
-  mongo2-config:
-  mongo-arbiter-data:
-  mongo-arbiter-config:
+  mongo3-data:
 
 networks:
   ticket-network:
