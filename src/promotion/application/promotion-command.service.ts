@@ -90,7 +90,10 @@ export class PromotionCommandService {
       dto.zoneIds === undefined
         ? existing.zoneIds
         : this.policy.toObjectIds(dto.zoneIds, "zone ID");
-    await this.policy.assertCanManageScope(currentUser, eventIds, zoneIds);
+
+    if (dto.eventIds !== undefined || dto.zoneIds !== undefined) {
+      await this.policy.assertCanManageScope(currentUser, eventIds, zoneIds);
+    }
 
     try {
       const updated = await this.promotionModel

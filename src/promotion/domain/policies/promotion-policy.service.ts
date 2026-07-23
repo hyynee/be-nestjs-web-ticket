@@ -93,11 +93,35 @@ export class PromotionPolicyService {
     currentUser: JwtPayload,
     promotion: PromotionDocument
   ): Promise<void> {
-    await this.assertCanManageScope(
-      currentUser,
-      promotion.eventIds ?? [],
-      promotion.zoneIds ?? []
+    if (currentUser.role === "admin") {
+      return;
+    }
+
+    const zoneIds = promotion.zoneIds ?? [];
+    const zones = zoneIds.length
+      ? await this.zoneModel
+          .find({ _id: { $in: zoneIds }, isDeleted: false })
+          .select("_id eventId")
+          .lean<ZoneScope[]>()
+      : [];
+
+    const eventScope = new Set(
+      (promotion.eventIds ?? []).map((id) => id.toString())
     );
+    for (const zone of zones) {
+      eventScope.add(zone.eventId.toString());
+    }
+
+    if (eventScope.size === 0) {
+      throw new ForbiddenException("Only admins can manage global promotions");
+    }
+
+    for (const eventId of eventScope) {
+      await this.eventOwnershipService.assertCanManageEvent(
+        currentUser,
+        eventId
+      );
+    }
   }
 
   async assertCanManageScope(
