@@ -5,6 +5,7 @@ import { getModelToken } from "@nestjs/mongoose";
 import { JwtStrategy } from "./jwt.strategy";
 import { User } from "@src/schemas/user.schema";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 import type { Request } from "express";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ describe("JwtStrategy", () => {
   let strategy: JwtStrategy;
   let userModel: any;
   let redisClient: any;
+  let redisSecurityClient: any;
 
   beforeEach(async () => {
     userModel = {
@@ -50,6 +52,10 @@ describe("JwtStrategy", () => {
       set: jest.fn().mockResolvedValue("OK"),
     };
 
+    redisSecurityClient = {
+      get: jest.fn().mockResolvedValue(null),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         JwtStrategy,
@@ -63,6 +69,10 @@ describe("JwtStrategy", () => {
         },
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: RedisService, useValue: { client: redisClient } },
+        {
+          provide: RedisSecurityService,
+          useValue: { client: redisSecurityClient },
+        },
       ],
     }).compile();
 
@@ -88,7 +98,7 @@ describe("JwtStrategy", () => {
   // ── Blacklisted token ─────────────────────────────────────────────────────
 
   it("throws UnauthorizedException when access token is blacklisted", async () => {
-    redisClient.get.mockImplementation((key: string) => {
+    redisSecurityClient.get.mockImplementation((key: string) => {
       if (key === `blacklist:access:${ACCESS_TOKEN}`)
         return Promise.resolve("1");
       return Promise.resolve(null);
@@ -97,6 +107,20 @@ describe("JwtStrategy", () => {
     await expect(
       strategy.validate(makeReq(ACCESS_TOKEN), makePayload())
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it("checks the blacklist on the dedicated security Redis client, not the general cache client", async () => {
+    await strategy.validate(makeReq(ACCESS_TOKEN), makePayload());
+
+    expect(redisSecurityClient.get).toHaveBeenCalledWith(
+      `blacklist:access:${ACCESS_TOKEN}`
+    );
+    const cacheClientCalls = (redisClient.get as jest.Mock).mock.calls.map(
+      (c: any) => c[0] as string
+    );
+    expect(cacheClientCalls.some((k) => k.startsWith("blacklist:"))).toBe(
+      false
+    );
   });
 
   // ── Redis cache hit ───────────────────────────────────────────────────────
@@ -254,9 +278,8 @@ describe("JwtStrategy", () => {
   // ── Redis unavailable — graceful fallback ────────────────────────────────
 
   it("uses DB when user cache Redis GET fails (blacklist check passes)", async () => {
-    redisClient.get
-      .mockResolvedValueOnce(null)
-      .mockRejectedValueOnce(new Error("Redis connection lost"));
+    redisSecurityClient.get.mockResolvedValueOnce(null);
+    redisClient.get.mockRejectedValueOnce(new Error("Redis connection lost"));
 
     const payload = makePayload();
     const result = await strategy.validate(makeReq(ACCESS_TOKEN), payload);
@@ -265,8 +288,10 @@ describe("JwtStrategy", () => {
     expect(result).toEqual(payload);
   });
 
-  it("throws when blacklist Redis GET fails", async () => {
-    redisClient.get.mockRejectedValue(new Error("Redis connection lost"));
+  it("throws when blacklist Redis GET fails (fails closed)", async () => {
+    redisSecurityClient.get.mockRejectedValue(
+      new Error("Redis connection lost")
+    );
 
     await expect(
       strategy.validate(makeReq(ACCESS_TOKEN), makePayload())
@@ -286,10 +311,7 @@ describe("JwtStrategy", () => {
 
   it("skips blacklist check when no access token in cookie", async () => {
     await strategy.validate(makeReq(), makePayload());
-    const calls = (redisClient.get as jest.Mock).mock.calls.map(
-      (c: any) => c[0] as string
-    );
-    expect(calls.some((k) => k.startsWith("blacklist:"))).toBe(false);
+    expect(redisSecurityClient.get).not.toHaveBeenCalled();
   });
 
   it("handles undefined cookies gracefully (no crash)", async () => {

@@ -11,6 +11,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { User } from "@src/schemas/user.schema";
 import { Session } from "@src/schemas/session.schema";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 import { UUID_V4_REGEX } from "@src/common/utils/regex.utils";
 import {
   parseDeviceInfo,
@@ -47,6 +48,7 @@ export class AuthSessionService {
     @InjectModel(Session.name) private readonly sessionModel: Model<Session>,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
     private readonly redisService: RedisService,
+    private readonly redisSecurityService: RedisSecurityService,
     private readonly authUserCacheService: AuthUserCacheService,
     private readonly authCookieService: AuthCookieService,
     private readonly authTokenService: AuthTokenService,
@@ -228,7 +230,7 @@ export class AuthSessionService {
     if (ttl <= 0) return;
 
     try {
-      await this.redisService.client.set(
+      await this.redisSecurityService.client.set(
         `blacklist:access:${accessToken}`,
         "1",
         { EX: ttl }

@@ -4,7 +4,9 @@ export const ACCESS_TOKEN_TTL_MS = ACCESS_TOKEN_TTL_SECONDS * 1000;
 export const REFRESH_TOKEN_TTL_SECONDS = 3 * 24 * 60 * 60; // 3 days
 export const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_SECONDS * 1000;
 
-export const SHADOW_TTL_SECONDS = 30;
+// Reuse-detection window MUST cover the full refresh-token lifetime — a shorter
+// window lets a stolen/replayed token evade breach detection once it expires.
+export const SHADOW_TTL_SECONDS = REFRESH_TOKEN_TTL_SECONDS;
 
 export const EMAIL_VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 

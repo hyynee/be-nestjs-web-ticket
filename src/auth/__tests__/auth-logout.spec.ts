@@ -9,6 +9,7 @@ import { LockLoginService } from "@src/lock-login/lock-login.service";
 import { UserEventsService } from "@src/events/user-event.services";
 import { MailService } from "@src/services/mail.service";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 import { TwoFactorService } from "@src/two-factor/two-factor.service";
 import { AuthAccountService } from "../application/auth-account.service";
 import { AuthLoginService } from "../application/auth-login.service";
@@ -28,6 +29,14 @@ const mockRedisClient: {
   set: jest.fn().mockResolvedValue("OK"),
   get: jest.fn(),
   del: jest.fn(),
+};
+
+const mockRedisSecurityClient: {
+  set: jest.Mock;
+  get: jest.Mock;
+} = {
+  set: jest.fn().mockResolvedValue("OK"),
+  get: jest.fn(),
 };
 
 const mockSessionModel: {
@@ -84,6 +93,10 @@ describe("AuthService.logout — CRITICAL-9", () => {
         { provide: MailService, useValue: {} },
         { provide: LockLoginService, useValue: {} },
         { provide: RedisService, useValue: { client: mockRedisClient } },
+        {
+          provide: RedisSecurityService,
+          useValue: { client: mockRedisSecurityClient },
+        },
         { provide: TwoFactorService, useValue: { verifyLoginOtp: jest.fn() } },
       ],
     }).compile();
@@ -103,11 +116,24 @@ describe("AuthService.logout — CRITICAL-9", () => {
       await service.logout(undefined, mockRes, mockReq("valid.jwt.token"));
 
       expect(jwtService.verify).toHaveBeenCalledWith("valid.jwt.token");
-      expect(mockRedisClient.set).toHaveBeenCalledWith(
+      expect(mockRedisSecurityClient.set).toHaveBeenCalledWith(
         "blacklist:access:valid.jwt.token",
         "1",
         { EX: 1800 }
       );
+    });
+
+    it("blacklists on the dedicated security Redis client, not the general cache client", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const exp = now + 1800;
+      (jwtService.verify as jest.Mock).mockReturnValue({ userId: "u1", exp });
+
+      await service.logout(undefined, mockRes, mockReq("valid.jwt.token"));
+
+      const cacheClientBlacklistWrites = mockRedisClient.set.mock.calls.filter(
+        (c: any[]) => c[0].startsWith("blacklist:access:")
+      );
+      expect(cacheClientBlacklistWrites).toHaveLength(0);
     });
 
     it("caps TTL at ACCESS_TOKEN_TTL_SECONDS regardless of token exp claim", async () => {
@@ -119,7 +145,7 @@ describe("AuthService.logout — CRITICAL-9", () => {
 
       await service.logout(undefined, mockRes, mockReq("inflated.exp.token"));
 
-      const setCall = mockRedisClient.set.mock.calls.find((c: any[]) =>
+      const setCall = mockRedisSecurityClient.set.mock.calls.find((c: any[]) =>
         c[0].startsWith("blacklist:access:")
       );
       expect(setCall).toBeDefined();
@@ -134,8 +160,8 @@ describe("AuthService.logout — CRITICAL-9", () => {
 
       await service.logout(undefined, mockRes, mockReq("forged.jwt.token"));
 
-      const blacklistSet = mockRedisClient.set.mock.calls.filter((c: any[]) =>
-        c[0].startsWith("blacklist:access:")
+      const blacklistSet = mockRedisSecurityClient.set.mock.calls.filter(
+        (c: any[]) => c[0].startsWith("blacklist:access:")
       );
       expect(blacklistSet).toHaveLength(0);
     });
@@ -148,8 +174,8 @@ describe("AuthService.logout — CRITICAL-9", () => {
 
       await service.logout(undefined, mockRes, mockReq("expired.jwt.token"));
 
-      const blacklistSet = mockRedisClient.set.mock.calls.filter((c: any[]) =>
-        c[0].startsWith("blacklist:access:")
+      const blacklistSet = mockRedisSecurityClient.set.mock.calls.filter(
+        (c: any[]) => c[0].startsWith("blacklist:access:")
       );
       expect(blacklistSet).toHaveLength(0);
     });
@@ -165,8 +191,8 @@ describe("AuthService.logout — CRITICAL-9", () => {
 
       await service.logout(undefined, mockRes, mockReq("boundary.token"));
 
-      const blacklistSet = mockRedisClient.set.mock.calls.filter((c: any[]) =>
-        c[0].startsWith("blacklist:access:")
+      const blacklistSet = mockRedisSecurityClient.set.mock.calls.filter(
+        (c: any[]) => c[0].startsWith("blacklist:access:")
       );
       expect(blacklistSet).toHaveLength(0);
     });
@@ -177,8 +203,8 @@ describe("AuthService.logout — CRITICAL-9", () => {
       await service.logout(undefined, mockRes, { cookies: {} });
 
       expect(jwtService.verify).not.toHaveBeenCalled();
-      const blacklistSet = mockRedisClient.set.mock.calls.filter((c: any[]) =>
-        c[0].startsWith("blacklist:access:")
+      const blacklistSet = mockRedisSecurityClient.set.mock.calls.filter(
+        (c: any[]) => c[0].startsWith("blacklist:access:")
       );
       expect(blacklistSet).toHaveLength(0);
     });
@@ -269,15 +295,15 @@ describe("AuthService.logout — CRITICAL-9", () => {
 
   describe("Redis unavailable", () => {
     afterEach(() => {
-      mockRedisClient.set.mockReset();
-      mockRedisClient.set.mockResolvedValue("OK");
+      mockRedisSecurityClient.set.mockReset();
+      mockRedisSecurityClient.set.mockResolvedValue("OK");
     });
 
     it("should throw ServiceUnavailableException when Redis.set fails", async () => {
       const now = Math.floor(Date.now() / 1000);
       const exp = now + 1800;
       (jwtService.verify as jest.Mock).mockReturnValue({ userId: "u1", exp });
-      mockRedisClient.set.mockRejectedValue(
+      mockRedisSecurityClient.set.mockRejectedValue(
         new Error("Redis connection refused")
       );
 
@@ -305,7 +331,7 @@ describe("AuthService.logout — CRITICAL-9", () => {
         mockReq("access.jwt", VALID_REFRESH_TOKEN)
       );
 
-      expect(mockRedisClient.set).toHaveBeenCalledWith(
+      expect(mockRedisSecurityClient.set).toHaveBeenCalledWith(
         "blacklist:access:access.jwt",
         "1",
         { EX: 600 }

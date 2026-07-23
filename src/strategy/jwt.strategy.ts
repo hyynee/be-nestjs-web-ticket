@@ -4,6 +4,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { PassportStrategy } from "@nestjs/passport";
 import { User } from "@src/schemas/user.schema";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { Request } from "express";
 import { Model } from "mongoose";
@@ -39,7 +40,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private readonly config: ConfigService,
     @InjectModel(User.name) private readonly userModel: Model<User>,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    private readonly redisSecurityService: RedisSecurityService
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([extractAccessTokenFromCookie]),
@@ -62,7 +64,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (token) {
       try {
-        const isBlacklisted = await this.redisService.client.get(
+        const isBlacklisted = await this.redisSecurityService.client.get(
           `blacklist:access:${token}`
         );
         if (isBlacklisted) {

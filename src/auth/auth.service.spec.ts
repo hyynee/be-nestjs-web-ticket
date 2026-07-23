@@ -11,10 +11,12 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { UserEventsService } from "@src/events/user-event.services";
 import { LockLoginService } from "@src/lock-login/lock-login.service";
 import { RedisService } from "@src/redis/redis.service";
+import { RedisSecurityService } from "@src/redis/redis-security.service";
 import { MailService } from "@src/services/mail.service";
 import { TwoFactorService } from "@src/two-factor/two-factor.service";
 import { WINSTON_MODULE_PROVIDER } from "nest-winston";
 import { AuthService } from "./auth.service";
+import { REFRESH_TOKEN_TTL_SECONDS } from "./auth.constants";
 import { AuthAccountService } from "./application/auth-account.service";
 import { AuthLoginService } from "./application/auth-login.service";
 import { AuthPasswordService } from "./application/auth-password.service";
@@ -51,6 +53,8 @@ describe("AuthService", () => {
   let mockLogger: any;
   let mockRedisClient: any;
   let mockRedisService: any;
+  let mockRedisSecurityClient: any;
+  let mockRedisSecurityService: any;
   let mockTwoFactorService: any;
 
   const VALID_USER_ID = "64c1f2e1e1e1e1e1e1e1e1e1";
@@ -160,6 +164,16 @@ describe("AuthService", () => {
       client: mockRedisClient,
     };
 
+    mockRedisSecurityClient = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue("OK"),
+      del: jest.fn().mockResolvedValue(1),
+    };
+
+    mockRedisSecurityService = {
+      client: mockRedisSecurityClient,
+    };
+
     mockTwoFactorService = {
       verifyLoginOtp: jest.fn().mockResolvedValue(false),
     };
@@ -189,6 +203,7 @@ describe("AuthService", () => {
         { provide: UserEventsService, useValue: mockUserEventsService },
         { provide: WINSTON_MODULE_PROVIDER, useValue: mockLogger },
         { provide: RedisService, useValue: mockRedisService },
+        { provide: RedisSecurityService, useValue: mockRedisSecurityService },
         { provide: TwoFactorService, useValue: mockTwoFactorService },
       ],
     }).compile();
@@ -617,6 +632,32 @@ describe("AuthService", () => {
       );
       expect(response.cookie).toHaveBeenCalledTimes(2);
       expect(result.message).toBe("Token refreshed successfully");
+    });
+
+    it("should write session shadow key with TTL covering the full refresh-token lifetime (PRE-8)", async () => {
+      const fakeSession = {
+        _id: VALID_SESSION_ID,
+        userId: VALID_USER_ID,
+      };
+      mockSessionModel.findOne.mockResolvedValue(fakeSession);
+      mockSessionModel.findOneAndUpdate.mockResolvedValue(fakeSession);
+      mockUserModel.findById.mockResolvedValue({
+        _id: { toString: () => VALID_USER_ID },
+        role: "user",
+        isActive: true,
+      });
+      const response = createResponseMock();
+
+      await service.refreshToken(VALID_REFRESH_TOKEN, META, response as any);
+
+      expect(mockRedisClient.set).toHaveBeenCalledWith(
+        expect.any(String),
+        VALID_USER_ID,
+        { EX: REFRESH_TOKEN_TTL_SECONDS }
+      );
+      expect(REFRESH_TOKEN_TTL_SECONDS).toBeGreaterThanOrEqual(
+        3 * 24 * 60 * 60
+      );
     });
 
     it("should throw UnauthorizedException khi thua concurrent rotation race", async () => {
