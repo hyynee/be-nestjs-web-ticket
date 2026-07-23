@@ -8,6 +8,11 @@ import {
   Min,
 } from "class-validator";
 import { ApiPropertyOptional } from "@nestjs/swagger";
+import {
+  DEAD_LETTER_QUEUE_NAME,
+  DEFAULT_QUEUE_NAME,
+  EVENT_CANCELLATION_QUEUE_NAME,
+} from "../queue.constants";
 
 export const QUEUE_JOB_STATUSES = [
   "active",
@@ -17,7 +22,11 @@ export const QUEUE_JOB_STATUSES = [
   "completed",
 ] as const;
 
-export const QUEUE_NAMES = ["default", "dead-letter"] as const;
+export const QUEUE_NAMES = [
+  DEFAULT_QUEUE_NAME,
+  DEAD_LETTER_QUEUE_NAME,
+  EVENT_CANCELLATION_QUEUE_NAME,
+] as const;
 
 export class QueryJobDto {
   @ApiPropertyOptional({ enum: QUEUE_JOB_STATUSES })

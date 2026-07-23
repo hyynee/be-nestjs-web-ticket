@@ -85,6 +85,7 @@ describe("Event controllers", () => {
             unpublishEvent: jest.fn(),
             endEvent: jest.fn(),
             cancelEventWithRefund: jest.fn(),
+            getCancellationStatus: jest.fn(),
           },
         },
       ],
@@ -230,10 +231,17 @@ describe("Event controllers", () => {
     } as any);
     lifecycleService.endEvent.mockResolvedValue({ id: mockEventId } as any);
     lifecycleService.cancelEventWithRefund.mockResolvedValue({
-      event: { id: mockEventId },
+      id: "job-1",
+      eventId: mockEventId,
+      initiatedBy: mockUser.userId,
+      reason: cancelDto.reason,
+      status: "pending",
       totalBookings: 0,
-      cancelled: 0,
-      failed: [],
+      processedCount: 0,
+      succeededCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      failures: [],
     } as any);
 
     await lifecycleController.publishEvent(mockUser, mockEventId);
@@ -258,6 +266,52 @@ describe("Event controllers", () => {
       mockUser.userId,
       cancelDto.reason
     );
+  });
+
+  /**
+   * Contract lock for item 17 (production-readiness-audit-2026-07-22.md /
+   * docs/API_CHANGELOG.md): POST /event/:id/cancel is async — it MUST return
+   * an EventCancellationJobDetail job handle (id/status/counts), never the
+   * old synchronous EventCancelResult shape (event/cancelled/failed) a
+   * caller built against the pre-NEW#6 contract would expect. A future
+   * regression that accidentally reverts to the old shape, or silently
+   * drops a field the async contract promises, must fail this test.
+   */
+  it("returns the EventCancellationJobDetail contract from cancelEvent, not the old synchronous EventCancelResult shape", async () => {
+    const cancelDto: CancelEventDto = { reason: "Weather issue" };
+    const jobDetail = {
+      id: "job-1",
+      eventId: mockEventId,
+      initiatedBy: mockUser.userId,
+      reason: cancelDto.reason,
+      status: "pending",
+      totalBookings: 2137,
+      processedCount: 0,
+      succeededCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      failures: [],
+      createdAt: "2026-07-22T00:00:00.000Z",
+      updatedAt: "2026-07-22T00:00:00.000Z",
+    };
+    lifecycleService.cancelEventWithRefund.mockResolvedValue(jobDetail as any);
+
+    const result = await lifecycleController.cancelEvent(
+      mockEventId,
+      mockUser,
+      cancelDto
+    );
+
+    expect(result).toEqual(jobDetail);
+    // Old EventCancelResult fields MUST NOT appear on the response.
+    expect(result).not.toHaveProperty("event");
+    expect(result).not.toHaveProperty("cancelled");
+    expect(result).not.toHaveProperty("failed");
+    // New async-contract fields MUST be present.
+    expect(result).toHaveProperty("id");
+    expect(result).toHaveProperty("status");
+    expect(result).toHaveProperty("succeededCount");
+    expect(result).toHaveProperty("failedCount");
   });
 
   it("keeps route role metadata equivalent after controller split", () => {
@@ -299,5 +353,22 @@ describe("Event controllers", () => {
     expect(reflector.get(ROLES_KEY, lifecycleController.cancelEvent)).toEqual([
       "admin",
     ]);
+    expect(
+      reflector.get(ROLES_KEY, lifecycleController.getCancellationStatus)
+    ).toEqual(["admin"]);
+  });
+
+  it("delegates getCancellationStatus to EventLifecycleService", async () => {
+    lifecycleService.getCancellationStatus.mockResolvedValue({
+      id: "job-1",
+      status: "processing",
+    } as any);
+
+    const result = await lifecycleController.getCancellationStatus(mockEventId);
+
+    expect(lifecycleService.getCancellationStatus).toHaveBeenCalledWith(
+      mockEventId
+    );
+    expect(result).toEqual({ id: "job-1", status: "processing" });
   });
 });

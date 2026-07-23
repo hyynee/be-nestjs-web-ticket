@@ -153,6 +153,19 @@ describe("QueueProcessor", () => {
       });
     });
 
+    describe("cancel-event-bookings (HIGH fix: moved off the default queue/processor)", () => {
+      it("is no longer handled here — it is now unknown to QueueProcessor, since it runs on its own EventCancellationQueueProcessor/queue to avoid starving latency-sensitive default-queue jobs", async () => {
+        const job = mockJob({
+          type: "cancel-event-bookings",
+          payload: { cancellationJobId: "cancellation-job-1" },
+        });
+        jest.spyOn(Logger.prototype, "error").mockImplementation(() => {});
+        await expect(processor.process(job)).rejects.toThrow(
+          "Unknown job type: cancel-event-bookings"
+        );
+      });
+    });
+
     describe("send-password-reset", () => {
       it("calls deliverPasswordResetEmail with correct args", async () => {
         const job = mockJob({
@@ -266,9 +279,9 @@ describe("QueueProcessor", () => {
         };
         const job = mockJob({ type: "send-event-reminder", payload });
         const result = await processor.process(job);
-        expect(notificationService.processEventReminderJob).toHaveBeenCalledWith(
-          payload
-        );
+        expect(
+          notificationService.processEventReminderJob
+        ).toHaveBeenCalledWith(payload);
         expect(result).toBe(true);
       });
     });

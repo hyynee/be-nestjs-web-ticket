@@ -3,7 +3,6 @@ import { PaginatedResponse } from "@src/common/interfaces/pagination-response";
 import { EventStatus } from "@src/schemas/event.schema";
 import { Types } from "mongoose";
 import type {
-  EventCancelResult,
   EventPrincipalSource,
   EventTimeSlotSource,
   EventTimeSlotView,
@@ -105,20 +104,6 @@ export class EventPresenter {
         hasPreviousPage: page > 1,
         hasNextPage: page < totalPages,
       },
-    };
-  }
-
-  eventCancelResult(input: {
-    event: EventViewSource;
-    totalBookings: number;
-    cancelled: number;
-    failed: Array<{ bookingId: string; error: string }>;
-  }): EventCancelResult {
-    return {
-      event: this.toEventView(input.event),
-      totalBookings: input.totalBookings,
-      cancelled: input.cancelled,
-      failed: input.failed,
     };
   }
 }

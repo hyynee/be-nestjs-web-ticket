@@ -11,6 +11,7 @@ import { RedisService } from "@src/redis/redis.service";
 import { AuditAction } from "@src/schemas/audit-log.schema";
 import { Event } from "@src/schemas/event.schema";
 import { User } from "@src/schemas/user.schema";
+import { ReportCacheService } from "@src/report/infrastructure/cache/report-cache.service";
 import { Model, Types } from "mongoose";
 import type { EventUserView, EventView } from "../domain/types/event.types";
 import { EventOwnershipService } from "../event-ownership.service";
@@ -28,8 +29,27 @@ export class EventMemberService {
     private readonly eventOwnershipService: EventOwnershipService,
     private readonly auditService: AuditService,
     private readonly eventCacheService: EventCacheService,
+    private readonly reportCacheService: ReportCacheService,
     private readonly eventPresenter: EventPresenter
   ) {}
+
+  /**
+   * Organizer report/sales/check-in/refund reports scope organizers by
+   * `eventIdIn` (their currently-managed event list) and cache that result
+   * for up to a few minutes (see ReportCacheService). Reassigning an
+   * organizer changes what that list should be, so it must invalidate the
+   * report cache too — otherwise a just-removed organizer (or one just
+   * granted a new event) could see stale aggregate numbers until the
+   * cache's own TTL expires. Best-effort: never allowed to fail the
+   * membership change itself.
+   */
+  private invalidateReportCacheSafely(context: string): void {
+    this.reportCacheService.invalidateAll().catch((error: unknown) => {
+      this.logger.warn(
+        `invalidateReportCacheSafely failed (${context}): ${this.errorMessage(error)}`
+      );
+    });
+  }
 
   async addOrganizerToEvent(
     currentUser: JwtPayload,
@@ -104,6 +124,7 @@ export class EventMemberService {
     }
 
     await this.eventCacheService.invalidateEventCache(eventId);
+    this.invalidateReportCacheSafely("event.organizer_add");
     await this.auditService.record({
       action: AuditAction.EVENT_ORGANIZER_ADD,
       actorId: currentUser.userId,
@@ -149,6 +170,7 @@ export class EventMemberService {
     );
     await event.save();
     await this.eventCacheService.invalidateEventCache(eventId);
+    this.invalidateReportCacheSafely("event.organizer_remove");
     await this.auditService.record({
       action: AuditAction.EVENT_ORGANIZER_REMOVE,
       actorId: currentUser.userId,

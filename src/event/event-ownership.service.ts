@@ -95,6 +95,35 @@ export class EventOwnershipService {
   }
 
   /**
+   * IDs of non-deleted events a specific organizer (by id) owns or is
+   * assigned as organizer for. Unlike `getManagedEventIds`, this looks up an
+   * arbitrary target organizer rather than the caller — the caller MUST
+   * authorize separately (e.g. admin, or organizerId === caller's own id)
+   * before using the result to scope a query.
+   */
+  async getManagedEventIdsForOrganizer(
+    organizerId: string
+  ): Promise<Types.ObjectId[]> {
+    if (!Types.ObjectId.isValid(organizerId)) {
+      throw new BadRequestException("Invalid organizer ID");
+    }
+
+    const organizerObjectId = new Types.ObjectId(organizerId);
+    const events = await this.eventModel
+      .find({
+        isDeleted: false,
+        $or: [
+          { createdBy: organizerObjectId },
+          { organizerIds: organizerObjectId },
+        ],
+      })
+      .select("_id")
+      .lean<{ _id: Types.ObjectId }[]>();
+
+    return events.map((e) => e._id);
+  }
+
+  /**
    * Pure/synchronous check for "can this user validate or check in tickets for
    * this event" — admin, the event owner/organizer, or an assigned
    * `checkin_staff`. Takes the event's ownership/staff fields directly (no DB

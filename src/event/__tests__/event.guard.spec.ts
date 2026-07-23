@@ -47,6 +47,7 @@ import { UploadService } from "@src/upload/upload.service";
 import { NotificationService } from "@src/notification/notification.service";
 import { SLOT_SOLD_KEY_PREFIX } from "@src/booking/booking.constants";
 import { EventCacheService } from "../infrastructure/cache/event-cache.service";
+import { ReportCacheService } from "@src/report/infrastructure/cache/report-cache.service";
 import { EventRepository } from "../infrastructure/persistence/event.repository";
 import { EventPresenter } from "../presenters/event.presenter";
 import { EventPublishPolicy } from "../domain/policies/event-publish.policy";
@@ -55,6 +56,9 @@ import { EventCommandService } from "../application/event-command.service";
 import { EventLifecycleService } from "../application/event-lifecycle.service";
 import { EventMemberService } from "../application/event-member.service";
 import { EventQueryService } from "../application/event-query.service";
+import { QueueService } from "@src/queue/queue.service";
+import { EventCancellationJobRepository } from "../infrastructure/persistence/event-cancellation-job.repository";
+import { EventCancellationPresenter } from "../presenters/event-cancellation.presenter";
 import { BookingCommandService } from "@src/booking/application/booking-command.service";
 import { BookingMaintenanceService } from "@src/booking/application/booking-maintenance.service";
 import { BookingQueryService } from "@src/booking/application/booking-query.service";
@@ -178,6 +182,26 @@ describe("Admin Safety Guard — EventService.updateEvent slot deletion", () => 
           provide: AuditService,
           useValue: { record: jest.fn().mockResolvedValue(undefined) },
         },
+        {
+          provide: ReportCacheService,
+          useValue: { invalidateAll: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: QueueService,
+          useValue: { addJob: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: EventCancellationJobRepository,
+          useValue: {
+            create: jest.fn(),
+            loadById: jest.fn(),
+            loadLatestForEvent: jest.fn(),
+            markProcessing: jest.fn(),
+            applyBatchProgress: jest.fn(),
+            markCompleted: jest.fn(),
+          },
+        },
+        EventCancellationPresenter,
       ],
     }).compile();
 

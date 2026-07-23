@@ -77,15 +77,12 @@ export interface EventView {
   isActiveNow: boolean;
 }
 
-export interface EventCancelResult {
-  event: EventView;
-  totalBookings: number;
-  cancelled: number;
-  failed: Array<{ bookingId: string; error: string }>;
-}
-
 export interface EventZoneAreaView {
-  _id: Types.ObjectId | string;
+  // Admin callers get the raw `_id` (matches admin-frontend's existing
+  // contract); customer-facing callers get `id` — see
+  // EventQueryService.getEventZones's isAdmin branch.
+  _id?: Types.ObjectId | string;
+  id?: string;
   eventId?: Types.ObjectId | string;
   zoneId?: Types.ObjectId | string;
   name: string;
@@ -102,7 +99,11 @@ export interface EventZoneAreaView {
 }
 
 export interface EventZoneView {
-  _id: Types.ObjectId | string;
+  // Admin callers get the raw `_id` (matches admin-frontend's existing
+  // contract); customer-facing callers get `id` — see
+  // EventQueryService.getEventZones's isAdmin branch.
+  _id?: Types.ObjectId | string;
+  id?: string;
   eventId?: Types.ObjectId | string;
   name: string;
   description?: string;

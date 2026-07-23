@@ -5,8 +5,8 @@ import { EventCommandService } from "./application/event-command.service";
 import { EventLifecycleService } from "./application/event-lifecycle.service";
 import { EventMemberService } from "./application/event-member.service";
 import { EventQueryService } from "./application/event-query.service";
+import type { EventCancellationJobDetail } from "./domain/types/event-cancellation.types";
 import type {
-  EventCancelResult,
   EventUserView,
   EventView,
   EventZoneView,
@@ -15,8 +15,8 @@ import { CreateEventDTO } from "./dto/create-event.dto";
 import { QueryEventDTO } from "./dto/query-event.dto";
 import { UpdateEventDTO } from "./dto/update-event.dto";
 
+export type { EventCancellationJobDetail } from "./domain/types/event-cancellation.types";
 export type {
-  EventCancelResult,
   EventTimeSlotView,
   EventUserView,
   EventView,
@@ -163,11 +163,15 @@ export class EventService {
     eventId: string,
     adminId: string,
     reason?: string
-  ): Promise<EventCancelResult> {
+  ): Promise<EventCancellationJobDetail> {
     return this.eventLifecycleService.cancelEventWithRefund(
       eventId,
       adminId,
       reason
     );
+  }
+
+  getCancellationStatus(eventId: string): Promise<EventCancellationJobDetail> {
+    return this.eventLifecycleService.getCancellationStatus(eventId);
   }
 }

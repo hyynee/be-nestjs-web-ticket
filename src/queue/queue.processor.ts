@@ -24,6 +24,7 @@ import type {
   SendEventReminderJobPayload,
   SendNotificationEmailJobPayload,
 } from "@src/notification/types/notification.types";
+import { DEAD_LETTER_QUEUE_NAME, DEFAULT_QUEUE_NAME } from "./queue.constants";
 
 type ExportRow = Record<string, string | number | boolean | null>;
 
@@ -39,7 +40,7 @@ function toCsvString(rows: ExportRow[]): string {
   ].join("\n");
 }
 
-@Processor("default")
+@Processor(DEFAULT_QUEUE_NAME)
 @Injectable()
 export class QueueProcessor extends WorkerHost {
   private readonly logger = new Logger(QueueProcessor.name);
@@ -51,8 +52,8 @@ export class QueueProcessor extends WorkerHost {
     private readonly invoiceService: InvoiceService,
     private readonly notificationService: NotificationService,
     @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectQueue("default") private readonly queue: Queue,
-    @InjectQueue("dead-letter") private readonly dlqQueue: Queue
+    @InjectQueue(DEFAULT_QUEUE_NAME) private readonly queue: Queue,
+    @InjectQueue(DEAD_LETTER_QUEUE_NAME) private readonly dlqQueue: Queue
   ) {
     super();
   }

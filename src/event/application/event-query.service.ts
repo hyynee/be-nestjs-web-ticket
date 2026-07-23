@@ -127,7 +127,9 @@ export class EventQueryService {
               : [
                   {
                     $project: {
+                      id: { $toString: "$_id" },
                       name: 1,
+                      _id: 0,
                     },
                   },
                 ]),
@@ -145,11 +147,13 @@ export class EventQueryService {
     if (!isAdmin) {
       pipeline.push({
         $project: {
+          id: { $toString: "$_id" },
           name: 1,
           price: 1,
           hasSeating: 1,
           hasAreas: 1,
           areas: 1,
+          _id: 0,
         },
       });
     }

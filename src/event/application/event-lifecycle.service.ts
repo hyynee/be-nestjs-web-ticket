@@ -7,16 +7,19 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { AuditService } from "@src/audit/audit.service";
 import { JwtPayload } from "@src/auth/dto/jwt-payload.dto";
-import { BookingService } from "@src/booking/booking.service";
+import { QueueService } from "@src/queue/queue.service";
+import { EVENT_CANCELLATION_JOB_TYPE } from "@src/queue/queue.constants";
 import { AuditAction } from "@src/schemas/audit-log.schema";
 import { Booking, BookingStatus } from "@src/schemas/booking.schema";
 import { Event, EventStatus } from "@src/schemas/event.schema";
-import { FilterQuery, Model, Types } from "mongoose";
+import { Model, Types } from "mongoose";
 import { EventPublishPolicy } from "../domain/policies/event-publish.policy";
-import type { EventCancelResult, EventView } from "../domain/types/event.types";
-import { CANCEL_BATCH_SIZE } from "../event.constants";
+import type { EventCancellationJobDetail } from "../domain/types/event-cancellation.types";
+import type { EventView } from "../domain/types/event.types";
 import { EventOwnershipService } from "../event-ownership.service";
 import { EventCacheService } from "../infrastructure/cache/event-cache.service";
+import { EventCancellationJobRepository } from "../infrastructure/persistence/event-cancellation-job.repository";
+import { EventCancellationPresenter } from "../presenters/event-cancellation.presenter";
 import { EventPresenter } from "../presenters/event.presenter";
 
 @Injectable()
@@ -26,12 +29,14 @@ export class EventLifecycleService {
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(Booking.name) private readonly bookingModel: Model<Booking>,
-    private readonly bookingService: BookingService,
     private readonly eventOwnershipService: EventOwnershipService,
     private readonly auditService: AuditService,
     private readonly eventCacheService: EventCacheService,
     private readonly eventPresenter: EventPresenter,
-    private readonly eventPublishPolicy: EventPublishPolicy
+    private readonly eventPublishPolicy: EventPublishPolicy,
+    private readonly queueService: QueueService,
+    private readonly cancellationJobRepository: EventCancellationJobRepository,
+    private readonly cancellationPresenter: EventCancellationPresenter
   ) {}
 
   async publishEvent(
@@ -184,11 +189,20 @@ export class EventLifecycleService {
     return this.eventPresenter.toEventView(updated);
   }
 
+  /**
+   * Flips the event to CANCELLED and hands the actual bulk refund/cancel
+   * work off to a queue job (production-readiness-audit-2026-07-22.md
+   * NEW#6) — MUST NOT loop over bookings calling the payment provider on
+   * this HTTP request thread; a sold-out event can have thousands of
+   * bookings, guaranteeing a request timeout under the old synchronous
+   * design. Returns immediately with a job handle; poll
+   * getCancellationStatus(eventId) for progress.
+   */
   async cancelEventWithRefund(
     eventId: string,
     adminId: string,
     reason?: string
-  ): Promise<EventCancelResult> {
+  ): Promise<EventCancellationJobDetail> {
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException("Invalid event ID");
     }
@@ -209,70 +223,67 @@ export class EventLifecycleService {
       );
     }
 
-    this.logger.log(
-      `cancelEventWithRefund: eventId=${eventId} adminId=${adminId} reason="${reason ?? ""}"`
+    const cancellationReason = reason ?? "Event cancelled by admin";
+    const totalBookings = await this.bookingModel.countDocuments({
+      eventId: event._id,
+      status: { $nin: [BookingStatus.CANCELLED, BookingStatus.EXPIRED] },
+      isDeleted: false,
+    });
+
+    const cancellationJobId = new Types.ObjectId();
+    const queueJobId = `cancel-event-bookings-${cancellationJobId.toString()}`;
+
+    const job = await this.cancellationJobRepository.create({
+      id: cancellationJobId,
+      eventId: event._id as Types.ObjectId,
+      initiatedBy: new Types.ObjectId(adminId),
+      reason: cancellationReason,
+      totalBookings,
+      queueJobId,
+    });
+
+    await this.queueService.addJob(
+      {
+        type: EVENT_CANCELLATION_JOB_TYPE,
+        payload: { cancellationJobId: cancellationJobId.toString() },
+      },
+      { jobId: queueJobId }
     );
 
-    const cancellationReason = reason ?? "Event cancelled by admin";
-    const failed: Array<{ bookingId: string; error: string }> = [];
-    let cancelled = 0;
-    let lastId: Types.ObjectId | null = null;
+    await this.eventCacheService.invalidateEventCache(eventId);
 
-    for (;;) {
-      const filter: FilterQuery<Booking> = {
-        eventId: new Types.ObjectId(eventId),
-        status: { $nin: [BookingStatus.CANCELLED, BookingStatus.EXPIRED] },
-        isDeleted: false,
-      };
-      if (lastId) {
-        filter._id = { $gt: lastId };
-      }
+    await this.auditService.record({
+      action: AuditAction.EVENT_CANCEL,
+      actorId: adminId,
+      actorRole: "admin",
+      eventId,
+      reason: cancellationReason,
+      metadata: {
+        totalBookings,
+        cancellationJobId: cancellationJobId.toString(),
+      },
+    });
 
-      const batch = await this.bookingModel
-        .find(filter)
-        .select("_id")
-        .sort({ _id: 1 })
-        .limit(CANCEL_BATCH_SIZE)
-        .lean();
+    this.logger.log(
+      `cancelEventWithRefund: eventId=${eventId} adminId=${adminId} totalBookings=${totalBookings} cancellationJobId=${cancellationJobId.toString()} — enqueued, not processed inline`
+    );
 
-      if (!batch.length) {
-        break;
-      }
+    return this.cancellationPresenter.toDetail(job);
+  }
 
-      for (const booking of batch) {
-        const bookingId = (booking._id as Types.ObjectId).toString();
-        try {
-          await this.bookingService.adminCancelBooking(
-            bookingId,
-            adminId,
-            cancellationReason
-          );
-          cancelled++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "unknown error";
-          this.logger.error(
-            `cancelEventWithRefund: failed booking=${bookingId} error="${msg}"`
-          );
-          failed.push({ bookingId, error: msg });
-        }
-      }
-
-      lastId = batch[batch.length - 1]._id as Types.ObjectId;
-      if (batch.length < CANCEL_BATCH_SIZE) {
-        break;
-      }
+  async getCancellationStatus(
+    eventId: string
+  ): Promise<EventCancellationJobDetail> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException("Invalid event ID");
     }
 
-    const totalBookings = cancelled + failed.length;
-    this.logger.log(
-      `cancelEventWithRefund: done eventId=${eventId} total=${totalBookings} cancelled=${cancelled} failed=${failed.length}`
-    );
+    const job =
+      await this.cancellationJobRepository.loadLatestForEvent(eventId);
+    if (!job) {
+      throw new NotFoundException("No cancellation job found for this event");
+    }
 
-    return this.eventPresenter.eventCancelResult({
-      event,
-      totalBookings,
-      cancelled,
-      failed,
-    });
+    return this.cancellationPresenter.toDetail(job);
   }
 }

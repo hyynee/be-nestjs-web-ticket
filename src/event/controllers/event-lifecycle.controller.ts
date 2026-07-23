@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   Param,
   Post,
@@ -60,6 +61,11 @@ export class EventLifecycleController {
     return this.eventLifecycleService.endEvent(currentUser, id);
   }
 
+  /**
+   * Async contract — see docs/API_CHANGELOG.md ("Event cancellation is now
+   * async") for the full response shape and migration history. Returns a
+   * job handle immediately; poll getCancellationStatus below for progress.
+   */
   @Throttle({ short: { limit: 3, ttl: 60000 } })
   @ApiCookieAuth("access_token")
   @Roles("admin")
@@ -76,5 +82,15 @@ export class EventLifecycleController {
       admin.userId,
       dto.reason
     );
+  }
+
+  @ApiCookieAuth("access_token")
+  @Roles("admin")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Get(":id/cancel-status")
+  getCancellationStatus(
+    @Param("id") id: string
+  ): ReturnType<EventLifecycleService["getCancellationStatus"]> {
+    return this.eventLifecycleService.getCancellationStatus(id);
   }
 }

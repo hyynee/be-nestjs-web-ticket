@@ -19,6 +19,7 @@ import type {
   SendEventReminderJobPayload,
   SendNotificationEmailJobPayload,
 } from "@src/notification/types/notification.types";
+import type { CancelEventBookingsJobPayload } from "@src/event/domain/types/event-cancellation.types";
 
 export interface BookingConfirmationQueuePayload {
   email: string;
@@ -198,4 +199,5 @@ export type QueueJobPayload =
   | ResendInvoiceEmailPayloadDto
   | SendNotificationEmailJobPayload
   | SendBookingExpiryReminderJobPayload
-  | SendEventReminderJobPayload;
+  | SendEventReminderJobPayload
+  | CancelEventBookingsJobPayload;

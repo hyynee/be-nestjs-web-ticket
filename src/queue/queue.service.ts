@@ -6,12 +6,22 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
+import { Interval } from "@nestjs/schedule";
 import { Job, Queue } from "bullmq";
 import { randomUUID } from "crypto";
 import { QueryJobDto, QUEUE_JOB_STATUSES } from "./dto/query-job.dto";
 import { sanitizeSensitiveFields } from "@src/helper/sanitize.helper";
 import { getErrorMessage } from "@src/helper/getErrorMessage";
 import { QueueJobPayload } from "./dto/job-payloads.dto";
+import { MetricsService } from "@src/metrics/metrics.service";
+import {
+  DEAD_LETTER_QUEUE_NAME,
+  DEFAULT_QUEUE_NAME,
+  EVENT_CANCELLATION_JOB_TYPE,
+  EVENT_CANCELLATION_QUEUE_NAME,
+} from "./queue.constants";
+
+const QUEUE_DEPTH_POLL_INTERVAL_MS = 15_000;
 
 export const FAILED_JOB_RETAIN_COUNT = 1000;
 export const FAILED_JOB_ALERT_THRESHOLD = 100;
@@ -52,6 +62,7 @@ interface DeadLetterJobData {
 export interface QueueStatsResult {
   default: Awaited<ReturnType<Queue<QueueJobData>["getJobCounts"]>>;
   deadLetter: Awaited<ReturnType<Queue<DeadLetterJobData>["getJobCounts"]>>;
+  eventCancellation: Awaited<ReturnType<Queue<QueueJobData>["getJobCounts"]>>;
 }
 
 export interface QueueListResult {
@@ -73,9 +84,13 @@ export class QueueService {
   private readonly logger = new Logger(QueueService.name);
 
   constructor(
-    @InjectQueue("default") private readonly queue: Queue<QueueJobData>,
-    @InjectQueue("dead-letter")
-    private readonly dlqQueue: Queue<DeadLetterJobData>
+    @InjectQueue(DEFAULT_QUEUE_NAME)
+    private readonly queue: Queue<QueueJobData>,
+    @InjectQueue(DEAD_LETTER_QUEUE_NAME)
+    private readonly dlqQueue: Queue<DeadLetterJobData>,
+    @InjectQueue(EVENT_CANCELLATION_QUEUE_NAME)
+    private readonly eventCancellationQueue: Queue<QueueJobData>,
+    private readonly metricsService: MetricsService
   ) {}
 
   async getJobCounts(): Promise<
@@ -84,14 +99,67 @@ export class QueueService {
     return this.queue.getJobCounts("active", "waiting", "failed", "delayed");
   }
 
+  /**
+   * Populates the `queue_depth` gauge from real BullMQ state. Without this,
+   * the gauge stays declared-and-zero forever and any alert built on it
+   * (the natural name to alert on for backlog) never fires — see NEW-14 in
+   * production-readiness-audit-2026-07-22.md. Multiple app instances polling
+   * concurrently is safe: they all read the same Redis-backed queue and
+   * Gauge.set() is idempotent, not cumulative, so there is no double-count.
+   */
+  @Interval(QUEUE_DEPTH_POLL_INTERVAL_MS)
+  async reportQueueDepth(): Promise<void> {
+    try {
+      const stats = await this.getQueueStats();
+      for (const [state, count] of Object.entries(stats.default)) {
+        this.metricsService.queueDepth.set(
+          { queue: DEFAULT_QUEUE_NAME, state },
+          count ?? 0
+        );
+      }
+      for (const [state, count] of Object.entries(stats.deadLetter)) {
+        this.metricsService.queueDepth.set(
+          { queue: DEAD_LETTER_QUEUE_NAME, state },
+          count ?? 0
+        );
+      }
+      for (const [state, count] of Object.entries(stats.eventCancellation)) {
+        this.metricsService.queueDepth.set(
+          { queue: EVENT_CANCELLATION_QUEUE_NAME, state },
+          count ?? 0
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `reportQueueDepth: failed to poll queue counts — ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Routes `cancel-event-bookings` onto its own dedicated queue/worker lane
+   * (HIGH — event cancellation queue starvation) so a large event's
+   * long-running bulk cancel never occupies the same worker slot that
+   * latency-sensitive jobs (refund-failure-alert, email/ticket delivery,
+   * notifications) depend on. Every other job type is unaffected — same
+   * `default` queue, same priority/attempts/backoff as before.
+   */
   async addJob(
     data: QueueJobData,
     options?: { jobId?: string }
   ): Promise<Job<QueueJobData>> {
     const isRefundAlert = data.type === "refund-failure-alert";
+    const isEventCancellation = data.type === EVENT_CANCELLATION_JOB_TYPE;
     const jobId = options?.jobId ?? this.buildJobId(data);
 
-    return this.queue.add("default", data, {
+    const targetQueue = isEventCancellation
+      ? this.eventCancellationQueue
+      : this.queue;
+    const queueName = isEventCancellation
+      ? EVENT_CANCELLATION_QUEUE_NAME
+      : DEFAULT_QUEUE_NAME;
+
+    return targetQueue.add(queueName, data, {
       ...(jobId ? { jobId } : {}),
       attempts: isRefundAlert ? 6 : 3,
       priority: isRefundAlert ? 1 : 10,
@@ -110,11 +178,13 @@ export class QueueService {
 
   private queueStatsResult(
     defaultCounts: QueueStatsResult["default"],
-    deadLetterCounts: QueueStatsResult["deadLetter"]
+    deadLetterCounts: QueueStatsResult["deadLetter"],
+    eventCancellationCounts: QueueStatsResult["eventCancellation"]
   ): QueueStatsResult {
     return {
       default: defaultCounts,
       deadLetter: deadLetterCounts,
+      eventCancellation: eventCancellationCounts,
     };
   }
 
@@ -156,26 +226,49 @@ export class QueueService {
   }
 
   async getQueueStats(): Promise<QueueStatsResult> {
-    const [defaultCounts, deadLetterCounts] = await Promise.all([
-      this.queue.getJobCounts(
-        "active",
-        "waiting",
-        "failed",
-        "delayed",
-        "completed"
-      ),
-      this.dlqQueue.getJobCounts("waiting", "failed", "completed"),
-    ]);
+    const [defaultCounts, deadLetterCounts, eventCancellationCounts] =
+      await Promise.all([
+        this.queue.getJobCounts(
+          "active",
+          "waiting",
+          "failed",
+          "delayed",
+          "completed"
+        ),
+        this.dlqQueue.getJobCounts("waiting", "failed", "completed"),
+        this.eventCancellationQueue.getJobCounts(
+          "active",
+          "waiting",
+          "failed",
+          "delayed",
+          "completed"
+        ),
+      ]);
 
-    return this.queueStatsResult(defaultCounts, deadLetterCounts);
+    return this.queueStatsResult(
+      defaultCounts,
+      deadLetterCounts,
+      eventCancellationCounts
+    );
+  }
+
+  private resolveTargetQueue(
+    queueName: QueryJobDto["queue"]
+  ): Queue<QueueJobData> | Queue<DeadLetterJobData> {
+    if (queueName === DEAD_LETTER_QUEUE_NAME) {
+      return this.dlqQueue;
+    }
+    if (queueName === EVENT_CANCELLATION_QUEUE_NAME) {
+      return this.eventCancellationQueue;
+    }
+    return this.queue;
   }
 
   async listJobs(query: QueryJobDto): Promise<QueueListResult> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const queueName = query.queue ?? "default";
-    const targetQueue =
-      queueName === "dead-letter" ? this.dlqQueue : this.queue;
+    const queueName = query.queue ?? DEFAULT_QUEUE_NAME;
+    const targetQueue = this.resolveTargetQueue(queueName);
 
     const start = (page - 1) * limit;
     const end = start + limit - 1;
@@ -204,7 +297,7 @@ export class QueueService {
   }
 
   async retryJob(id: string): Promise<QueueCommandResult> {
-    const job = await this.queue.getJob(id);
+    const job = await this.findActiveJob(id);
 
     if (job) {
       await this.retryExistingJob(job);
@@ -225,7 +318,7 @@ export class QueueService {
 
     const originalJobId = dlqJob.data?.originalJobId as string | undefined;
     const originalJob = originalJobId
-      ? await this.queue.getJob(originalJobId)
+      ? await this.findActiveJob(originalJobId)
       : undefined;
 
     if (originalJob) {
@@ -253,13 +346,25 @@ export class QueueService {
     await job.retry(state);
   }
 
+  /** Looks up a job across both "live" (non-dead-letter) queues. */
+  private async findActiveJob(
+    id: string
+  ): Promise<Job<QueueJobData> | undefined> {
+    return (
+      (await this.queue.getJob(id)) ??
+      (await this.eventCancellationQueue.getJob(id))
+    );
+  }
+
   async moveToDeadLetter(
     id: string,
     reason?: string
   ): Promise<QueueCommandResult> {
-    const job = await this.queue.getJob(id);
+    const job = await this.findActiveJob(id);
     if (!job) {
-      throw new NotFoundException(`Job ${id} not found in default queue`);
+      throw new NotFoundException(
+        `Job ${id} not found in the default or event-cancellation queue`
+      );
     }
 
     const state = await job.getState();
@@ -280,7 +385,7 @@ export class QueueService {
     };
     const dlqJobId = `dead-letter-${job.id ?? `${job.data?.type}-${Date.now()}`}`;
 
-    const dlqJob = await this.dlqQueue.add("dead-letter", dlqPayload, {
+    const dlqJob = await this.dlqQueue.add(DEAD_LETTER_QUEUE_NAME, dlqPayload, {
       jobId: dlqJobId,
       removeOnComplete: false,
       removeOnFail: false,
@@ -314,7 +419,9 @@ export class QueueService {
     id: string
   ): Promise<Job<QueueJobData | DeadLetterJobData>> {
     const job =
-      (await this.queue.getJob(id)) ?? (await this.dlqQueue.getJob(id));
+      (await this.queue.getJob(id)) ??
+      (await this.eventCancellationQueue.getJob(id)) ??
+      (await this.dlqQueue.getJob(id));
     if (!job) {
       throw new NotFoundException(`Job ${id} not found`);
     }

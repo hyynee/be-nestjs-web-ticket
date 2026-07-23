@@ -10,6 +10,7 @@ import {
   ConflictException,
   NotFoundException,
 } from "@nestjs/common";
+import { MetricsService } from "@src/metrics/metrics.service";
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ describe("QueueService", () => {
   let service: QueueService;
   let mockQueue: any;
   let mockDlqQueue: any;
+  let mockEventCancellationQueue: any;
+  let metricsService: MetricsService;
 
   const makeJob = (overrides: Record<string, unknown> = {}) => ({
     id: "job-1",
@@ -59,15 +62,34 @@ describe("QueueService", () => {
       getJob: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockEventCancellationQueue = {
+      add: jest.fn().mockResolvedValue({ id: "evt-cancel-job-1" }),
+      getJobCounts: jest.fn().mockResolvedValue({
+        active: 1,
+        waiting: 0,
+        failed: 0,
+        delayed: 0,
+        completed: 0,
+      }),
+      getJobs: jest.fn().mockResolvedValue([]),
+      getJob: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         QueueService,
+        MetricsService,
         { provide: getQueueToken("default"), useValue: mockQueue },
         { provide: getQueueToken("dead-letter"), useValue: mockDlqQueue },
+        {
+          provide: getQueueToken("event-cancellation"),
+          useValue: mockEventCancellationQueue,
+        },
       ],
     }).compile();
 
     service = module.get<QueueService>(QueueService);
+    metricsService = module.get<MetricsService>(MetricsService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -80,6 +102,37 @@ describe("QueueService", () => {
     const counts = await service.getJobCounts();
     expect(counts.active).toBe(1);
     expect(counts.waiting).toBe(2);
+  });
+
+  // ── reportQueueDepth (queue_depth gauge, item 14) ────────────────────────
+
+  it("populates the queue_depth gauge with real BullMQ counts for all 3 queues", async () => {
+    const setSpy = jest.spyOn(metricsService.queueDepth, "set");
+
+    await service.reportQueueDepth();
+
+    expect(setSpy).toHaveBeenCalledWith(
+      { queue: "default", state: "active" },
+      1
+    );
+    expect(setSpy).toHaveBeenCalledWith(
+      { queue: "default", state: "waiting" },
+      2
+    );
+    expect(setSpy).toHaveBeenCalledWith(
+      { queue: "dead-letter", state: "failed" },
+      3
+    );
+    expect(setSpy).toHaveBeenCalledWith(
+      { queue: "event-cancellation", state: "active" },
+      1
+    );
+  });
+
+  it("does not throw when polling the queue counts fails (gauge stays stale, not crashing)", async () => {
+    mockQueue.getJobCounts.mockRejectedValueOnce(new Error("redis down"));
+
+    await expect(service.reportQueueDepth()).resolves.toBeUndefined();
   });
 
   // ── addJob ────────────────────────────────────────────────────────────────
@@ -131,6 +184,53 @@ describe("QueueService", () => {
     expect(opts.jobId).toBe("send-booking-confirmation-BK-2026-001");
   });
 
+  // ── HIGH fix: event-cancellation queue routing (queue starvation) ────────
+
+  describe("HIGH fix: cancel-event-bookings routes to its own queue", () => {
+    it("routes cancel-event-bookings jobs to the event-cancellation queue, not default", async () => {
+      await service.addJob(
+        {
+          type: "cancel-event-bookings",
+          payload: { cancellationJobId: "job-1" },
+        },
+        { jobId: "cancel-event-bookings-job-1" }
+      );
+
+      expect(mockEventCancellationQueue.add).toHaveBeenCalledWith(
+        "event-cancellation",
+        expect.objectContaining({ type: "cancel-event-bookings" }),
+        expect.objectContaining({ jobId: "cancel-event-bookings-job-1" })
+      );
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it("keeps every other job type on the default queue, unaffected by the new routing", async () => {
+      await service.addJob({
+        type: "refund-failure-alert",
+        payload: { bookingId: "123" },
+      });
+      await service.addJob({
+        type: "send-booking-confirmation",
+        payload: { bookingCode: "BK1" },
+      });
+
+      expect(mockQueue.add).toHaveBeenCalledTimes(2);
+      expect(mockEventCancellationQueue.add).not.toHaveBeenCalled();
+    });
+
+    it("gives cancel-event-bookings the same retry/backoff contract as default jobs (only the worker lane changed)", async () => {
+      await service.addJob({
+        type: "cancel-event-bookings",
+        payload: { cancellationJobId: "job-1" },
+      });
+
+      const opts = (mockEventCancellationQueue.add as jest.Mock).mock
+        .calls[0][2];
+      expect(opts.attempts).toBe(3);
+      expect(opts.backoff).toEqual({ type: "exponential", delay: 5_000 });
+    });
+  });
+
   // ── addAdminJob ───────────────────────────────────────────────────────────
 
   it("addAdminJob delegates to addJob and returns the created job", async () => {
@@ -144,13 +244,31 @@ describe("QueueService", () => {
 
   // ── getQueueStats ─────────────────────────────────────────────────────────
 
-  it("aggregates counts from both default and dead-letter queues", async () => {
+  it("aggregates counts from default, dead-letter, and event-cancellation queues", async () => {
     const stats = await service.getQueueStats();
     expect(stats.default.active).toBe(1);
     expect(stats.deadLetter.failed).toBe(3);
+    expect(stats.eventCancellation.active).toBe(1);
   });
 
   // ── listJobs ──────────────────────────────────────────────────────────────
+
+  it("lists jobs from the event-cancellation queue when queue=event-cancellation", async () => {
+    mockEventCancellationQueue.getJobs.mockResolvedValue([
+      makeJob({ name: "event-cancellation" }),
+    ]);
+    mockEventCancellationQueue.getJobCounts.mockResolvedValue({ active: 1 });
+
+    await service.listJobs({
+      queue: "event-cancellation",
+      page: 1,
+      limit: 20,
+    } as any);
+
+    expect(mockEventCancellationQueue.getJobs).toHaveBeenCalled();
+    expect(mockQueue.getJobs).not.toHaveBeenCalled();
+    expect(mockDlqQueue.getJobs).not.toHaveBeenCalled();
+  });
 
   it("lists jobs from the default queue with pagination", async () => {
     mockQueue.getJobs.mockResolvedValue([makeJob()]);
@@ -243,6 +361,17 @@ describe("QueueService", () => {
       BadRequestException
     );
     expect(job.retry).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed job found in the event-cancellation queue when it is not in default", async () => {
+    const job = makeJob({ getState: jest.fn().mockResolvedValue("failed") });
+    mockQueue.getJob.mockResolvedValue(undefined);
+    mockEventCancellationQueue.getJob.mockResolvedValue(job);
+
+    const result = await service.retryJob("job-1");
+
+    expect(job.retry).toHaveBeenCalledWith("failed");
+    expect(result).toEqual({ id: "job-1", retried: true });
   });
 
   it("re-enqueues from dead-letter with the original unwrapped payload (not double-nested)", async () => {
@@ -455,6 +584,25 @@ describe("QueueService", () => {
     );
   });
 
+  it("moves a job found only in the event-cancellation queue to dead-letter", async () => {
+    const job = makeJob();
+    mockQueue.getJob.mockResolvedValue(undefined);
+    mockEventCancellationQueue.getJob.mockResolvedValue(job);
+
+    const result = await service.moveToDeadLetter(
+      "job-1",
+      "stuck cancellation"
+    );
+
+    expect(mockDlqQueue.add).toHaveBeenCalledWith(
+      "dead-letter",
+      expect.objectContaining({ originalJobId: "job-1" }),
+      expect.any(Object)
+    );
+    expect(job.remove).toHaveBeenCalled();
+    expect(result).toEqual({ id: "job-1", moved: true });
+  });
+
   // ── removeJob ─────────────────────────────────────────────────────────────
 
   it("removes a job found in the default queue", async () => {
@@ -470,6 +618,27 @@ describe("QueueService", () => {
     mockQueue.getJob.mockResolvedValue(undefined);
     mockDlqQueue.getJob.mockResolvedValue(undefined);
     await expect(service.removeJob("ghost")).rejects.toThrow(NotFoundException);
+  });
+
+  it("removes a job found only in the event-cancellation queue", async () => {
+    const job = makeJob();
+    mockQueue.getJob.mockResolvedValue(undefined);
+    mockEventCancellationQueue.getJob.mockResolvedValue(job);
+
+    const result = await service.removeJob("job-1");
+    expect(job.remove).toHaveBeenCalled();
+    expect(result).toEqual({ id: "job-1", removed: true });
+  });
+
+  // ── getJob ────────────────────────────────────────────────────────────────
+
+  it("falls back to the event-cancellation queue when a job is not in default or dead-letter", async () => {
+    const job = makeJob({ id: "evt-job-1" });
+    mockQueue.getJob.mockResolvedValue(undefined);
+    mockEventCancellationQueue.getJob.mockResolvedValue(job);
+
+    const detail = await service.getJob("evt-job-1");
+    expect(detail.id).toBe("evt-job-1");
   });
 
   // ── Constants ─────────────────────────────────────────────────────────────

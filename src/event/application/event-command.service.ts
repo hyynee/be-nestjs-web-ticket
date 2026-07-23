@@ -147,18 +147,6 @@ export class EventCommandService {
       throw new BadRequestException("Invalid event ID");
     }
 
-    const activeBookings = await this.bookingModel.countDocuments({
-      eventId: new Types.ObjectId(id),
-      status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-      isDeleted: false,
-    });
-
-    if (activeBookings > 0) {
-      throw new BadRequestException(
-        "Cancel all active bookings before deleting this event"
-      );
-    }
-
     const session = await this.eventModel.db.startSession();
 
     try {
@@ -172,6 +160,30 @@ export class EventCommandService {
         if (!existingEvent) {
           throw new NotFoundException(
             `Event with ID ${id} not found or has already been deleted`
+          );
+        }
+
+        // MUST re-check inside the same transaction/session, immediately
+        // before the delete writes below — checking before the transaction
+        // opens (the original bug, PRE-9) is a TOCTOU: a booking created in
+        // the gap between the check and the delete would end up referencing
+        // a deleted event. This read is serialized against a concurrent
+        // create-booking transaction by the shared zone document both
+        // transactions write to (this method's zoneModel.updateMany below
+        // vs. create-booking.use-case.ts's per-zone capacity update) — one
+        // of the two transactions will hit a write conflict and retry,
+        // and the retry re-runs this check against the now-committed state.
+        const activeBookings = await this.bookingModel
+          .countDocuments({
+            eventId: existingEvent._id,
+            status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+            isDeleted: false,
+          })
+          .session(session);
+
+        if (activeBookings > 0) {
+          throw new BadRequestException(
+            "Cancel all active bookings before deleting this event"
           );
         }
 
