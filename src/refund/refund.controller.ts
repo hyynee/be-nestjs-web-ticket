@@ -111,4 +111,15 @@ export class RefundController {
   ): Promise<RefundRequestDetail> {
     return this.refundService.retryRefundRequest(user, id);
   }
+
+  @Post(":id/reconcile")
+  @HttpCode(200)
+  @Roles("admin", "organizer")
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  async reconcileRefundRequest(
+    @CurrentUser() user: JwtPayload,
+    @Param("id") id: string
+  ): Promise<RefundRequestDetail> {
+    return this.refundService.reconcileRefundRequest(user, id);
+  }
 }

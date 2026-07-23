@@ -11,6 +11,9 @@ import { Zone, ZoneSchema } from "@src/schemas/zone.schema";
 import { EventModule } from "@src/event/event.module";
 import { PaymentModule } from "@src/payment/payment.module";
 import { NotificationModule } from "@src/notification/notification.module";
+import { QueueModule } from "@src/queue/queue.module";
+import { ZoneModule } from "@src/zone/zone.module";
+import { PromotionModule } from "@src/promotion/promotion.module";
 import { CreateRefundRequestUseCase } from "./application/create-refund-request.use-case";
 import { RefundQueryService } from "./application/refund-query.service";
 import { ReviewRefundRequestUseCase } from "./application/review-refund-request.use-case";
@@ -32,6 +35,9 @@ import { RefundService } from "./refund.service";
     EventModule,
     forwardRef(() => PaymentModule),
     NotificationModule,
+    QueueModule,
+    ZoneModule,
+    PromotionModule,
   ],
   controllers: [RefundController],
   providers: [

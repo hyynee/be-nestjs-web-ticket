@@ -7,6 +7,16 @@ export enum RefundRequestStatus {
   SUCCEEDED = "succeeded",
   FAILED = "failed",
   REJECTED = "rejected",
+  /**
+   * The provider (Stripe/PayPal) refund call succeeded — money already
+   * moved — but the follow-up DB finalize (cancel booking/tickets, release
+   * zone inventory, mark this request SUCCEEDED) failed before committing.
+   * Distinct from FAILED (provider never charged/refunded) so retry() MUST
+   * NOT re-issue a second provider refund for a request in this state —
+   * only ReviewRefundRequestUseCase.reconcile() may resume it, which only
+   * re-attempts the DB-side finalize.
+   */
+  RECONCILIATION_REQUIRED = "reconciliation_required",
 }
 
 export enum RefundProvider {
@@ -72,6 +82,7 @@ RefundRequestSchema.index(
           RefundRequestStatus.REQUESTED,
           RefundRequestStatus.PROCESSING,
           RefundRequestStatus.FAILED,
+          RefundRequestStatus.RECONCILIATION_REQUIRED,
         ],
       },
       isDeleted: { $eq: false },

@@ -177,8 +177,26 @@ export class Booking extends Document {
   @Prop({ type: Number, default: 0 })
   totalRefunded: number;
 
-  @Prop({ type: [{ amount: Number, refundedAt: Date }], default: [] })
-  refundHistory: Array<{ amount: number; refundedAt: Date }>;
+  /**
+   * `refundRequestId` tags which refund attempt actually committed this
+   * entry — ReviewRefundRequestUseCase.finalizeRefundedBooking() uses it as
+   * a positive idempotency check (a booking that left CONFIRMED status
+   * must not be treated as "already finalized by this request" unless a
+   * matching tag proves it). Absent on entries written by other refund
+   * paths (e.g. HandleChargeRefundedUseCase's Stripe-webhook-detected
+   * refund), which is fine — they simply never match any refundRequestId.
+   */
+  @Prop({
+    type: [
+      { amount: Number, refundedAt: Date, refundRequestId: Types.ObjectId },
+    ],
+    default: [],
+  })
+  refundHistory: Array<{
+    amount: number;
+    refundedAt: Date;
+    refundRequestId?: Types.ObjectId;
+  }>;
 
   @Prop({ type: String })
   disputeId?: string;

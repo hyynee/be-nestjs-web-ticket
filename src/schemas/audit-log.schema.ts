@@ -13,6 +13,7 @@ export enum AuditAction {
   REFUND_APPROVED = "refund.approved",
   REFUND_REJECTED = "refund.rejected",
   REFUND_RETRY = "refund.retry",
+  REFUND_RECONCILIATION_REQUIRED = "refund.reconciliation_required",
   PAYMENT_WEBHOOK_RETRY = "payment.webhook.retry",
   QUEUE_JOB_ADD = "queue.job_add",
   QUEUE_JOB_RETRY = "queue.job_retry",
@@ -27,6 +28,9 @@ export enum AuditAction {
   EVENT_END = "event.end",
   SEAT_BLOCK = "seat.block",
   SEAT_UNBLOCK = "seat.unblock",
+  ADMIN_BOOKING_REISSUE_TICKETS = "admin.booking.reissue_tickets",
+  ADMIN_BOOKING_RESEND_CONFIRMATION = "admin.booking.resend_confirmation",
+  ADMIN_TICKET_REGENERATE_QR = "admin.ticket.regenerate_qr",
 }
 
 @Schema({ timestamps: true })

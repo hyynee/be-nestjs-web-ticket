@@ -73,4 +73,11 @@ export class RefundService {
   ): Promise<RefundRequestDetail> {
     return this.reviewRefundRequestUseCase.retry(user, id);
   }
+
+  reconcileRefundRequest(
+    user: JwtPayload,
+    id: string
+  ): Promise<RefundRequestDetail> {
+    return this.reviewRefundRequestUseCase.reconcile(user, id);
+  }
 }
