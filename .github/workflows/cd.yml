@@ -29,7 +29,21 @@ jobs:
       image-digest: ${{ steps.build.outputs.digest }}
 
     steps:
+      # PRE-4 (production-readiness-audit-2026-07-22.md): a
+      # workflow_run-triggered job's own `github.sha`/`github.ref` context
+      # resolve to the CURRENT tip of the default branch at the moment CD
+      # starts running, NOT the commit the upstream CI run actually
+      # validated. An unqualified
+      # `actions/checkout@v4` here would build/deploy whatever landed on
+      # main most recently — including a second, untested push that arrived
+      # after CI started but before this job's checkout step ran — while
+      # still labeling the run as "triggered because CI passed" for the
+      # older, actually-tested commit. `github.event.workflow_run.head_sha`
+      # is the one field on this event that is pinned to the exact commit
+      # CI ran against; pin the checkout to it.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -43,8 +57,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # type=sha here would default to context.sha (github.sha), which
+          # is the same wrong branch-tip commit the checkout fix above
+          # avoids — not necessarily the content actually being built. Tag
+          # explicitly from the verified-correct head_sha instead, so the
+          # sha-* tag on the pushed image always matches what was checked out.
           tags: |
-            type=sha,prefix=sha-
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -75,9 +94,20 @@ jobs:
     steps:
       - name: Deploy to production
         run: |
+          # A missing DEPLOY_WEBHOOK_URL/DEPLOY_WEBHOOK_TOKEN must FAIL this
+          # job instead of silently skipping the deploy trigger — skipping
+          # meant CD could report a fully green run for a commit that was
+          # built/pushed but never actually deployed, while the health-check
+          # step below only re-verified whatever stale deployment was
+          # already running (production-readiness-audit-2026-07-23.md,
+          # "CD false-green on missing deploy webhook").
           if [ -z "${{ secrets.DEPLOY_WEBHOOK_URL }}" ]; then
-            echo "DEPLOY_WEBHOOK_URL not configured — skipping deployment trigger"
-            exit 0
+            echo "::error::DEPLOY_WEBHOOK_URL is not configured — refusing to report a successful deploy without triggering one. Set this secret so CD can actually deploy the new image."
+            exit 1
+          fi
+          if [ -z "${{ secrets.DEPLOY_WEBHOOK_TOKEN }}" ]; then
+            echo "::error::DEPLOY_WEBHOOK_TOKEN is not configured — the deploy webhook requires an Authorization header. Set this secret so CD can authenticate the deploy trigger."
+            exit 1
           fi
           curl -fsS -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
             -H "Authorization: Bearer ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}" \
@@ -86,12 +116,25 @@ jobs:
 
       - name: Wait for healthy deploy
         run: |
+          # /health/ready (HealthService.checkReadiness) actually pings Mongo,
+          # both Redis roles that matter for auth (redis-cache, redis-security),
+          # and BullMQ — unlike the legacy /ready alias, which only checked
+          # Mongo connection.readyState and Redis .isOpen flags with no real
+          # ping (production-readiness-audit-2026-07-23.md). A stale/half-open
+          # connection could report readyState===1 without the server actually
+          # being reachable, letting a broken deploy pass this gate.
+          #
+          # A missing PRODUCTION_HEALTH_URL now FAILS this job instead of
+          # silently skipping the check — skipping meant CD could report a
+          # fully green run for a deploy that was never actually verified
+          # healthy (a secrets-config mistake looked identical to "deployed
+          # and confirmed healthy" on the Actions dashboard).
           if [ -z "${{ secrets.PRODUCTION_HEALTH_URL }}" ]; then
-            echo "PRODUCTION_HEALTH_URL not configured — skipping health check"
-            exit 0
+            echo "::error::PRODUCTION_HEALTH_URL is not configured — refusing to report a successful deploy without verifying it. Set this secret so CD can confirm the new image is actually healthy in production."
+            exit 1
           fi
           for i in $(seq 1 20); do
-            STATUS=$(curl -sf "${{ secrets.PRODUCTION_HEALTH_URL }}/ready" -o /dev/null -w "%{http_code}" || echo 0)
+            STATUS=$(curl -sf "${{ secrets.PRODUCTION_HEALTH_URL }}/health/ready" -o /dev/null -w "%{http_code}" || echo 0)
             [ "$STATUS" = "200" ] && echo "Deploy healthy after attempt $i" && exit 0
             echo "Attempt $i: status=$STATUS — waiting 15s..."
             sleep 15
