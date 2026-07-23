@@ -3,6 +3,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ServiceUnavailableException,
   Logger,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
@@ -28,6 +29,7 @@ import {
   MAX_TICKETS_PER_USER_PER_EVENT,
   SLOT_COUNTER_TTL_BUFFER_SEC,
   SLOT_SOLD_KEY_PREFIX,
+  USER_EVENT_LOCK_TTL_SEC,
 } from "../../booking.constants";
 import { isDuplicateKeyError } from "@src/common/utils/mongo.utils";
 import { PaymentService } from "@src/payment/payment.service";
@@ -87,10 +89,11 @@ export class CreateBookingUseCase {
   ): Promise<BookingCreateResult> {
     const userEventLockKey = `booking:user-limit:${userId}:${data.eventId}`;
     const userEventLockValue = crypto.randomBytes(16).toString("hex");
-    const lockAcquired = await this.redisService.client.set(
+    const lockAcquired = await this.acquireUserEventLock(
       userEventLockKey,
       userEventLockValue,
-      { NX: true, EX: 30 }
+      userId,
+      data.eventId
     );
     if (!lockAcquired) {
       throw new BadRequestException(
@@ -115,9 +118,12 @@ export class CreateBookingUseCase {
         );
         if (typeof targetSlot?.capacity === "number") {
           const counterKey = `${SLOT_SOLD_KEY_PREFIX}${data.timeSlotId}`;
-          const newCount = await this.redisService.client.incrBy(
+          const newCount = await this.reserveSlotCapacity(
             counterKey,
-            data.quantity
+            data.quantity,
+            userId,
+            data.eventId,
+            data.timeSlotId
           );
           const ttlSec = Math.max(
             3600,
@@ -129,12 +135,22 @@ export class CreateBookingUseCase {
           await this.redisService.client
             .expire(counterKey, ttlSec)
             .catch((error: unknown) => {
+              this.metricsService.redisOperationFailureTotal.inc({
+                operation: "slot_expire",
+              });
               this.logger.warn(
-                `createBooking: failed to set slot counter TTL counterKey=${counterKey}: ${getErrorMessage(error)}`
+                `createBooking: slot counter EXPIRE failed — counterKey=${counterKey}, ttlSec=${ttlSec}, userId=${userId}, eventId=${data.eventId}: ${getErrorMessage(error)}`
               );
             });
           if (newCount > targetSlot.capacity) {
-            await this.redisService.client.decrBy(counterKey, data.quantity);
+            await this.rollbackSlotCapacity(
+              counterKey,
+              data.quantity,
+              userId,
+              data.eventId,
+              data.timeSlotId,
+              "over_capacity"
+            );
             throw new BadRequestException(
               `Khung giờ "${targetSlot.label}" đã hết chỗ (tối đa ${targetSlot.capacity} vé)`
             );
@@ -482,13 +498,14 @@ export class CreateBookingUseCase {
       return result;
     } catch (error) {
       if (!bookingCommitted && slotCapacity && slotCapacityReserved) {
-        await this.redisService.client
-          .decrBy(slotCapacity.counterKey, data.quantity)
-          .catch((releaseError: unknown) => {
-            this.logger.warn(
-              `createBooking: failed to release slot reservation counterKey=${slotCapacity?.counterKey}, quantity=${data.quantity}: ${getErrorMessage(releaseError)}`
-            );
-          });
+        await this.rollbackSlotCapacity(
+          slotCapacity.counterKey,
+          data.quantity,
+          userId,
+          data.eventId,
+          data.timeSlotId,
+          "transaction_failed"
+        );
         slotCapacityReserved = false;
       }
       this.metricsService.bookingsTotal.inc({ status: "error" });
@@ -510,10 +527,108 @@ export class CreateBookingUseCase {
           arguments: [userEventLockValue],
         })
         .catch((releaseError: unknown) => {
+          this.metricsService.redisOperationFailureTotal.inc({
+            operation: "user_lock_release",
+          });
           this.logger.warn(
             `createBooking: failed to release user-event lock userId=${userId}, eventId=${data.eventId}: ${getErrorMessage(releaseError)}`
           );
         });
     }
+  }
+
+  /**
+   * Fails CLOSED on a genuine Redis error (connection lost, timeout, etc.),
+   * distinct from "lock currently held by another in-flight request" (a
+   * normal SET NX rejection, still `false` here but not an error). A raw
+   * Redis exception must never bubble into a generic 500 — every booking
+   * creation request depends on this call running first, so an
+   * unhandled throw here would fail bookings platform-wide during a Redis
+   * outage even though the actual overselling guard (Zone.findOneAndUpdate's
+   * atomic $expr check) does not depend on Redis at all.
+   */
+  private async acquireUserEventLock(
+    key: string,
+    value: string,
+    userId: string,
+    eventId: string
+  ): Promise<boolean> {
+    try {
+      const result = await this.redisService.client.set(key, value, {
+        NX: true,
+        EX: USER_EVENT_LOCK_TTL_SEC,
+      });
+      return result !== null;
+    } catch (error: unknown) {
+      this.metricsService.redisOperationFailureTotal.inc({
+        operation: "user_lock_set",
+      });
+      this.metricsService.bookingsTotal.inc({ status: "error" });
+      this.logger.error(
+        `createBooking: user-event lock SET failed (Redis unavailable?) — userId=${userId}, eventId=${eventId}: ${getErrorMessage(error)}`
+      );
+      throw new ServiceUnavailableException(
+        "Dịch vụ đặt vé tạm thời không khả dụng, vui lòng thử lại sau ít phút."
+      );
+    }
+  }
+
+  /**
+   * The per-timeslot capacity invariant has no MongoDB-side enforcement —
+   * unlike zone capacity (Zone.findOneAndUpdate's atomic $expr guard), this
+   * Redis counter IS the only capacity check for timeslots. A Redis error
+   * here MUST NOT be treated as "no reservation needed" (that would silently
+   * disable the only guard this invariant has) — fail closed with a
+   * deliberate 503 instead of falling back to Mongo or skipping the check.
+   */
+  private async reserveSlotCapacity(
+    counterKey: string,
+    quantity: number,
+    userId: string,
+    eventId: string,
+    timeSlotId: string | undefined
+  ): Promise<number> {
+    try {
+      return await this.redisService.client.incrBy(counterKey, quantity);
+    } catch (error: unknown) {
+      this.metricsService.redisOperationFailureTotal.inc({
+        operation: "slot_incr",
+      });
+      this.logger.error(
+        `createBooking: slot capacity INCRBY failed (Redis unavailable?) — userId=${userId}, eventId=${eventId}, timeSlotId=${timeSlotId ?? "unknown"}, counterKey=${counterKey}: ${getErrorMessage(error)}`
+      );
+      throw new ServiceUnavailableException(
+        "Không thể kiểm tra chỗ trống của khung giờ, vui lòng thử lại sau ít phút."
+      );
+    }
+  }
+
+  /**
+   * A failed rollback here means the slot counter is left permanently
+   * inflated by `quantity` (an inventory leak, not a money leak, but the
+   * same class of risk rule.md 3.5/17.2 requires surfacing loudly rather
+   * than swallowing) — it must NEVER override or mask the original error
+   * that triggered the rollback (the caller's `throw error`/`throw new
+   * BadRequestException(...)` after this call is what the client actually
+   * sees).
+   */
+  private async rollbackSlotCapacity(
+    counterKey: string,
+    quantity: number,
+    userId: string,
+    eventId: string,
+    timeSlotId: string | undefined,
+    reason: "over_capacity" | "transaction_failed"
+  ): Promise<void> {
+    await this.redisService.client
+      .decrBy(counterKey, quantity)
+      .catch((error: unknown) => {
+        this.metricsService.redisOperationFailureTotal.inc({
+          operation: "slot_decr_rollback",
+        });
+        this.logger.error(
+          `[INVENTORY_RECONCILIATION_RISK] createBooking: slot capacity DECRBY rollback FAILED (reason=${reason}) — counterKey=${counterKey}, quantity=${quantity}, userId=${userId}, eventId=${eventId}, timeSlotId=${timeSlotId ?? "unknown"}. Counter may be permanently inflated; manual reconciliation may be required. Error: ${getErrorMessage(error)}`
+        );
+      });
   }
 }

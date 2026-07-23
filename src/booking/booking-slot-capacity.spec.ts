@@ -2,7 +2,10 @@
  * Unit tests: Slot Capacity Enforcement via Redis atomic counter.
  * Kiểm tra logic INCRBY / DECRBY rollback trong createBooking.
  */
-import { BadRequestException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
@@ -107,6 +110,11 @@ describe("BookingService — Slot Capacity", () => {
     incrBy: jest.Mock;
     decrBy: jest.Mock;
   };
+  let metricsService: {
+    bookingsTotal: { inc: jest.Mock };
+    bookingConflictTotal: { inc: jest.Mock };
+    redisOperationFailureTotal: { inc: jest.Mock };
+  };
 
   const makeSession = () => ({
     withTransaction: jest.fn(async (cb: () => Promise<void>) => cb()),
@@ -124,6 +132,11 @@ describe("BookingService — Slot Capacity", () => {
       expire: jest.fn().mockResolvedValue(1),
       incrBy: jest.fn(),
       decrBy: jest.fn().mockResolvedValue(0),
+    };
+    metricsService = {
+      bookingsTotal: { inc: jest.fn() },
+      bookingConflictTotal: { inc: jest.fn() },
+      redisOperationFailureTotal: { inc: jest.fn() },
     };
 
     const session = makeSession();
@@ -223,10 +236,7 @@ describe("BookingService — Slot Capacity", () => {
         { provide: PaymentService, useValue: { issueAdminRefund: jest.fn() } },
         {
           provide: MetricsService,
-          useValue: {
-            bookingsTotal: { inc: jest.fn() },
-            bookingConflictTotal: { inc: jest.fn() },
-          },
+          useValue: metricsService,
         },
         { provide: AuditService, useValue: { record: jest.fn() } },
         { provide: UploadService, useValue: { deleteQRCode: jest.fn() } },
@@ -353,6 +363,80 @@ describe("BookingService — Slot Capacity", () => {
         `${SLOT_SOLD_KEY_PREFIX}${slotId}`,
         2
       );
+    });
+
+    it("HIGH fix: Redis INCRBY throwing (Redis outage) fails closed with ServiceUnavailableException — no silent fallback that would disable the only capacity guard timeslots have", async () => {
+      setupEventMocks(50);
+      redisClient.incrBy.mockRejectedValue(
+        new Error("connect ECONNREFUSED 127.0.0.1:6379")
+      );
+
+      await expect(
+        service.createBooking(userId, makeCreateDto())
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(zoneModel.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(
+        metricsService.redisOperationFailureTotal.inc
+      ).toHaveBeenCalledWith({ operation: "slot_incr" });
+      // Nothing was ever incremented, so no rollback should be attempted.
+      expect(redisClient.decrBy).not.toHaveBeenCalled();
+    });
+
+    it("HIGH fix: Redis EXPIRE throwing does not fail the booking — reservation already succeeded, only a warning/metric is recorded", async () => {
+      setupEventMocks(50);
+      redisClient.incrBy.mockResolvedValue(2);
+      redisClient.expire.mockRejectedValue(new Error("timeout"));
+      zoneModel.findOneAndUpdate.mockResolvedValue({
+        _id: new Types.ObjectId(zoneId),
+      });
+
+      const result = await service.createBooking(userId, makeCreateDto());
+
+      expect(result?.success).toBe(true);
+      expect(
+        metricsService.redisOperationFailureTotal.inc
+      ).toHaveBeenCalledWith({ operation: "slot_expire" });
+    });
+
+    it("HIGH fix: Redis DECRBY rollback throwing (over-capacity path) still reports the original 'hết chỗ' error — rollback failure is logged/metriced, never swallowed or masking the real error", async () => {
+      setupEventMocks(50);
+      // INCRBY returns 52 (50 existing + 2 requested) > capacity 50
+      redisClient.incrBy.mockResolvedValue(52);
+      redisClient.decrBy.mockRejectedValue(new Error("connection reset"));
+
+      await expect(
+        service.createBooking(userId, makeCreateDto())
+      ).rejects.toThrow(/đã hết chỗ/i);
+
+      expect(redisClient.decrBy).toHaveBeenCalledWith(
+        `${SLOT_SOLD_KEY_PREFIX}${slotId}`,
+        2
+      );
+      expect(
+        metricsService.redisOperationFailureTotal.inc
+      ).toHaveBeenCalledWith({ operation: "slot_decr_rollback" });
+    });
+
+    it("HIGH fix: Redis DECRBY rollback throwing (transaction-failed path) still preserves and rethrows the ORIGINAL Mongo error — rollback failure is logged/metriced, never overrides the real failure", async () => {
+      setupEventMocks(50);
+      redisClient.incrBy.mockResolvedValue(2);
+      redisClient.decrBy.mockRejectedValue(new Error("connection reset"));
+
+      // Make the zone findOneAndUpdate fail (simulate "Không đủ vé")
+      zoneModel.findOneAndUpdate.mockResolvedValue(null);
+
+      await expect(
+        service.createBooking(userId, makeCreateDto())
+      ).rejects.toThrow(BadRequestException);
+
+      expect(redisClient.decrBy).toHaveBeenCalledWith(
+        `${SLOT_SOLD_KEY_PREFIX}${slotId}`,
+        2
+      );
+      expect(
+        metricsService.redisOperationFailureTotal.inc
+      ).toHaveBeenCalledWith({ operation: "slot_decr_rollback" });
     });
   });
 

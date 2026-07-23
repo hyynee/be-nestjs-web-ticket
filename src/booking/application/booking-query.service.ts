@@ -217,7 +217,15 @@ export class BookingQueryService {
           this.areaModel
             .find({ zoneId: new Types.ObjectId(zoneId), isDeleted: false })
             .select("name description rowLabel seatCount")
-            .lean<ZoneBookingAreaView[]>(),
+            .lean<
+              Array<{
+                _id: Types.ObjectId;
+                name: string;
+                description?: string;
+                rowLabel?: string;
+                seatCount?: number;
+              }>
+            >(),
           this.bookingModel.aggregate([
             {
               $match: {
@@ -240,7 +248,13 @@ export class BookingQueryService {
           ]),
         ]);
 
-        areas = fetchedAreas;
+        areas = fetchedAreas.map((area) => ({
+          id: area._id.toString(),
+          name: area.name,
+          description: area.description,
+          rowLabel: area.rowLabel,
+          seatCount: area.seatCount,
+        }));
         bookedSeatsByArea = Object.fromEntries(
           (
             bookedSeatsByAreaRaw as {
@@ -256,30 +270,27 @@ export class BookingQueryService {
         );
       }
 
-      const result = {
-        success: true,
-        data: {
-          event: {
-            _id: event._id,
-            title: event.title,
-            startDate: event.startDate,
-            endDate: event.endDate,
-            location: event.location,
-          },
-          zone: {
-            _id: zone._id,
-            name: zone.name,
-            price: zone.price,
-            hasSeating: zone.hasSeating,
-            capacity: zone.capacity,
-            soldCount: zone.soldCount,
-            availableTickets,
-            saleStartDate: zone.saleStartDate,
-            saleEndDate: zone.saleEndDate,
-          },
-          areas,
-          bookedSeatsByArea,
+      const result: ZoneBookingInfoResult = {
+        event: {
+          id: event._id.toString(),
+          title: event.title,
+          startDate: event.startDate,
+          endDate: event.endDate,
+          location: event.location,
         },
+        zone: {
+          id: zone._id.toString(),
+          name: zone.name,
+          price: zone.price,
+          hasSeating: zone.hasSeating,
+          capacity: zone.capacity,
+          soldCount: zone.soldCount,
+          availableTickets,
+          saleStartDate: zone.saleStartDate,
+          saleEndDate: zone.saleEndDate,
+        },
+        areas,
+        bookedSeatsByArea,
       };
 
       const ttl = 5 + Math.floor(Math.random() * 3);

@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { getModelToken } from "@nestjs/mongoose";
 import { Test, TestingModule } from "@nestjs/testing";
 import { Types } from "mongoose";
@@ -84,6 +88,14 @@ describe("BookingService", () => {
     };
   };
   let auditService: { record: jest.Mock };
+  let metricsService: {
+    bookingsTotal: { inc: jest.Mock };
+    paymentsTotal: { inc: jest.Mock };
+    refundFailuresTotal: { inc: jest.Mock };
+    checkinsTotal: { inc: jest.Mock };
+    bookingConflictTotal: { inc: jest.Mock };
+    redisOperationFailureTotal: { inc: jest.Mock };
+  };
   let uploadService: {
     uploadImage: jest.Mock;
     deleteQRCode: jest.Mock;
@@ -224,6 +236,14 @@ describe("BookingService", () => {
       },
     };
     auditService = { record: jest.fn().mockResolvedValue(undefined) };
+    metricsService = {
+      bookingsTotal: { inc: jest.fn() },
+      paymentsTotal: { inc: jest.fn() },
+      refundFailuresTotal: { inc: jest.fn() },
+      checkinsTotal: { inc: jest.fn() },
+      bookingConflictTotal: { inc: jest.fn() },
+      redisOperationFailureTotal: { inc: jest.fn() },
+    };
     uploadService = {
       uploadImage: jest.fn(),
       deleteQRCode: jest.fn().mockResolvedValue(undefined),
@@ -269,13 +289,7 @@ describe("BookingService", () => {
         { provide: PaymentService, useValue: paymentService },
         {
           provide: MetricsService,
-          useValue: {
-            bookingsTotal: { inc: jest.fn() },
-            paymentsTotal: { inc: jest.fn() },
-            refundFailuresTotal: { inc: jest.fn() },
-            checkinsTotal: { inc: jest.fn() },
-            bookingConflictTotal: { inc: jest.fn() },
-          },
+          useValue: metricsService,
         },
         {
           provide: AuditService,
@@ -953,6 +967,25 @@ describe("BookingService", () => {
       );
     });
 
+    it("HIGH fix: Redis SET throwing (Redis outage) on the user-event lock fails closed with ServiceUnavailableException, never a raw 500, and never reaches the Mongo transaction", async () => {
+      const mockRedisClient = redisService.client;
+      mockRedisClient.set.mockRejectedValue(
+        new Error("connect ECONNREFUSED 127.0.0.1:6379")
+      );
+
+      await expect(
+        service.createBooking(userId, baseDto as any)
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(bookingModel.db.startSession).not.toHaveBeenCalled();
+      expect(
+        metricsService.redisOperationFailureTotal.inc
+      ).toHaveBeenCalledWith({ operation: "user_lock_set" });
+      expect(metricsService.bookingsTotal.inc).toHaveBeenCalledWith({
+        status: "error",
+      });
+    });
+
     it("re-throws E11000 duplicate key error as BadRequestException", async () => {
       mockCreateContext({
         _id: new Types.ObjectId(zoneId),
@@ -1197,10 +1230,9 @@ describe("BookingService", () => {
 
       const result = await service.getZoneBookingInfo(eventId, zoneId);
 
-      expect(result.success).toBe(true);
-      expect(result.data.zone.availableTickets).toBe(90);
-      expect(result.data.areas).toHaveLength(1);
-      expect(result.data.bookedSeatsByArea?.[areaId]).toEqual(
+      expect(result.zone.availableTickets).toBe(90);
+      expect(result.areas).toHaveLength(1);
+      expect(result.bookedSeatsByArea?.[areaId]).toEqual(
         expect.arrayContaining(["A1", "A2", "A3"])
       );
     });
@@ -1262,9 +1294,8 @@ describe("BookingService", () => {
 
       const result = await service.getZoneBookingInfo(eventId, zoneId);
 
-      expect(result.success).toBe(true);
-      expect(result.data.bookedSeatsByArea).not.toHaveProperty("null");
-      expect(result.data.bookedSeatsByArea[areaId]).toEqual(["B1"]);
+      expect(result.bookedSeatsByArea).not.toHaveProperty("null");
+      expect(result.bookedSeatsByArea?.[areaId]).toEqual(["B1"]);
     });
 
     it("falls through stampede lock polling when lock holder crashes and computes directly", async () => {
@@ -1293,8 +1324,7 @@ describe("BookingService", () => {
 
       const result = await service.getZoneBookingInfo(eventId, zoneId);
 
-      expect(result.success).toBe(true);
-      expect(result.data.zone.availableTickets).toBe(90);
+      expect(result.zone.availableTickets).toBe(90);
     });
 
     it("returns null area data when zone has no seating", async () => {
@@ -1319,10 +1349,9 @@ describe("BookingService", () => {
 
       const result = await service.getZoneBookingInfo(eventId, zoneId);
 
-      expect(result.success).toBe(true);
-      expect(result.data.areas).toBeNull();
-      expect(result.data.bookedSeatsByArea).toBeNull();
-      expect(result.data.zone.availableTickets).toBe(377);
+      expect(result.areas).toBeNull();
+      expect(result.bookedSeatsByArea).toBeNull();
+      expect(result.zone.availableTickets).toBe(377);
     });
   });
 
@@ -1958,8 +1987,61 @@ describe("BookingService", () => {
       );
     });
 
-    it("does NOT call issueAdminRefund for a pending unpaid booking", async () => {
+    it("releases promo usage in the same transaction for a confirmed+paid booking (#3 promo quota leak)", async () => {
+      const session = setupAdminSession();
+
+      const preUpdate = {
+        _id: new Types.ObjectId(),
+        userId: new Types.ObjectId(),
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        quantity: 2,
+        zoneId: new Types.ObjectId(zoneId),
+        stripePaymentIntentId: "pi_test_promo_release",
+      };
+
+      bookingModel.findOneAndUpdate.mockResolvedValue(preUpdate);
+      ticketModel.updateMany.mockResolvedValue({});
+      zoneModel.updateOne.mockResolvedValue({});
+      mockEmitZoneSnapshot();
+
+      await service.adminCancelBooking(bookingId, adminId, "Event cancelled");
+
+      expect(promotionService.releaseUsageForBooking).toHaveBeenCalledWith(
+        preUpdate._id,
+        session
+      );
+    });
+
+    it("aborts the transaction (rejects, no refund/notification side effects) when releasing promo usage fails", async () => {
       setupAdminSession();
+
+      const preUpdate = {
+        _id: new Types.ObjectId(),
+        userId: new Types.ObjectId(),
+        status: BookingStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        quantity: 2,
+        zoneId: new Types.ObjectId(zoneId),
+        stripePaymentIntentId: "pi_test_abort",
+      };
+
+      bookingModel.findOneAndUpdate.mockResolvedValue(preUpdate);
+      ticketModel.updateMany.mockResolvedValue({});
+      zoneModel.updateOne.mockResolvedValue({});
+      promotionService.releaseUsageForBooking.mockRejectedValueOnce(
+        new Error("promotion usage write conflict")
+      );
+
+      await expect(
+        service.adminCancelBooking(bookingId, adminId, "Event cancelled")
+      ).rejects.toThrow("promotion usage write conflict");
+
+      expect(paymentService.issueAdminRefund).not.toHaveBeenCalled();
+    });
+
+    it("does NOT call issueAdminRefund for a pending unpaid booking, but still releases promo usage as before (no regression)", async () => {
+      const session = setupAdminSession();
 
       const preUpdate = {
         _id: new Types.ObjectId(),
@@ -1979,6 +2061,10 @@ describe("BookingService", () => {
       await service.adminCancelBooking(bookingId, adminId);
 
       expect(paymentService.issueAdminRefund).not.toHaveBeenCalled();
+      expect(promotionService.releaseUsageForBooking).toHaveBeenCalledWith(
+        preUpdate._id,
+        session
+      );
     });
 
     it("throws NotFoundException when booking does not exist", async () => {

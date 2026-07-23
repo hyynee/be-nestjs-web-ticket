@@ -12,3 +12,5 @@ export const ZONE_INFO_STAMPEDE_MAX_POLLS = 30;
 export const SLOT_SOLD_KEY_PREFIX = "slot:sold:";
 
 export const SLOT_COUNTER_TTL_BUFFER_SEC = 24 * 3600; // 24h
+
+export const USER_EVENT_LOCK_TTL_SEC = 30;

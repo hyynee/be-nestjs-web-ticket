@@ -127,7 +127,12 @@ describe("Booking controllers", () => {
   });
 
   it("loads zone booking info by event and zone id", async () => {
-    const expectedResult = { success: true, data: {} };
+    const expectedResult = {
+      event: {},
+      zone: {},
+      areas: null,
+      bookedSeatsByArea: null,
+    };
     mockBookingService.getZoneBookingInfo.mockResolvedValue(expectedResult);
 
     const result = await queryController.getZoneBookingInfo(

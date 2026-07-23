@@ -112,7 +112,7 @@ export interface BookingListResult {
 }
 
 export interface ZoneBookingEventView {
-  _id: Types.ObjectId | string;
+  id: string;
   title: string;
   startDate: Date;
   endDate: Date;
@@ -120,7 +120,7 @@ export interface ZoneBookingEventView {
 }
 
 export interface ZoneBookingZoneView {
-  _id: Types.ObjectId | string;
+  id: string;
   name: string;
   price: number;
   hasSeating: boolean;
@@ -132,7 +132,7 @@ export interface ZoneBookingZoneView {
 }
 
 export interface ZoneBookingAreaView {
-  _id: Types.ObjectId | string;
+  id: string;
   name: string;
   description?: string;
   rowLabel?: string;
@@ -140,13 +140,10 @@ export interface ZoneBookingAreaView {
 }
 
 export interface ZoneBookingInfoResult {
-  success: boolean;
-  data: {
-    event: ZoneBookingEventView;
-    zone: ZoneBookingZoneView;
-    areas: ZoneBookingAreaView[] | null;
-    bookedSeatsByArea: Record<string, string[]> | null;
-  };
+  event: ZoneBookingEventView;
+  zone: ZoneBookingZoneView;
+  areas: ZoneBookingAreaView[] | null;
+  bookedSeatsByArea: Record<string, string[]> | null;
 }
 
 export interface ExpirePendingBookingsResult {

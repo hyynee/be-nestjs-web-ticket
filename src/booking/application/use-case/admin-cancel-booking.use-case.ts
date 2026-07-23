@@ -208,15 +208,14 @@ export class AdminCancelBookingUseCase {
           }
         }
 
-        if (
-          preUpdate.status === BookingStatus.PENDING &&
-          preUpdate.paymentStatus === PaymentStatus.UNPAID
-        ) {
-          await this.promotionService.releaseUsageForBooking(
-            preUpdate._id as Types.ObjectId,
-            session
-          );
-        }
+        // Admin cancel always fully cancels the booking (no partial-cancel
+        // path here), so promo usage must be released regardless of prior
+        // status/paymentStatus. releaseUsageForBooking() is idempotent
+        // (guarded by releasedAt) and a no-op when no promo was applied.
+        await this.promotionService.releaseUsageForBooking(
+          preUpdate._id as Types.ObjectId,
+          session
+        );
 
         changedZoneId = preUpdate.zoneId as Types.ObjectId;
         changedEventKey = preUpdate.eventId?.toString();
