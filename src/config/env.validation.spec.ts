@@ -28,6 +28,18 @@ describe("validateEnvironment", () => {
     OLLAMA_MODEL: "llama3",
   };
 
+  // Production requires ALERT_EMAIL and a dedicated REDIS_SECURITY_HOST/PORT
+  // (distinct from REDIS_HOST/PORT and REDIS_QUEUE_HOST/PORT) — this fixture
+  // is the minimal valid production env, used by every production-path test
+  // that isn't itself testing one of these two requirements.
+  const validProdEnv: Record<string, unknown> = {
+    ...validEnv,
+    NODE_ENV: "production",
+    ALERT_EMAIL: "ops@example.com",
+    REDIS_SECURITY_HOST: "redis-security",
+    REDIS_SECURITY_PORT: "6390",
+  };
+
   it("returns enriched env object for valid input", () => {
     const result = validateEnvironment({ ...validEnv });
     expect(result.NODE_ENV).toBe("test");
@@ -52,11 +64,7 @@ describe("validateEnvironment", () => {
     });
 
     it("accepts production", () => {
-      const env = {
-        ...validEnv,
-        NODE_ENV: "production",
-        ALERT_EMAIL: "ops@example.com",
-      };
+      const env = { ...validProdEnv };
       const result = validateEnvironment(env);
       expect(result.NODE_ENV).toBe("production");
       expect(result.AUTH_COOKIE_SECURE).toBe("true");
@@ -70,9 +78,8 @@ describe("validateEnvironment", () => {
 
     it("lowercases NODE_ENV", () => {
       const env = {
-        ...validEnv,
+        ...validProdEnv,
         NODE_ENV: "PRODUCTION",
-        ALERT_EMAIL: "ops@example.com",
       };
       const result = validateEnvironment(env);
       expect(result.NODE_ENV).toBe("production");
@@ -230,11 +237,7 @@ describe("validateEnvironment", () => {
 
   describe("AUTH_COOKIE_SECURE", () => {
     it("defaults to true in production", () => {
-      const env = {
-        ...validEnv,
-        NODE_ENV: "production",
-        ALERT_EMAIL: "ops@example.com",
-      };
+      const env = { ...validProdEnv };
       delete env.AUTH_COOKIE_SECURE;
       const result = validateEnvironment(env);
       expect(result.AUTH_COOKIE_SECURE).toBe("true");
@@ -408,6 +411,61 @@ describe("validateEnvironment", () => {
     });
   });
 
+  describe("REDIS_SECURITY_DB (optional)", () => {
+    it("passes when not set", () => {
+      const env = { ...validEnv };
+      delete env.REDIS_SECURITY_DB;
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("passes when empty string", () => {
+      const env = { ...validEnv, REDIS_SECURITY_DB: "" };
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("passes with valid number", () => {
+      const env = { ...validEnv, REDIS_SECURITY_DB: "1" };
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("throws when non-numeric", () => {
+      const env = { ...validEnv, REDIS_SECURITY_DB: "abc" };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_DB must be a valid number"
+      );
+    });
+  });
+
+  describe("REDIS_SECURITY_TLS (optional)", () => {
+    it("passes when not set", () => {
+      const env = { ...validEnv };
+      delete env.REDIS_SECURITY_TLS;
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("passes when empty string", () => {
+      const env = { ...validEnv, REDIS_SECURITY_TLS: "" };
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("passes with 'true'", () => {
+      const env = { ...validEnv, REDIS_SECURITY_TLS: "true" };
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("passes with 'false'", () => {
+      const env = { ...validEnv, REDIS_SECURITY_TLS: "false" };
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("throws when neither 'true' nor 'false'", () => {
+      const env = { ...validEnv, REDIS_SECURITY_TLS: "yes" };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_TLS must be either 'true' or 'false'"
+      );
+    });
+  });
+
   describe("ALERT_EMAIL (optional in non-prod, required in production)", () => {
     it("passes when not set in non-production", () => {
       const env = { ...validEnv };
@@ -427,27 +485,124 @@ describe("validateEnvironment", () => {
     });
 
     it("throws in production when ALERT_EMAIL is missing", () => {
-      const env = { ...validEnv, NODE_ENV: "production" };
+      const env = { ...validProdEnv };
+      delete env.ALERT_EMAIL;
       expect(() => validateEnvironment(env)).toThrow(
         "[ENV] ALERT_EMAIL is required in production"
       );
     });
 
     it("throws in production when ALERT_EMAIL is empty string", () => {
-      const env = { ...validEnv, NODE_ENV: "production", ALERT_EMAIL: "" };
+      const env = { ...validProdEnv, ALERT_EMAIL: "" };
       expect(() => validateEnvironment(env)).toThrow(
         "[ENV] ALERT_EMAIL is required in production"
       );
     });
 
     it("passes in production with a valid ALERT_EMAIL", () => {
-      const env = {
-        ...validEnv,
-        NODE_ENV: "production",
-        ALERT_EMAIL: "ops@example.com",
-      };
+      const env = { ...validProdEnv };
       const result = validateEnvironment(env);
       expect(result.ALERT_EMAIL).toBe("ops@example.com");
+    });
+  });
+
+  describe("REDIS_SECURITY_HOST/PORT (required and isolated in production)", () => {
+    it("passes when not set in non-production", () => {
+      const env = { ...validEnv };
+      delete env.REDIS_SECURITY_HOST;
+      delete env.REDIS_SECURITY_PORT;
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("passes with a valid, distinct REDIS_SECURITY_HOST/PORT in production", () => {
+      const env = { ...validProdEnv };
+      expect(() => validateEnvironment(env)).not.toThrow();
+    });
+
+    it("throws in production when REDIS_SECURITY_HOST is missing", () => {
+      const env = { ...validProdEnv };
+      delete env.REDIS_SECURITY_HOST;
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST is required in production"
+      );
+    });
+
+    it("throws in production when REDIS_SECURITY_HOST is an empty string", () => {
+      const env = { ...validProdEnv, REDIS_SECURITY_HOST: "" };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST is required in production"
+      );
+    });
+
+    it("throws in production when REDIS_SECURITY_PORT is missing", () => {
+      const env = { ...validProdEnv };
+      delete env.REDIS_SECURITY_PORT;
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] Missing required environment variable: REDIS_SECURITY_PORT"
+      );
+    });
+
+    it("throws in production when REDIS_SECURITY_HOST/PORT is the same endpoint as REDIS_HOST/PORT (cache)", () => {
+      const env = {
+        ...validProdEnv,
+        REDIS_SECURITY_HOST: validProdEnv.REDIS_HOST,
+        REDIS_SECURITY_PORT: validProdEnv.REDIS_PORT,
+      };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as REDIS_HOST/PORT"
+      );
+    });
+
+    it("throws in production when REDIS_SECURITY_HOST/PORT is the same endpoint as REDIS_QUEUE_HOST/PORT", () => {
+      const env = {
+        ...validProdEnv,
+        REDIS_QUEUE_HOST: "redis-queue",
+        REDIS_QUEUE_PORT: "6380",
+        REDIS_SECURITY_HOST: "redis-queue",
+        REDIS_SECURITY_PORT: "6380",
+      };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as the queue Redis"
+      );
+    });
+
+    it("throws in production even when REDIS_SECURITY_DB differs from the queue's DB — host/port equality alone is disqualifying", () => {
+      const env = {
+        ...validProdEnv,
+        REDIS_QUEUE_HOST: "redis-queue",
+        REDIS_QUEUE_PORT: "6380",
+        REDIS_QUEUE_DB: "0",
+        REDIS_SECURITY_HOST: "redis-queue",
+        REDIS_SECURITY_PORT: "6380",
+        REDIS_SECURITY_DB: "5",
+      };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as the queue Redis"
+      );
+    });
+
+    it("throws in production when REDIS_SECURITY_HOST matches REDIS_HOST but REDIS_QUEUE_HOST is unset (queue would itself fall back to cache)", () => {
+      const env = {
+        ...validProdEnv,
+        REDIS_SECURITY_HOST: validProdEnv.REDIS_HOST,
+        REDIS_SECURITY_PORT: validProdEnv.REDIS_PORT,
+      };
+      delete env.REDIS_QUEUE_HOST;
+      delete env.REDIS_QUEUE_PORT;
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as REDIS_HOST/PORT"
+      );
+    });
+
+    it("is case-insensitive when comparing hosts", () => {
+      const env = {
+        ...validProdEnv,
+        REDIS_SECURITY_HOST: String(validProdEnv.REDIS_HOST).toUpperCase(),
+        REDIS_SECURITY_PORT: validProdEnv.REDIS_PORT,
+      };
+      expect(() => validateEnvironment(env)).toThrow(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as REDIS_HOST/PORT"
+      );
     });
   });
 });

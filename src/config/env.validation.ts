@@ -101,6 +101,89 @@ export function validateEnvironment(env: EnvMap): EnvMap {
     requireNumber(env, "REDIS_QUEUE_DB");
   }
 
+  if (env.REDIS_SECURITY_HOST !== undefined && env.REDIS_SECURITY_HOST !== "") {
+    requireString(env, "REDIS_SECURITY_HOST");
+  }
+
+  if (env.REDIS_SECURITY_PORT !== undefined && env.REDIS_SECURITY_PORT !== "") {
+    requireNumber(env, "REDIS_SECURITY_PORT");
+  }
+
+  if (
+    env.REDIS_SECURITY_PASSWORD !== undefined &&
+    env.REDIS_SECURITY_PASSWORD !== ""
+  ) {
+    requireString(env, "REDIS_SECURITY_PASSWORD");
+  }
+
+  if (env.REDIS_SECURITY_DB !== undefined && env.REDIS_SECURITY_DB !== "") {
+    requireNumber(env, "REDIS_SECURITY_DB");
+  }
+
+  if (env.REDIS_SECURITY_TLS !== undefined && env.REDIS_SECURITY_TLS !== "") {
+    const tlsValue = String(env.REDIS_SECURITY_TLS).toLowerCase();
+    if (tlsValue !== "true" && tlsValue !== "false") {
+      throw new Error(
+        "[ENV] REDIS_SECURITY_TLS must be either 'true' or 'false'"
+      );
+    }
+  }
+
+  // REDIS_SECURITY_* is the JWT blacklist/session-revocation store. It MUST
+  // be a genuinely separate Redis endpoint in production: reusing
+  // redis-cache (evictable, volatile-lru) silently reintroduces PRE-1
+  // (revoked tokens can be evicted and re-validate); reusing redis-queue's
+  // host+port collapses auth and BullMQ into one failure domain (a queue
+  // outage would also 401 every authenticated request — see
+  // production-readiness-audit-2026-07-23.md, "Redis outage blast-radius
+  // merged"). Host/port is compared, not just the DB index, because two
+  // connections to the same physical instance still share its memory
+  // policy and availability regardless of logical DB — only host/port
+  // isolation actually removes the shared instance as a SPOF.
+  if (nodeEnv === "production") {
+    const securityHostStr =
+      env.REDIS_SECURITY_HOST !== undefined
+        ? String(env.REDIS_SECURITY_HOST).trim()
+        : "";
+    if (!securityHostStr) {
+      throw new Error(
+        "[ENV] REDIS_SECURITY_HOST is required in production — without a dedicated security Redis instance, the JWT blacklist falls back to redis-cache/redis-queue, reintroducing PRE-1 or collapsing auth and BullMQ into one failure domain"
+      );
+    }
+
+    const securityPort = requireNumber(env, "REDIS_SECURITY_PORT");
+    const cacheHost = String(env.REDIS_HOST ?? "")
+      .trim()
+      .toLowerCase();
+    const cachePort = requireNumber(env, "REDIS_PORT");
+
+    if (
+      securityHostStr.toLowerCase() === cacheHost &&
+      securityPort === cachePort
+    ) {
+      throw new Error(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as REDIS_HOST/PORT (the evictable cache instance) in production"
+      );
+    }
+
+    const queueHostRaw = env.REDIS_QUEUE_HOST;
+    const queueHostStr =
+      queueHostRaw !== undefined ? String(queueHostRaw).trim() : "";
+    const effectiveQueueHost = (queueHostStr || cacheHost).toLowerCase();
+    const effectiveQueuePort = queueHostStr
+      ? requireNumber(env, "REDIS_QUEUE_PORT")
+      : cachePort;
+
+    if (
+      securityHostStr.toLowerCase() === effectiveQueueHost &&
+      securityPort === effectiveQueuePort
+    ) {
+      throw new Error(
+        "[ENV] REDIS_SECURITY_HOST/PORT must not be the same endpoint as the queue Redis (REDIS_QUEUE_HOST/PORT, or REDIS_HOST/PORT if the queue has no dedicated host) in production — a shared instance collapses auth and BullMQ into a single failure domain"
+      );
+    }
+  }
+
   const secretKey = requireString(env, "SECRET_KEY");
   if (secretKey === "your-secret-key") {
     throw new Error(
