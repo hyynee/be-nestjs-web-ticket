@@ -18,12 +18,14 @@ import { CancelTicketUseCase } from "./application/use-case/cancel-ticket.use-ca
 import { CheckInTicketUseCase } from "./application/use-case/check-in-ticket.use-case";
 import { GenerateMissingQRCodesUseCase } from "./application/use-case/generate-missing-qrcodes.use-case";
 import { IssueTicketsFromBookingUseCase } from "./application/use-case/issue-tickets-from-booking.use-case";
+import { RegenerateTicketQrUseCase } from "./application/use-case/regenerate-ticket-qr.use-case";
 import { ValidateTicketUseCase } from "./application/use-case/validate-ticket.use-case";
 import { TicketCacheService } from "./infrastructure/cache/ticket-cache.service";
 import { TicketQrService } from "./infrastructure/qr/ticket-qr.service";
 import { TicketPublisherService } from "./infrastructure/realtime/ticket-publisher.service";
 import { TicketPresenter } from "./presenters/ticket.presenter";
 import { NotificationModule } from "@src/notification/notification.module";
+import { ZoneModule } from "@src/zone/zone.module";
 
 @Module({
   imports: [
@@ -35,6 +37,7 @@ import { NotificationModule } from "@src/notification/notification.module";
       { name: CheckInLog.name, schema: CheckInLogSchema },
     ]),
     NotificationModule,
+    ZoneModule,
   ],
   providers: [
     TicketService,
@@ -54,6 +57,7 @@ import { NotificationModule } from "@src/notification/notification.module";
     ListTicketsQuery,
     ListMyTicketsQuery,
     GetCheckInHistoryQuery,
+    RegenerateTicketQrUseCase,
   ],
   controllers: [TicketController],
   exports: [TicketService],

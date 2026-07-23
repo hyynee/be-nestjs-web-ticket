@@ -10,6 +10,7 @@ import { CancelTicketUseCase } from "./application/use-case/cancel-ticket.use-ca
 import { CheckInTicketUseCase } from "./application/use-case/check-in-ticket.use-case";
 import { GenerateMissingQRCodesUseCase } from "./application/use-case/generate-missing-qrcodes.use-case";
 import { IssueTicketsFromBookingUseCase } from "./application/use-case/issue-tickets-from-booking.use-case";
+import { RegenerateTicketQrUseCase } from "./application/use-case/regenerate-ticket-qr.use-case";
 import { ValidateTicketUseCase } from "./application/use-case/validate-ticket.use-case";
 import { MyTicketsQueryDto } from "./dto/my-tickets-query.dto";
 import { QueryTicketDto } from "./dto/query.dto";
@@ -62,7 +63,8 @@ export class TicketService {
     private readonly cancelTicketUseCase: CancelTicketUseCase,
     private readonly listTicketsQuery: ListTicketsQuery,
     private readonly listMyTicketsQuery: ListMyTicketsQuery,
-    private readonly getCheckInHistoryQuery: GetCheckInHistoryQuery
+    private readonly getCheckInHistoryQuery: GetCheckInHistoryQuery,
+    private readonly regenerateTicketQrUseCase: RegenerateTicketQrUseCase
   ) {}
 
   publishTicketCreation(
@@ -151,5 +153,9 @@ export class TicketService {
     currentUser: JwtPayload
   ): Promise<TicketCheckInHistoryResult> {
     return this.getCheckInHistoryQuery.execute(ticketCode, currentUser);
+  }
+
+  regenerateQrCode(ticketCode: string): Promise<TicketIssuedItem> {
+    return this.regenerateTicketQrUseCase.execute(ticketCode);
   }
 }

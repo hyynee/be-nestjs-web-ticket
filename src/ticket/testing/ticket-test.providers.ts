@@ -7,6 +7,7 @@ import { CancelTicketUseCase } from "../application/use-case/cancel-ticket.use-c
 import { CheckInTicketUseCase } from "../application/use-case/check-in-ticket.use-case";
 import { GenerateMissingQRCodesUseCase } from "../application/use-case/generate-missing-qrcodes.use-case";
 import { IssueTicketsFromBookingUseCase } from "../application/use-case/issue-tickets-from-booking.use-case";
+import { RegenerateTicketQrUseCase } from "../application/use-case/regenerate-ticket-qr.use-case";
 import { ValidateTicketUseCase } from "../application/use-case/validate-ticket.use-case";
 import { TicketCacheService } from "../infrastructure/cache/ticket-cache.service";
 import { TicketQrService } from "../infrastructure/qr/ticket-qr.service";
@@ -14,6 +15,7 @@ import { TicketPublisherService } from "../infrastructure/realtime/ticket-publis
 import { TicketPresenter } from "../presenters/ticket.presenter";
 import { TicketService } from "../ticket.service";
 import { NotificationService } from "@src/notification/notification.service";
+import { ZoneService } from "@src/zone/zone.service";
 
 export const ticketTestProviders: Provider[] = [
   TicketService,
@@ -30,10 +32,17 @@ export const ticketTestProviders: Provider[] = [
   ListTicketsQuery,
   ListMyTicketsQuery,
   GetCheckInHistoryQuery,
+  RegenerateTicketQrUseCase,
   {
     provide: NotificationService,
     useValue: {
       notifyTicketsIssued: async () => undefined,
+    },
+  },
+  {
+    provide: ZoneService,
+    useValue: {
+      invalidateZoneAvailabilityCache: async () => undefined,
     },
   },
 ];

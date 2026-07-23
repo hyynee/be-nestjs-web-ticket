@@ -11,6 +11,7 @@ import { TicketCacheService } from "@src/ticket/infrastructure/cache/ticket-cach
 import { TicketQrService } from "@src/ticket/infrastructure/qr/ticket-qr.service";
 import { TicketPresenter } from "@src/ticket/presenters/ticket.presenter";
 import { TicketCancelResult } from "@src/ticket/types/ticket.types";
+import { ZoneService } from "@src/zone/zone.service";
 import { ClientSession, Model, Types } from "mongoose";
 
 @Injectable()
@@ -21,7 +22,8 @@ export class CancelTicketUseCase {
     @InjectModel(Zone.name) private readonly zoneModel: Model<Zone>,
     private readonly ticketCache: TicketCacheService,
     private readonly ticketQrService: TicketQrService,
-    private readonly ticketPresenter: TicketPresenter
+    private readonly ticketPresenter: TicketPresenter,
+    private readonly zoneService: ZoneService
   ) {}
 
   async execute(
@@ -90,6 +92,11 @@ export class CancelTicketUseCase {
     await Promise.all([
       this.ticketCache.invalidateTicketCache(),
       this.ticketCache.invalidateUserTicketCache(userId),
+      cancelResult.cancelledTicket?.zoneId
+        ? this.zoneService.invalidateZoneAvailabilityCache(
+            cancelResult.cancelledTicket.zoneId as Types.ObjectId
+          )
+        : Promise.resolve(),
     ]);
 
     if (!cancelResult.cancelledTicket) {
